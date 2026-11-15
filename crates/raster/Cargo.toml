@@ -1,0 +1,14 @@
+[package]
+name = "yunari-render-raster"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tiny-skia = "0.11"
+yunari-render.workspace = true
+
+[dev-dependencies]
+yunari-golden.workspace = true
+yunari-model.workspace = true

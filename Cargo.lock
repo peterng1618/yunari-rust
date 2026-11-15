@@ -8204,6 +8204,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunari-render-raster"
+version = "0.1.0"
+dependencies = [
+ "tiny-skia",
+ "yunari-golden",
+ "yunari-model",
+ "yunari-render",
+]
+
+[[package]]
 name = "yunari-theme"
 version = "0.1.0"
 

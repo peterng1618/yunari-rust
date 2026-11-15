@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/model", "crates/theme", "crates/golden", "crates/render", "crates/app"]
+members = [
+    "crates/model",
+    "crates/theme",
+    "crates/golden",
+    "crates/render",
+    "crates/raster",
+    "crates/app",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,3 +24,5 @@ image = "0.25"
 proptest = "1"
 yunari-model = { path = "crates/model" }
 yunari-theme = { path = "crates/theme" }
+yunari-render = { path = "crates/render" }
+yunari-golden = { path = "crates/golden" }

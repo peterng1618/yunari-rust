@@ -42,6 +42,7 @@ cargo run -p yunari-app
 |---|---|
 | `crates/model` | Versioned theme document, parsing and validation. No UI, OS or network dependencies. |
 | `crates/render` | Renderer-independent decisions: formatting, transforms, colours, display lists. No backend. |
+| `crates/raster` | Display list to pixels (tiny-skia): panels, and the reference every golden compares against. |
 | `crates/theme` | Editor design tokens (spacing, radius, type scale). |
 | `crates/golden` | Pixel golden-file harness for render tests. |
 | `crates/app` | gpui-kit application shell. |
