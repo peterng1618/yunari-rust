@@ -1,0 +1,13 @@
+[package]
+name = "yunari-library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2 = "0.11"
+thiserror.workspace = true
+serde_json.workspace = true
+zip = "9"
+yunari-model.workspace = true

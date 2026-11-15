@@ -5,6 +5,7 @@ members = [
     "crates/theme",
     "crates/golden",
     "crates/providers",
+    "crates/library",
     "crates/render",
     "crates/raster",
     "crates/render-gpui",
@@ -27,6 +28,7 @@ sysinfo = "0.40"
 image = "0.25"
 proptest = "1"
 yunari-model = { path = "crates/model" }
+yunari-library = { path = "crates/library" }
 yunari-providers = { path = "crates/providers" }
 yunari-render = { path = "crates/render" }
 yunari-golden = { path = "crates/golden" }
