@@ -38,10 +38,10 @@
 **Interfaces:**
 - Produces: `SemanticKeyDescriptor { key, family, label, unit, unit_kind, display_units, value_kind, media_kind, expected_tier, converts, instant }`, `pub const SEMANTIC_KEYS: [..]`, `pub fn describe(key: &str) -> Option<SemanticKeyDescriptor>`, `pub fn label_for(key: &str) -> &str`, `pub fn families() -> &'static [&'static str]`.
 
-- [ ] **Step 1:** Generate `vocabulary.rs` from the source vocabulary (`renderer-core/src/data/semantic-keys.ts`) with a one-off script; 101 built-in keys must survive with their `unit`, `unitKind`, `displayUnits`, `expectedTier`, `converts` and `instant` fields.
-- [ ] **Step 2:** Write tests: every key's `family` matches a built-in family; `describe("cpu.load").unit == Some("%")`; `describe("cpu.temp").converts == Some(Converts::Temperature)`; `describe("time.now").instant == Some(Instant { default_format: "HH:mm:ss" })`; an unknown key returns `None` and `label_for` returns it verbatim.
-- [ ] **Step 3:** Port the discovered-key shapes (`cpu.core.N.load|temp|clock`, `cooling.fan.<slug>.rpm|percent`, `cooling.pump.<slug>.rpm`, `motherboard.fan.<slug>.*`, `motherboard.voltage.<slug>`, `gpu.fan.N`, `disk.<slug>.<quantity>`, `network.<slug>.download|upload`, `psu.voltage.<slug>`, `custom.<src>.<field>`) as `describe` fallbacks, with one test per shape and one for a slug that is too long.
-- [ ] **Step 4:** `cargo test -p yunari-providers` and clippy green; commit.
+- [x] **Step 1:** Generate `vocabulary.rs` from the source vocabulary (`renderer-core/src/data/semantic-keys.ts`) with a one-off script; 101 built-in keys must survive with their `unit`, `unitKind`, `displayUnits`, `expectedTier`, `converts` and `instant` fields.
+- [x] **Step 2:** Write tests: every key's `family` matches a built-in family; `describe("cpu.load").unit == Some("%")`; `describe("cpu.temp").converts == Some(Converts::Temperature)`; `describe("time.now").instant == Some(Instant { default_format: "HH:mm:ss" })`; an unknown key returns `None` and `label_for` returns it verbatim.
+- [x] **Step 3:** Port the discovered-key shapes (`cpu.core.N.load|temp|clock`, `cooling.fan.<slug>.rpm|percent`, `cooling.pump.<slug>.rpm`, `motherboard.fan.<slug>.*`, `motherboard.voltage.<slug>`, `gpu.fan.N`, `disk.<slug>.<quantity>`, `network.<slug>.download|upload`, `psu.voltage.<slug>`, `custom.<src>.<field>`) as `describe` fallbacks, with one test per shape and one for a slug that is too long.
+- [x] **Step 4:** `cargo test -p yunari-providers` and clippy green; commit.
 
 ### Task 2: Units and conversion
 
@@ -52,9 +52,9 @@
 **Interfaces:**
 - Produces: `UnitPreferences { measurement, clock, data, data_scale, rate, rate_scale, wind_speed, pressure }`, `Default` matching the source defaults; `Overrides { unit, auto_scale }`; `Converted { value: f64, unit: Option<&'static str>, precision: Option<u8>, unsupported: bool }`; `pub fn convert(key: &str, value: f64, unit: Option<&str>, preferences: &UnitPreferences, overrides: Overrides) -> Converted`.
 
-- [ ] **Step 1:** Port `convertForDisplay`: temperature (°C→°F), clock (MHz→GHz with 2/1 decimals), data (binary/decimal, MB/GB/TB), data rate (bits/bytes, k/m/g), speed (km/h→mph, m/s), pressure (hPa→inHg). Other kinds pass through.
-- [ ] **Step 2:** Tests: 25 °C with imperial → 77 °F; 3600 MHz with `clock: ghz` → 3.6 GHz precision 2; 1200 MHz with `auto` → 1.2 GHz; 1 GB (2^30) with `data: decimal` → 1.073741824 GB; a binding unit of `"GiB"` pins binary; a unit the key cannot reach sets `unsupported` and keeps the measured value; scale/offset are *not* applied here (the caller does that).
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Port `convertForDisplay`: temperature (°C→°F), clock (MHz→GHz with 2/1 decimals), data (binary/decimal, MB/GB/TB), data rate (bits/bytes, k/m/g), speed (km/h→mph, m/s), pressure (hPa→inHg). Other kinds pass through.
+- [x] **Step 2:** Tests: 25 °C with imperial → 77 °F; 3600 MHz with `clock: ghz` → 3.6 GHz precision 2; 1200 MHz with `auto` → 1.2 GHz; 1 GB (2^30) with `data: decimal` → 1.073741824 GB; a binding unit of `"GiB"` pins binary; a unit the key cannot reach sets `unsupported` and keeps the measured value; scale/offset are *not* applied here (the caller does that).
+- [x] **Step 3:** Commit.
 
 ### Task 3: Reading types, provider trait, registry
 
