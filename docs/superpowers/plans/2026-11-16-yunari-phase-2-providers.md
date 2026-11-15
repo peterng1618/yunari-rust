@@ -90,8 +90,8 @@
 **Interfaces:**
 - Produces: `Sampler::{new(registry), request(keys), tick(now_ms) -> Option<Cycle>}` where a tick polls only when a request is due by cadence, and coalesces overlapping ticks into one poll.
 
-- [ ] **Step 1:** Tests: two ticks closer than the cadence produce one poll; a new key request makes the next tick due; a slow provider is not re-entered while it is still running.
-- [ ] **Step 2:** Commit.
+- [x] **Step 1:** Tests: two ticks closer than the cadence produce one poll; a new key request makes the next tick due; a slow provider is not re-entered while it is still running.
+- [x] **Step 2:** Commit.
 
 ### Task 7: Bindings render readings
 

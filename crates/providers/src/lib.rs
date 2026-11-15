@@ -10,6 +10,7 @@ pub mod clock;
 pub mod provider;
 pub mod registry;
 pub mod sample;
+pub mod sampler;
 pub mod system;
 pub mod units;
 pub mod vocabulary;
