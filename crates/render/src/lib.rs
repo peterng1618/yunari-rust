@@ -3,6 +3,7 @@
 //! what geometry a frame paints.
 
 mod affine;
+pub mod chart;
 mod color;
 mod display_list;
 mod format;

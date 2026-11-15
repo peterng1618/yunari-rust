@@ -6,8 +6,8 @@
 //! with a reason, never a guess.
 
 use yunari_model::document::{
-    Node, NodeKind, StyleMap, StyleValue, TextAlign, TextContent, TextOverflow, TextRun,
-    ThemeDocument, TypeWeight, VerticalAlign,
+    ChartFamily, Node, NodeKind, StyleMap, StyleValue, TextAlign, TextContent, TextOverflow,
+    TextRun, ThemeDocument, TypeWeight, VerticalAlign,
 };
 
 use crate::affine::Affine;
@@ -157,7 +157,32 @@ fn walk(
             carries_own_paint = true;
             text_shape(document, fonts, node, content, &style, opacity, issues)
         }
-        NodeKind::Chart { .. } | NodeKind::Image { .. } | NodeKind::Video { .. } => None,
+        NodeKind::Chart { content } => {
+            let request = crate::chart::ChartRequest {
+                document,
+                node_id: &node.id,
+                width: box_width,
+                height: box_height,
+                reading: None,
+                opacity,
+                settings: &content.settings.0,
+            };
+            let drawn = match content.family {
+                ChartFamily::Gauge => crate::chart::gauge::build(&request, issues),
+                ChartFamily::Line => crate::chart::line::build(&request, issues),
+                ChartFamily::Bar => crate::chart::bar::build(&request, issues),
+                ChartFamily::Pie => crate::chart::pie::build(&request, issues),
+                ChartFamily::Radar => crate::chart::radar::build(&request, issues),
+                ChartFamily::PolarBar => crate::chart::polar_bar::build(&request, issues),
+            };
+            list.ops
+                .extend(drawn.into_iter().map(|mut op| {
+                    op.transform = transform;
+                    op
+                }));
+            None
+        }
+        NodeKind::Image { .. } | NodeKind::Video { .. } => None,
     };
 
     if let Some(shape) = shape {
@@ -724,6 +749,36 @@ mod tests {
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
         assert!(issues[0].detail.contains("arc"));
+    }
+
+    #[test]
+    fn a_gauge_node_paints_its_ring_under_the_node_transform() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                    "nodes":[{"id":"g","transform":{"x":50,"y":60,"width":200,"height":200},
+                    "kind":{"type":"chart","content":{"family":"gauge",
+                    "settings":{"thickness":16}}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(list.ops.len(), 1);
+        assert_eq!(list.ops[0].transform.apply(0.0, 0.0), (50.0, 60.0));
+    }
+
+    #[test]
+    fn a_chart_family_that_is_not_drawn_yet_says_so() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                    "nodes":[{"id":"c","transform":{"width":200,"height":200},
+                    "kind":{"type":"chart","content":{"family":"pie","settings":{}}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(list.ops.is_empty());
+        assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
     }
 
     #[test]

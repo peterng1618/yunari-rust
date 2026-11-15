@@ -47,6 +47,12 @@ const FIXTURE: &str = r##"{
       "style": { "stroke": { "value": "#e6edf3" }, "strokeWidth": { "value": 2 } }
     },
     {
+      "id": "dial",
+      "kind": { "type": "chart", "content": { "family": "gauge",
+        "settings": { "thickness": 10, "startAngle": 210, "endAngle": -30 } } },
+      "transform": { "x": 208, "y": 40, "width": 72, "height": 72 }
+    },
+    {
       "id": "title",
       "kind": { "type": "text", "content": { "runs": [
         { "kind": "literal", "text": "LOCAL", "typeToken": "typeTokens.heading", "style": {"fontSize": {"value": 22}} }

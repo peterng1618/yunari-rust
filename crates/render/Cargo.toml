@@ -7,8 +7,6 @@ license.workspace = true
 
 [dependencies]
 cosmic-text = "0.19"
+serde_json.workspace = true
 svgtypes = "0.16"
 yunari-model.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
