@@ -168,12 +168,12 @@ fn walk(
                 settings: &content.settings.0,
             };
             let drawn = match content.family {
-                ChartFamily::Gauge => crate::chart::gauge::build(&request, issues),
-                ChartFamily::Line => crate::chart::line::build(&request, issues),
-                ChartFamily::Bar => crate::chart::bar::build(&request, issues),
-                ChartFamily::Pie => crate::chart::pie::build(&request, issues),
-                ChartFamily::Radar => crate::chart::radar::build(&request, issues),
-                ChartFamily::PolarBar => crate::chart::polar_bar::build(&request, issues),
+                ChartFamily::Gauge => crate::chart::gauge::build(&request, fonts, issues),
+                ChartFamily::Line => crate::chart::line::build(&request, fonts, issues),
+                ChartFamily::Bar => crate::chart::bar::build(&request, fonts, issues),
+                ChartFamily::Pie => crate::chart::pie::build(&request, fonts, issues),
+                ChartFamily::Radar => crate::chart::radar::build(&request, fonts, issues),
+                ChartFamily::PolarBar => crate::chart::polar_bar::build(&request, fonts, issues),
             };
             list.ops
                 .extend(drawn.into_iter().map(|mut op| {

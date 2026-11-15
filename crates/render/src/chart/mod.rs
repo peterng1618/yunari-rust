@@ -19,6 +19,9 @@ use crate::color::{Color, parse_color};
 use crate::display_list::{PathCommand, Shape};
 
 use self::segments::SegmentGap;
+use crate::text::{
+    Fonts, TextAlign, TextOverflow, TextRequest, TextRunPlan, TextStyle, VerticalAlign,
+};
 
 /// What a chart family is asked to draw.
 pub struct ChartRequest<'a> {
@@ -425,6 +428,91 @@ pub fn weight_of(weight: Option<&TypeWeight>) -> u16 {
         },
         None => 400,
     }
+}
+
+/// How a chart's own label is drawn: its size, colour and where the given
+/// point sits on the text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelStyle {
+    pub size: f32,
+    pub color: Color,
+    pub weight: u16,
+    pub family: Option<String>,
+    /// What the anchor point marks: the left edge, the centre or the right.
+    pub align: TextAlign,
+}
+
+impl LabelStyle {
+    pub fn new(size: f32, color: Color) -> Self {
+        Self {
+            size,
+            color,
+            weight: 400,
+            family: None,
+            align: TextAlign::Left,
+        }
+    }
+}
+
+fn text_style(style: &LabelStyle) -> TextStyle {
+    TextStyle {
+        family: style.family.clone(),
+        weight: style.weight,
+        italic: false,
+        size: style.size,
+        color: style.color,
+    }
+}
+
+/// The width a chart label occupies, for the caller that has to centre or
+/// right-align it against a point it computed.
+pub fn text_width(fonts: &mut Fonts, text: &str, style: &LabelStyle) -> f32 {
+    crate::text::advance_width(fonts, text, &text_style(style))
+}
+
+/// A chart's own label — an axis tick, a value, a legend entry — placed so the
+/// anchor point lands where the caller wants it.
+pub fn label(
+    fonts: &mut Fonts,
+    text: &str,
+    at: (f32, f32),
+    style: &LabelStyle,
+) -> Option<crate::Op> {
+    if text.is_empty() {
+        return None;
+    }
+    let runs = [TextRunPlan {
+        text: text.to_owned(),
+        style: text_style(style),
+    }];
+    let mut laid = crate::text::layout(
+        fonts,
+        &TextRequest {
+            runs: &runs,
+            box_: None,
+            align: TextAlign::Left,
+            vertical_align: VerticalAlign::Top,
+            overflow: TextOverflow::Visible,
+            vertical: false,
+            line_height: 1.2,
+        },
+    );
+    let width = crate::text::advance_width(fonts, text, &text_style(style));
+    let shift = match style.align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center => width / 2.0,
+        TextAlign::Right => width,
+    };
+    for segment in &mut laid.segments {
+        segment.origin.0 += at.0 - shift;
+        segment.origin.1 += at.1;
+    }
+    Some(crate::Op {
+        transform: crate::Affine::IDENTITY,
+        shape: Shape::Text(laid),
+        fill: None,
+        stroke: None,
+    })
 }
 
 /// A filled op from finished commands.

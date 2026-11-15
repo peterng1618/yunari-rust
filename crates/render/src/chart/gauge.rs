@@ -13,7 +13,11 @@ use crate::{Color, Op, PlanIssue};
 const TRACK_DEFAULT: Color = Color::rgb(0x2a, 0x2f, 0x3a);
 const PROGRESS_DEFAULT: Color = Color::rgb(0x00, 0xb8, 0xd9);
 
-pub fn build(request: &ChartRequest<'_>, issues: &mut Vec<PlanIssue>) -> Vec<Op> {
+pub fn build(
+    request: &ChartRequest<'_>,
+    _fonts: &mut crate::Fonts,
+    issues: &mut Vec<PlanIssue>,
+) -> Vec<Op> {
     let settings = request.settings;
     let start = number(settings, "startAngle", 225.0);
     let end = number(settings, "endAngle", -45.0);
@@ -222,7 +226,7 @@ mod tests {
             settings: &content.settings.0,
         };
         let mut issues = Vec::new();
-        let ops = super::build(&request, &mut issues);
+        let ops = super::build(&request, &mut crate::Fonts::new(), &mut issues);
         assert!(issues.is_empty(), "{issues:?}");
         ops
     }

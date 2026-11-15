@@ -295,6 +295,12 @@ fn elide(fonts: &mut Fonts, layout: &mut TextLayout, request: &TextRequest<'_>) 
     last.text = "\u{2026}".into();
 }
 
+/// The width one line of this style occupies, for a caller placing something
+/// else beside it.
+pub fn advance_width(fonts: &mut Fonts, text: &str, style: &TextStyle) -> f32 {
+    measure(fonts, text, style)
+}
+
 fn measure(fonts: &mut Fonts, text: &str, style: &TextStyle) -> f32 {
     let metrics = Metrics::new(style.size, style.size);
     let mut buffer = Buffer::new(&mut fonts.system, metrics);
