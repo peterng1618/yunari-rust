@@ -69,6 +69,13 @@ pub enum Shape {
     /// Placed glyph runs. The layout is already wrapped and positioned, so a
     /// backend shapes what it is handed and paints it where it stands.
     Text(TextLayout),
+    /// A frosted panel: the ops painted before this one, blurred over the
+    /// wrapped shape's interior. It sits in the list at the panel's own place,
+    /// so what it samples is exactly what is behind the panel.
+    Glass {
+        shape: Box<Shape>,
+        blur_radius: f32,
+    },
     /// A picture from the theme's assets, fitted into the op's box. The node
     /// names the asset; the backend decodes it and asks
     /// [`crate::image::placement`] where the pixels go. `monochrome` draws the

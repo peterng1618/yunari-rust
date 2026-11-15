@@ -73,6 +73,14 @@ pub fn render(
             }
             continue;
         }
+        if let Shape::Glass {
+            shape,
+            blur_radius,
+        } = &op.shape
+        {
+            draw_glass(&mut pixmap, shape, *blur_radius, op.transform, scale);
+            continue;
+        }
         if let Shape::Image {
             path,
             width,
@@ -248,6 +256,189 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, color: TextColor) {
         alpha_out_byte,
     ) {
         *destination = pixel;
+    }
+}
+
+/// Frost the shape's interior: whatever is painted beneath it, blurred, clipped
+/// to the same shape.
+///
+/// The blur is three box passes over the premultiplied region, which is a
+/// Gaussian to the eye at a fraction of a real one's cost. The region is read
+/// back out of the frame that is already painted, so a panel sees exactly its
+/// own backdrop — not a canvas-wide copy — and costs one pass per changed
+/// frame.
+fn draw_glass(
+    pixmap: &mut Pixmap,
+    shape: &Shape,
+    blur_radius: f32,
+    transform: Affine,
+    scale: f32,
+) {
+    let Some(path) = shape_path(shape) else {
+        return;
+    };
+    let to_device = transform.then(Affine::scale(scale, scale));
+    let Some((min, max)) = shape_bounds(shape) else {
+        return;
+    };
+    let corner_a = to_device.apply(min.0, min.1);
+    let corner_b = to_device.apply(max.0, max.1);
+    let left = corner_a.0.min(corner_b.0).floor() as i32;
+    let top = corner_a.1.min(corner_b.1).floor() as i32;
+    let right = (corner_a.0.max(corner_b.0).ceil() as i32).min(pixmap.width() as i32);
+    let bottom = (corner_a.1.max(corner_b.1).ceil() as i32).min(pixmap.height() as i32);
+    if right <= left || bottom <= top {
+        return;
+    }
+    let Some(mut region) = extract(pixmap, left, top, (right - left) as usize, (bottom - top) as usize)
+    else {
+        return;
+    };
+    // CSS reads a blur radius as twice the deviation, and three box passes of
+    // radius `r` reach about that deviation.
+    blur(&mut region, blur_radius * scale / 2.0);
+    let pattern = tiny_skia::Pattern::new(
+        region.as_ref(),
+        SpreadMode::Pad,
+        tiny_skia::FilterQuality::Bilinear,
+        1.0,
+        // The pattern's transform maps its own pixels into the frame, so the
+        // region's corner lands back where it was cut from.
+        Transform::from_translate(left as f32, top as f32),
+    );
+    let mut paint = SkiaPaint {
+        shader: pattern,
+        anti_alias: true,
+        ..SkiaPaint::default()
+    };
+    paint.blend_mode = tiny_skia::BlendMode::SourceOver;
+    pixmap.fill_path(&path, &paint, FillRule::Winding, transform_of(to_device), None);
+}
+
+/// The box a shape's own geometry occupies, in its node's coordinates.
+fn shape_bounds(shape: &Shape) -> Option<((f32, f32), (f32, f32))> {
+    match shape {
+        Shape::Rect { width, height, .. } | Shape::Ellipse { width, height } => {
+            Some(((0.0, 0.0), (*width, *height)))
+        }
+        Shape::Path { commands, .. } => {
+            let mut min = (f32::INFINITY, f32::INFINITY);
+            let mut max = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+            let mut note = |x: f32, y: f32| {
+                min = (min.0.min(x), min.1.min(y));
+                max = (max.0.max(x), max.1.max(y));
+            };
+            for command in commands {
+                match *command {
+                    PathCommand::MoveTo(x, y) | PathCommand::LineTo(x, y) => note(x, y),
+                    PathCommand::QuadTo(cx, cy, x, y) => {
+                        note(cx, cy);
+                        note(x, y);
+                    }
+                    PathCommand::CubicTo(cx1, cy1, cx2, cy2, x, y) => {
+                        note(cx1, cy1);
+                        note(cx2, cy2);
+                        note(x, y);
+                    }
+                    PathCommand::Close => {}
+                }
+            }
+            (min.0.is_finite() && max.0.is_finite()).then_some((min, max))
+        }
+        Shape::Line { length } => Some(((0.0, 0.0), (*length, 0.0))),
+        Shape::Text(_) | Shape::Glass { .. } | Shape::Image { .. } => None,
+    }
+}
+
+/// The frame's pixels under a rectangle, as their own pixmap. Missing pixels
+/// stay transparent, which is what a panel hanging off the artboard samples.
+fn extract(
+    pixmap: &Pixmap,
+    left: i32,
+    top: i32,
+    width: usize,
+    height: usize,
+) -> Option<Pixmap> {
+    let mut region = Pixmap::new(width as u32, height as u32)?;
+    let frame_width = pixmap.width() as i32;
+    let frame_height = pixmap.height() as i32;
+    let stride = frame_width as usize * 4;
+    for y in 0..height as i32 {
+        let row = top + y;
+        if row < 0 || row >= frame_height {
+            continue;
+        }
+        for x in 0..width as i32 {
+            let column = left + x;
+            if column < 0 || column >= frame_width {
+                continue;
+            }
+            let source = row as usize * stride + column as usize * 4;
+            let target = y as usize * width * 4 + x as usize * 4;
+            region.data_mut()[target..target + 4]
+                .copy_from_slice(&pixmap.data()[source..source + 4]);
+        }
+    }
+    Some(region)
+}
+
+/// Three box passes over the premultiplied pixels: a Gaussian to the eye, and
+/// the radius a CSS blur of this size reads as.
+fn blur(pixmap: &mut Pixmap, deviation: f32) {
+    let radius = deviation.round().max(0.0) as usize;
+    if radius == 0 {
+        return;
+    }
+    let width = pixmap.width() as usize;
+    let height = pixmap.height() as usize;
+    if width == 0 || height == 0 {
+        return;
+    }
+    let mut buffer: Vec<u8> = pixmap.data().to_vec();
+    let mut scratch = buffer.clone();
+    for _ in 0..3 {
+        box_blur(&buffer, &mut scratch, width, height, radius, true);
+        box_blur(&scratch, &mut buffer, width, height, radius, false);
+    }
+    let copy = buffer.len().min(pixmap.data().len());
+    pixmap.data_mut()[..copy].copy_from_slice(&buffer[..copy]);
+}
+
+/// One box pass along rows (`horizontal`) or columns, on premultiplied bytes.
+fn box_blur(
+    source: &[u8],
+    target: &mut [u8],
+    width: usize,
+    height: usize,
+    radius: usize,
+    horizontal: bool,
+) {
+    let span = radius * 2 + 1;
+    let (outer, inner) = if horizontal {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    for line in 0..outer {
+        for channel in 0..4 {
+            let at = |step: usize| -> usize {
+                let (x, y) = if horizontal { (step, line) } else { (line, step) };
+                (y * width + x) * 4 + channel
+            };
+            let mut total: u32 = 0;
+            for step in -(radius as isize)..=(radius as isize) {
+                total += u32::from(source[at(step.clamp(0, inner as isize - 1) as usize)]);
+            }
+            for step in 0..inner {
+                target[at(step)] = (total / span as u32) as u8;
+                let leaving = (step as isize - radius as isize).clamp(0, inner as isize - 1);
+                let entering =
+                    (step as isize + radius as isize + 1).clamp(0, inner as isize - 1);
+                total = total
+                    .saturating_sub(u32::from(source[at(leaving as usize)]))
+                    .saturating_add(u32::from(source[at(entering as usize)]));
+            }
+        }
     }
 }
 
@@ -468,6 +659,8 @@ fn shape_path(shape: &Shape) -> Option<Path> {
         Shape::Text(_) => None,
         // A picture is its texels: draw_image paints it.
         Shape::Image { .. } => None,
+        // Glass samples the frame: draw_glass paints it.
+        Shape::Glass { .. } => None,
         Shape::Rect {
             width,
             height,
@@ -839,6 +1032,32 @@ mod tests {
         assert_eq!(pixel(&raster, 2, 1), [0, 0, 255, 255]);
         assert_eq!(pixel(&raster, 2, 3), [255, 0, 0, 255]);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_glass_panel_frosts_what_is_painted_beneath_it() {
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":40,"height":40},
+                    "background":{"color":{"value":"#000000"}},
+                    "nodes":[
+                    {"id":"behind","kind":{"type":"rectangle"},
+                    "transform":{"x":0,"y":0,"width":20,"height":40},
+                    "style":{"fill":{"value":"#ff0000"}}},
+                    {"id":"panel","kind":{"type":"rectangle"},
+                    "transform":{"x":10,"y":10,"width":20,"height":20},
+                    "glass":{"blurRadius":12}}]}"##,
+            ),
+            1.0,
+            None,
+            None,
+        );
+        // The red edge is softened into the panel, so a pixel past it is no
+        // longer either the red or the background green-free black.
+        let beyond = pixel(&raster, 26, 20);
+        assert!(beyond[0] > 0 && beyond[0] < 255, "{beyond:?}");
+        // Outside the panel nothing moved.
+        assert_eq!(pixel(&raster, 35, 20), [0, 0, 0, 255]);
     }
 
     #[test]

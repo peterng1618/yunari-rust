@@ -289,6 +289,21 @@ fn walk(
                 }),
             )
         };
+        // A frosted panel samples what is painted beneath it, so its blur is
+        // its own op, placed before the panel's fill.
+        if let Some(glass) = &node.glass
+            && glass.blur_radius > 0.0
+        {
+            list.ops.push(Op {
+                transform,
+                shape: Shape::Glass {
+                    shape: Box::new(shape.clone()),
+                    blur_radius: glass.blur_radius as f32,
+                },
+                fill: None,
+                stroke: None,
+            });
+        }
         if fill.is_some() || stroke.is_some() || carries_own_paint {
             list.ops.push(Op {
                 transform,
@@ -864,6 +879,46 @@ mod tests {
         );
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
+    }
+
+    #[test]
+    fn a_glass_panel_blurs_before_it_fills() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":100},
+                    "nodes":[
+                    {"id":"behind","kind":{"type":"rectangle"},
+                    "transform":{"width":100,"height":100},
+                    "style":{"fill":{"value":"#ff0000"}}},
+                    {"id":"panel","kind":{"type":"rectangle"},
+                    "transform":{"x":10,"y":10,"width":40,"height":40},
+                    "glass":{"blurRadius":12},
+                    "style":{"fill":{"value":"rgba(255, 255, 255, 0.2)"}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(list.ops.len(), 3);
+        assert!(matches!(list.ops[1].shape, Shape::Glass { blur_radius, .. } if blur_radius == 12.0));
+        assert_eq!(list.ops[1].transform.apply(0.0, 0.0), (10.0, 10.0));
+        assert!(list.ops[2].fill.is_some());
+    }
+
+    #[test]
+    fn a_zero_glass_blur_draws_nothing() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                    "nodes":[{"id":"panel","kind":{"type":"rectangle"},
+                    "transform":{"width":10,"height":10},
+                    "glass":{"blurRadius":0},
+                    "style":{"fill":{"value":"#ff0000"}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(list.ops.len(), 1);
+        assert!(!matches!(list.ops[0].shape, Shape::Glass { .. }));
     }
 
     #[test]

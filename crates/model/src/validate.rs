@@ -447,6 +447,7 @@ fn validate_nodes(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
         validate_transform(node, &path, issues);
         validate_style_map(document, &node.style, &format!("{path}/style"), issues);
         validate_node_kind(document, node, &path, issues);
+        validate_glass(node, &path, issues);
 
         for (index, child) in node.children.iter().enumerate().rev() {
             stack.push(NodeEntry {
@@ -480,6 +481,39 @@ fn validate_transform(node: &Node, path: &str, issues: &mut Vec<ValidationIssue>
         issues.push(issue(
             format!("{path}/transform"),
             "A node width and height are non-negative.",
+        ));
+    }
+}
+
+/// Glass is a property of a closed surface: the frosting needs an interior to
+/// sample the backdrop through, so a glyph, a plotted series or an open line is
+/// refused rather than clipped to a box it does not fill.
+fn validate_glass(node: &Node, path: &str, issues: &mut Vec<ValidationIssue>) {
+    let Some(glass) = &node.glass else {
+        return;
+    };
+    let closed = match &node.kind {
+        NodeKind::Rectangle { .. } | NodeKind::Ellipse => true,
+        NodeKind::Path { closed, .. } => *closed,
+        NodeKind::Line
+        | NodeKind::Group
+        | NodeKind::Text { .. }
+        | NodeKind::Chart { .. }
+        | NodeKind::Image { .. }
+        | NodeKind::Video { .. } => false,
+    };
+    if !closed {
+        issues.push(issue(
+            format!("{path}/glass"),
+            "Only a closed shape can carry a glass backdrop.",
+        ));
+    }
+    if !glass.blur_radius.is_finite()
+        || !(0.0..=crate::document::MAX_GLASS_BLUR_RADIUS).contains(&glass.blur_radius)
+    {
+        issues.push(issue(
+            format!("{path}/glass/blurRadius"),
+            format!("A glass blur is from 0 to {} artboard units.", crate::document::MAX_GLASS_BLUR_RADIUS),
         ));
     }
 }
@@ -740,6 +774,7 @@ mod tests {
             transform: Transform::default(),
             visible: true,
             locked: false,
+            glass: None,
             style: StyleMap::new(),
             children,
         }
@@ -749,6 +784,56 @@ mod tests {
         let mut document = minimal();
         document.nodes = nodes;
         document
+    }
+
+    #[test]
+    fn glass_is_read_on_a_closed_shape() {
+        let document = parse_document(
+            r#"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                "nodes":[{"id":"p","kind":{"type":"rectangle"},
+                "transform":{"width":10,"height":10},
+                "glass":{"blurRadius":24,"sampling":"static"}}]}"#,
+        )
+        .expect("a frosted rectangle is a theme");
+        let glass = document.nodes[0].glass.as_ref().expect("the treatment");
+        assert_eq!(glass.blur_radius, 24.0);
+        assert_eq!(glass.sampling, Some(GlassSampling::Static));
+    }
+
+    fn frosted(kind: NodeKind, blur_radius: f64) -> Node {
+        Node {
+            id: "p".into(),
+            name: None,
+            kind,
+            transform: Transform {
+                width: 10.0,
+                height: 10.0,
+                ..Transform::default()
+            },
+            visible: true,
+            locked: false,
+            glass: Some(GlassTreatment {
+                blur_radius,
+                sampling: None,
+            }),
+            style: StyleMap::new(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn glass_is_refused_where_there_is_no_interior_to_sample() {
+        let document = with_nodes(vec![frosted(NodeKind::Line, 8.0)]);
+        assert_eq!(paths(validate_document(&document)), vec!["nodes/0/glass"]);
+    }
+
+    #[test]
+    fn a_glass_blur_is_bounded() {
+        let document = with_nodes(vec![frosted(NodeKind::Rectangle { corner_radius: 4.0 }, 60.0)]);
+        assert_eq!(
+            paths(validate_document(&document)),
+            vec!["nodes/0/glass/blurRadius"]
+        );
     }
 
     fn binding(id: &str, semantic_key: &str) -> Binding {

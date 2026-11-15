@@ -66,9 +66,10 @@ pub fn paint(
     images: &mut Images,
 ) {
     let fit = Fit::new(list, bounds);
-    // A page picture is composed against the whole artboard, so the frame is
-    // drawn as one image rather than op by op.
-    if list.backdrop.is_some() {
+    // A page picture is composed against the whole artboard, and a frosted
+    // panel samples what is painted beneath it, so either makes the frame one
+    // image rather than an op-by-op paint.
+    if list.backdrop.is_some() || list.ops.iter().any(|op| matches!(op.shape, Shape::Glass { .. })) {
         paint_whole(list, &fit, window, images);
         return;
     }
