@@ -8197,6 +8197,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunari-render"
+version = "0.1.0"
+dependencies = [
+ "yunari-model",
+]
+
+[[package]]
 name = "yunari-theme"
 version = "0.1.0"
 

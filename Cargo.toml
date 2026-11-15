@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/model", "crates/theme", "crates/golden", "crates/app"]
+members = ["crates/model", "crates/theme", "crates/golden", "crates/render", "crates/app"]
 
 [workspace.package]
 version = "0.1.0"
