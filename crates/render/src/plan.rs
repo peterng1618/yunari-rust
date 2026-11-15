@@ -13,6 +13,9 @@ use yunari_model::document::{
 use crate::affine::Affine;
 use crate::color::{Color, parse_color};
 use crate::display_list::{DisplayList, GradientStop, Op, Paint, Shape, Stroke};
+use yunari_providers::units::UnitPreferences;
+
+use crate::reading::{self, Readings};
 use crate::text::{
     Fonts, TextAlign as PlanTextAlign, TextOverflow as PlanTextOverflow, TextRequest, TextRunPlan,
     TextStyle, VerticalAlign as PlanVerticalAlign,
@@ -39,6 +42,12 @@ pub enum IssueCode {
     UnreadablePaint,
     /// The node's content is not drawable yet.
     UnsupportedContent,
+    /// A value run names a binding or key nothing can answer.
+    UnmappedKey,
+    /// A key is bound, but this frame has no reading for it.
+    MissingReading,
+    /// A binding asked for a unit the key cannot be shown in.
+    UnsupportedUnit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,8 +67,20 @@ struct ResolvedStyle {
     opacity: f32,
 }
 
-/// Build the frame's geometry and the reasons anything in it is missing.
+/// Build the frame's geometry and the reasons anything in it is missing, with
+/// no readings: every value run draws the placeholder.
 pub fn build(document: &ThemeDocument, fonts: &mut Fonts) -> (DisplayList, Vec<PlanIssue>) {
+    build_with(document, fonts, &Readings::default(), &UnitPreferences::default())
+}
+
+/// Build the frame's geometry with the readings a poll returned and the
+/// consumer's unit choices applied at presentation.
+pub fn build_with(
+    document: &ThemeDocument,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
+) -> (DisplayList, Vec<PlanIssue>) {
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
@@ -73,7 +94,17 @@ pub fn build(document: &ThemeDocument, fonts: &mut Fonts) -> (DisplayList, Vec<P
         ops: Vec::new(),
     };
     for node in &document.nodes {
-        walk(document, fonts, node, Affine::IDENTITY, 1.0, &mut list, &mut issues);
+        walk(
+            document,
+            fonts,
+            node,
+            Affine::IDENTITY,
+            1.0,
+            readings,
+            preferences,
+            &mut list,
+            &mut issues,
+        );
     }
     (list, issues)
 }
@@ -124,12 +155,15 @@ fn resolve_background(
     Some(place_paint(spec, width, height, 1.0))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk(
     document: &ThemeDocument,
     fonts: &mut Fonts,
     node: &Node,
     parent: Affine,
     opacity: f32,
+    readings: &Readings,
+    preferences: &UnitPreferences,
     list: &mut DisplayList,
     issues: &mut Vec<PlanIssue>,
 ) {
@@ -186,7 +220,17 @@ fn walk(
         },
         NodeKind::Text { content } => {
             carries_own_paint = true;
-            text_shape(document, fonts, node, content, &style, opacity, issues)
+            text_shape(
+                document,
+                fonts,
+                node,
+                content,
+                &style,
+                opacity,
+                readings,
+                preferences,
+                issues,
+            )
         }
         NodeKind::Chart { content } => {
             let request = crate::chart::ChartRequest {
@@ -315,7 +359,17 @@ fn walk(
     }
 
     for child in &node.children {
-        walk(document, fonts, child, transform, opacity, list, issues);
+        walk(
+            document,
+            fonts,
+            child,
+            transform,
+            opacity,
+            readings,
+            preferences,
+            list,
+            issues,
+        );
     }
 }
 
@@ -324,6 +378,7 @@ fn walk(
 /// A value run reads the product's placeholder until a sample source exists:
 /// the plan has no clock and no providers yet, and a made-up number would be
 /// worse than a dash.
+#[allow(clippy::too_many_arguments)]
 fn text_shape(
     document: &ThemeDocument,
     fonts: &mut Fonts,
@@ -331,6 +386,8 @@ fn text_shape(
     content: &TextContent,
     node_style: &ResolvedStyle,
     opacity: f32,
+    readings: &Readings,
+    preferences: &UnitPreferences,
     issues: &mut Vec<PlanIssue>,
 ) -> Option<Shape> {
     let mut runs = Vec::new();
@@ -342,20 +399,12 @@ fn text_shape(
                 style,
             } => (text.clone(), type_token, style),
             TextRun::Value {
-                binding_id,
+                type_token, style, ..
+            } => (
+                reading::value_text(document, node, run, readings, preferences, issues),
                 type_token,
                 style,
-                ..
-            } => {
-                issues.push(PlanIssue {
-                    code: IssueCode::UnsupportedContent,
-                    node_id: Some(node.id.clone()),
-                    detail: format!(
-                        "Value run {binding_id} has no sample source yet, so it reads {MISSING_VALUE_TEXT}."
-                    ),
-                });
-                (MISSING_VALUE_TEXT.to_string(), type_token, style)
-            }
+            ),
         };
         if text.is_empty() {
             continue;
@@ -653,6 +702,8 @@ fn unreadable(issues: &mut Vec<PlanIssue>, node_id: Option<&str>, path: &str, de
 
 #[cfg(test)]
 mod tests {
+    use yunari_providers::sample::Reading;
+
     use super::*;
     use yunari_model::document::parse_document;
 
@@ -1014,25 +1065,90 @@ mod tests {
         assert_eq!(layout.segments[0].style.size, 42.0);
     }
 
-    #[test]
-    fn a_value_run_reads_the_placeholder_until_a_sample_exists() {
-        let (list, issues) = build(
-            &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
-                    "typeTokens":{"body":{"family":"Inter"}},
-                    "nodes":[{"id":"n1","transform":{"width":200,"height":40},
-                    "kind":{"type":"text","content":{"runs":[
-                        {"kind":"value","bindingId":"cpu","typeToken":"typeTokens.body"}]}}}],
-                    "bindings":{"n1":[{"id":"cpu","semanticKey":"cpu.usage"}]}}"##,
-            ),
-            &mut Fonts::new(),
-        );
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
-        assert!(issues[0].detail.contains("cpu"));
+    fn value_run_document(binding: &str) -> ThemeDocument {
+        document(&format!(
+            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":450,"height":675}},
+                "typeTokens":{{"body":{{"family":"Inter"}}}},
+                "nodes":[{{"id":"n1","transform":{{"width":200,"height":40}},
+                "kind":{{"type":"text","content":{{"runs":[
+                    {{"kind":"value","bindingId":"b","typeToken":"typeTokens.body"}}]}}}}}}],
+                "bindings":{{"n1":[{binding}]}}}}"##
+        ))
+    }
+
+    fn value_run_text(document: &ThemeDocument, readings: &Readings) -> (String, Vec<PlanIssue>) {
+        let (list, issues) = build_with(document, &mut Fonts::new(), readings, &UnitPreferences::default());
         let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
             panic!("expected a text op");
         };
-        assert_eq!(layout.segments[0].text, MISSING_VALUE_TEXT);
+        (layout.segments[0].text.clone(), issues)
+    }
+
+    fn reading(semantic_key: &str, value: f64, unit: &str) -> Reading {
+        Reading::number(semantic_key, value, unit)
+    }
+
+    #[test]
+    fn a_value_run_with_no_reading_reads_the_placeholder_and_says_which_key() {
+        let document = value_run_document(r#"{"id":"b","semanticKey":"cpu.load"}"#);
+        let (text, issues) = value_run_text(&document, &Readings::default());
+        assert_eq!(text, MISSING_VALUE_TEXT);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::MissingReading);
+        assert!(issues[0].detail.contains("cpu.load"));
+    }
+
+    #[test]
+    fn a_reading_is_written_with_its_unit() {
+        let document = value_run_document(r#"{"id":"b","semanticKey":"cpu.load"}"#);
+        let readings = Readings::new([reading("cpu.load", 42.0, "%")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "42%");
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_binding_scale_acts_once_before_the_author_s_precision() {
+        let document =
+            value_run_document(r#"{"id":"b","semanticKey":"custom.probe.value","scale":2,"precision":2}"#);
+        let readings = Readings::new([reading("custom.probe.value", 1.5, "MB")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "3.00 MB");
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn an_unsupported_unit_keeps_the_measured_value_and_names_the_unit() {
+        let document = value_run_document(r#"{"id":"b","semanticKey":"cpu.load","unit":"GiB"}"#);
+        let readings = Readings::new([reading("cpu.load", 42.0, "%")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "42%");
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::UnsupportedUnit);
+        assert!(issues[0].detail.contains("GiB"));
+    }
+
+    #[test]
+    fn an_instant_reads_with_the_author_s_format() {
+        let document = value_run_document(
+            r#"{"id":"b","semanticKey":"time.now","format":"HH:mm"}"#,
+        );
+        let readings = Readings::new([Reading::instant(
+            "time.now",
+            "2026-09-24T23:07:09+09:00",
+        )]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "23:07");
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_missing_reading_reports_why_it_is_missing() {
+        let document = value_run_document(r#"{"id":"b","semanticKey":"cpu.load"}"#);
+        let readings = Readings::new([Reading::missing("cpu.load", "the sensor is asleep")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, MISSING_VALUE_TEXT);
+        assert_eq!(issues[0].code, IssueCode::MissingReading);
+        assert!(issues[0].detail.contains("the sensor is asleep"));
     }
 }

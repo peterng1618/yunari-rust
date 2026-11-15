@@ -101,9 +101,9 @@
 - Consumes: `Reading`, `UnitPreferences`.
 - Produces: `pub struct Readings(HashMap<String, Reading>)` and `pub fn build_with(document: &ThemeDocument, fonts: &mut Fonts, readings: &Readings, preferences: &UnitPreferences) -> (DisplayList, Vec<PlanIssue>)`; `build` stays as `build_with(.., &Readings::default(), &UnitPreferences::default())`.
 
-- [ ] **Step 1:** A numeric reading applies `scale`/`offset`, converts, formats with the authored precision, then appends the unit.
-- [ ] **Step 2:** Tests: a binding with `scale: 1024, unit: "KiB"` shows the converted figure; a missing reading draws the em-dash with a `MissingReading` issue naming the key; an unsupported unit keeps the measured value and reports the unit.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** A numeric reading applies `scale`/`offset`, converts, formats with the authored precision, then appends the unit.
+- [x] **Step 2:** Tests: a binding with `scale: 1024, unit: "KiB"` shows the converted figure; a missing reading draws the em-dash with a `MissingReading` issue naming the key; an unsupported unit keeps the measured value and reports the unit.
+- [x] **Step 3:** Commit.
 
 ### Task 8: Live window
 
