@@ -112,6 +112,7 @@ fn walk(
     let box_height = node.transform.height as f32;
 
     let mut carries_own_paint = false;
+    let mut authored_stroke_width = 0.0_f32;
     let shape = match &node.kind {
         NodeKind::Group => None,
         NodeKind::Rectangle { corner_radius } => Some(Shape::Rect {
@@ -126,14 +127,32 @@ fn walk(
         NodeKind::Line => Some(Shape::Line {
             length: box_width,
         }),
-        NodeKind::Path { .. } => {
-            issues.push(PlanIssue {
-                code: IssueCode::UnsupportedContent,
-                node_id: Some(node.id.clone()),
-                detail: "A path is not drawn yet.".into(),
-            });
-            None
-        }
+        NodeKind::Path {
+            data,
+            stroke_width,
+            closed,
+        } => match crate::path::parse(data) {
+            Ok(commands) => {
+                authored_stroke_width = *stroke_width as f32;
+                Some(Shape::Path {
+                    commands,
+                    closed: *closed,
+                })
+            }
+            Err(error) => {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(node.id.clone()),
+                    detail: match error {
+                        crate::path::PathError::Syntax(detail) => {
+                            format!("Path data is not readable: {detail}")
+                        }
+                        crate::path::PathError::Unsupported(detail) => detail.into(),
+                    },
+                });
+                None
+            }
+        },
         NodeKind::Text { content } => {
             carries_own_paint = true;
             text_shape(document, fonts, node, content, &style, opacity, issues)
@@ -151,7 +170,13 @@ fn walk(
                     .map(|spec| place_paint(spec, box_width, box_height, opacity)),
                 style.stroke.map(|spec| Stroke {
                     paint: place_paint(spec, box_width, box_height, opacity),
-                    width: style.stroke_width,
+                    // A path's own width is its authoring default; a style
+                    // stroke width overrides it.
+                    width: if style.stroke_width > 0.0 {
+                        style.stroke_width
+                    } else {
+                        authored_stroke_width
+                    },
                 }),
             )
         };
@@ -663,6 +688,42 @@ mod tests {
         assert!((from.0 - 50.0).abs() < 1e-3 && (from.1 - 50.0).abs() < 1e-3, "{from:?}");
         assert!((to.0 - 50.0).abs() < 1e-3 && to.1.abs() < 1e-3, "{to:?}");
         assert_eq!(stops.len(), 2);
+    }
+
+    #[test]
+    fn a_path_node_paints_its_authored_commands() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                    "nodes":[{"id":"n1","transform":{"width":20,"height":20},
+                    "kind":{"type":"path","data":"M0 0 L10 0 L10 10 Z","strokeWidth":2},
+                    "style":{"stroke":{"value":"#00ff00"}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let Some(Shape::Path { commands, closed }) = list.ops.first().map(|op| &op.shape) else {
+            panic!("expected a path");
+        };
+        assert_eq!(commands.len(), 4);
+        assert!(!closed);
+        assert_eq!(list.ops[0].stroke.as_ref().map(|stroke| stroke.width), Some(2.0));
+    }
+
+    #[test]
+    fn unreadable_path_data_is_a_reason_not_a_shape() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                    "nodes":[{"id":"n1","transform":{"width":20,"height":20},
+                    "kind":{"type":"path","data":"M0 0 A 5 5 0 0 1 10 0"},
+                    "style":{"stroke":{"value":"#00ff00"},"strokeWidth":{"value":1}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(list.ops.is_empty());
+        assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
+        assert!(issues[0].detail.contains("arc"));
     }
 
     #[test]

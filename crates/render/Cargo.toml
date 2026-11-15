@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 cosmic-text = "0.19"
+svgtypes = "0.16"
 yunari-model.workspace = true
 
 [dev-dependencies]

@@ -8201,6 +8201,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "serde_json",
+ "svgtypes 0.16.2",
  "yunari-model",
 ]
 
