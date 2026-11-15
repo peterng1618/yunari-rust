@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+cosmic-text = "0.19"
 yunari-model.workspace = true
 
 [dev-dependencies]

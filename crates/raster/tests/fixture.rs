@@ -24,6 +24,9 @@ const FIXTURE: &str = r##"{
     },
     "accent": { "name": "Accent", "value": { "kind": "solid", "color": "#f778ba" } }
   },
+  "typeTokens": {
+    "heading": { "family": "Segoe UI", "weight": "bold" }
+  },
   "nodes": [
     {
       "id": "plate",
@@ -42,6 +45,14 @@ const FIXTURE: &str = r##"{
       "kind": { "type": "line" },
       "transform": { "x": 48, "y": 120, "width": 224, "height": 0 },
       "style": { "stroke": { "value": "#e6edf3" }, "strokeWidth": { "value": 2 } }
+    },
+    {
+      "id": "title",
+      "kind": { "type": "text", "content": { "runs": [
+        { "kind": "literal", "text": "LOCAL", "typeToken": "typeTokens.heading", "style": {"fontSize": {"value": 22}} }
+      ] } },
+      "transform": { "x": 100, "y": 56, "width": 120, "height": 40 },
+      "style": { "fill": { "value": "#101014" } }
     }
   ]
 }"##;
@@ -53,10 +64,11 @@ fn golden_dir() -> std::path::PathBuf {
 #[test]
 fn the_fixture_theme_matches_its_golden() {
     let document = yunari_model::document::parse_document(FIXTURE).expect("the fixture is a theme");
-    let (list, issues) = yunari_render::build(&document);
+    let mut fonts = yunari_render::Fonts::new();
+    let (list, issues) = yunari_render::build(&document, &mut fonts);
     assert!(issues.is_empty(), "{issues:?}");
 
-    let raster = yunari_render_raster::render(&list, 1.0);
+    let raster = yunari_render_raster::render(&list, 1.0, &mut fonts);
     assert_eq!((raster.width, raster.height), (320, 180));
 
     assert_golden(

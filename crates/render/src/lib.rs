@@ -7,9 +7,11 @@ mod color;
 mod display_list;
 mod format;
 mod plan;
+pub mod text;
 
 pub use affine::Affine;
 pub use color::{Color, parse_color};
 pub use display_list::{DisplayList, GradientStop, Op, Paint, PathCommand, Shape, Stroke};
 pub use format::{format_number, format_unit};
 pub use plan::{IssueCode, PlanIssue, build};
+pub use text::{Fonts, TextStyle};

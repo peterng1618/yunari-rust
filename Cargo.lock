@@ -8199,6 +8199,7 @@ dependencies = [
 name = "yunari-render"
 version = "0.1.0"
 dependencies = [
+ "cosmic-text",
  "serde_json",
  "yunari-model",
 ]

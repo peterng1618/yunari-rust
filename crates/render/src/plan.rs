@@ -5,11 +5,22 @@
 //! a value could not be drawn. A node that cannot be painted becomes an issue
 //! with a reason, never a guess.
 
-use yunari_model::document::{Node, NodeKind, StyleMap, StyleValue, ThemeDocument};
+use yunari_model::document::{
+    Node, NodeKind, StyleMap, StyleValue, TextAlign, TextContent, TextOverflow, TextRun,
+    ThemeDocument, TypeWeight, VerticalAlign,
+};
 
 use crate::affine::Affine;
 use crate::color::{Color, parse_color};
 use crate::display_list::{DisplayList, GradientStop, Op, Paint, Shape, Stroke};
+use crate::text::{
+    Fonts, TextAlign as PlanTextAlign, TextOverflow as PlanTextOverflow, TextRequest, TextRunPlan,
+    TextStyle, VerticalAlign as PlanVerticalAlign,
+};
+
+/// What a run reads when its value has no sample. The em dash is the product's
+/// own placeholder, not an empty string that would look like a real reading.
+pub const MISSING_VALUE_TEXT: &str = "\u{2014}";
 
 /// Why a frame could not paint something, as a runtime diagnostic rather than
 /// a document error.
@@ -48,7 +59,7 @@ struct ResolvedStyle {
 }
 
 /// Build the frame's geometry and the reasons anything in it is missing.
-pub fn build(document: &ThemeDocument) -> (DisplayList, Vec<PlanIssue>) {
+pub fn build(document: &ThemeDocument, fonts: &mut Fonts) -> (DisplayList, Vec<PlanIssue>) {
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
@@ -60,7 +71,7 @@ pub fn build(document: &ThemeDocument) -> (DisplayList, Vec<PlanIssue>) {
         ops: Vec::new(),
     };
     for node in &document.nodes {
-        walk(document, node, Affine::IDENTITY, 1.0, &mut list, &mut issues);
+        walk(document, fonts, node, Affine::IDENTITY, 1.0, &mut list, &mut issues);
     }
     (list, issues)
 }
@@ -84,6 +95,7 @@ fn resolve_background(
 
 fn walk(
     document: &ThemeDocument,
+    fonts: &mut Fonts,
     node: &Node,
     parent: Affine,
     opacity: f32,
@@ -99,6 +111,7 @@ fn walk(
     let box_width = node.transform.width as f32;
     let box_height = node.transform.height as f32;
 
+    let mut carries_own_paint = false;
     let shape = match &node.kind {
         NodeKind::Group => None,
         NodeKind::Rectangle { corner_radius } => Some(Shape::Rect {
@@ -121,19 +134,28 @@ fn walk(
             });
             None
         }
-        NodeKind::Text { .. } | NodeKind::Chart { .. } | NodeKind::Image { .. }
-        | NodeKind::Video { .. } => None,
+        NodeKind::Text { content } => {
+            carries_own_paint = true;
+            text_shape(document, fonts, node, content, &style, opacity, issues)
+        }
+        NodeKind::Chart { .. } | NodeKind::Image { .. } | NodeKind::Video { .. } => None,
     };
 
     if let Some(shape) = shape {
-        let fill = style
-            .fill
-            .map(|spec| place_paint(spec, box_width, box_height, opacity));
-        let stroke = style.stroke.map(|spec| Stroke {
-            paint: place_paint(spec, box_width, box_height, opacity),
-            width: style.stroke_width,
-        });
-        if fill.is_some() || stroke.is_some() {
+        let (fill, stroke) = if carries_own_paint {
+            (None, None)
+        } else {
+            (
+                style
+                    .fill
+                    .map(|spec| place_paint(spec, box_width, box_height, opacity)),
+                style.stroke.map(|spec| Stroke {
+                    paint: place_paint(spec, box_width, box_height, opacity),
+                    width: style.stroke_width,
+                }),
+            )
+        };
+        if fill.is_some() || stroke.is_some() || carries_own_paint {
             list.ops.push(Op {
                 transform,
                 shape,
@@ -144,7 +166,182 @@ fn walk(
     }
 
     for child in &node.children {
-        walk(document, child, transform, opacity, list, issues);
+        walk(document, fonts, child, transform, opacity, list, issues);
+    }
+}
+
+/// A text node's paragraph, arranged for the box it declares.
+///
+/// A value run reads the product's placeholder until a sample source exists:
+/// the plan has no clock and no providers yet, and a made-up number would be
+/// worse than a dash.
+fn text_shape(
+    document: &ThemeDocument,
+    fonts: &mut Fonts,
+    node: &Node,
+    content: &TextContent,
+    node_style: &ResolvedStyle,
+    opacity: f32,
+    issues: &mut Vec<PlanIssue>,
+) -> Option<Shape> {
+    let mut runs = Vec::new();
+    for run in &content.runs {
+        let (text, type_token, style) = match run {
+            TextRun::Literal {
+                text,
+                type_token,
+                style,
+            } => (text.clone(), type_token, style),
+            TextRun::Value {
+                binding_id,
+                type_token,
+                style,
+                ..
+            } => {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(node.id.clone()),
+                    detail: format!(
+                        "Value run {binding_id} has no sample source yet, so it reads {MISSING_VALUE_TEXT}."
+                    ),
+                });
+                (MISSING_VALUE_TEXT.to_string(), type_token, style)
+            }
+        };
+        if text.is_empty() {
+            continue;
+        }
+        runs.push(TextRunPlan {
+            text,
+            style: run_style(
+                document,
+                node,
+                type_token,
+                style,
+                node_style,
+                opacity,
+                issues,
+            ),
+        });
+    }
+    if runs.is_empty() {
+        return None;
+    }
+
+    let request = TextRequest {
+        runs: &runs,
+        box_: content.box_.map(|box_| (box_.width as f32, box_.height as f32)),
+        align: match content.align {
+            TextAlign::Left => PlanTextAlign::Left,
+            TextAlign::Center => PlanTextAlign::Center,
+            TextAlign::Right => PlanTextAlign::Right,
+        },
+        vertical_align: match content.vertical_align {
+            VerticalAlign::Top => PlanVerticalAlign::Top,
+            VerticalAlign::Middle => PlanVerticalAlign::Middle,
+            VerticalAlign::Bottom => PlanVerticalAlign::Bottom,
+        },
+        overflow: match content.overflow {
+            TextOverflow::Visible => PlanTextOverflow::Visible,
+            TextOverflow::Clip => PlanTextOverflow::Clip,
+            TextOverflow::Ellipsis => PlanTextOverflow::Ellipsis,
+        },
+        vertical: content.vertical,
+        line_height: document_line_height(node),
+    };
+    Some(Shape::Text(crate::text::layout(fonts, &request)))
+}
+
+fn document_line_height(node: &Node) -> f32 {
+    node.style
+        .get("lineHeight")
+        .and_then(style_number)
+        .map_or(1.2, |line_height| line_height as f32)
+}
+
+/// The face, size and colour a run paints with: its type token's family and
+/// weight, the size it authors or the role default, and the first colour that
+/// applies to it.
+fn run_style(
+    document: &ThemeDocument,
+    node: &Node,
+    type_token: &str,
+    style: &StyleMap,
+    node_style: &ResolvedStyle,
+    opacity: f32,
+    issues: &mut Vec<PlanIssue>,
+) -> TextStyle {
+    let path = |key: &str| format!("nodes/{}/kind/content/runs/{key}", node.id);
+    let token = document
+        .type_tokens
+        .get(type_token.strip_prefix("typeTokens.").unwrap_or(type_token));
+    let size = style
+        .get("fontSize")
+        .and_then(style_number)
+        .map_or_else(
+            || default_type_size(type_token, document.artboard.height),
+            |size| size as f32,
+        );
+    let colour = style
+        .get("fill")
+        .and_then(|value| resolve_paint(document, value, Some(&node.id), &path("fill"), issues))
+        .or(node_style.fill.clone())
+        .and_then(|spec| match spec {
+            PaintSpec::Solid(color) => Some(scale_alpha(color, opacity)),
+            PaintSpec::Gradient { stops, .. } => {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(node.id.clone()),
+                    detail: "A gradient text run paints its first stop.".into(),
+                });
+                stops
+                    .first()
+                    .map(|stop| scale_alpha(stop.color, opacity))
+            }
+        })
+        .unwrap_or(Color::rgb(255, 255, 255));
+    TextStyle {
+        family: token.map(|token| token.family.clone()),
+        weight: weight_of(token.and_then(|token| token.weight.as_ref())),
+        italic: false,
+        size,
+        color: colour,
+    }
+}
+
+/// A run that authors no size takes the role's share of the artboard height:
+/// heading 1/15, body 1/67.5, mono 1/77 — 72/16/14 at 1080. The role comes
+/// from the token's id, and an id that names no role takes the body ratio.
+fn default_type_size(type_token: &str, artboard_height: f64) -> f32 {
+    if !artboard_height.is_finite() {
+        return 1.0;
+    }
+    let id = type_token.strip_prefix("typeTokens.").unwrap_or(type_token);
+    let ratio = match id {
+        "heading" => 1.0 / 15.0,
+        "mono" => 1.0 / 77.0,
+        _ => 1.0 / 67.5,
+    };
+    (artboard_height * ratio).round().max(1.0) as f32
+}
+
+/// A named weight as the CSS number it stands for. An unknown name is regular
+/// rather than an error: the document's own validator owns the vocabulary.
+fn weight_of(weight: Option<&TypeWeight>) -> u16 {
+    match weight {
+        Some(TypeWeight::Number(weight)) => weight.round().clamp(1.0, 1000.0) as u16,
+        Some(TypeWeight::Name(name)) => match name.to_ascii_lowercase().as_str() {
+            "thin" => 100,
+            "extralight" | "extra-light" | "ultralight" => 200,
+            "light" => 300,
+            "medium" => 500,
+            "semibold" | "semi-bold" | "demibold" => 600,
+            "bold" => 700,
+            "extrabold" | "extra-bold" | "ultrabold" => 800,
+            "black" | "heavy" => 900,
+            _ => 400,
+        },
+        None => 400,
     }
 }
 
@@ -332,7 +529,7 @@ mod tests {
     fn an_empty_document_paints_nothing() {
         let (list, issues) = build(&document(
             r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},"nodes":[]}"##,
-        ));
+        ), &mut Fonts::new());
         assert_eq!(list.width, 100.0);
         assert_eq!(list.height, 80.0);
         assert!(list.ops.is_empty());
@@ -345,7 +542,7 @@ mod tests {
             r##"{"type":"rectangle","cornerRadius":4}"##,
             r##"{"fill":{"value":"#ff0000"}}"##,
             r##"{"x":10,"y":20,"width":30,"height":40}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(list.ops.len(), 1);
         let op = &list.ops[0];
@@ -370,7 +567,7 @@ mod tests {
                 "children":[{"id":"c","kind":{"type":"ellipse"},
                 "transform":{"x":5,"y":0,"width":2,"height":2},
                 "style":{"fill":{"value":"#00ff00"}}}]}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert_eq!(list.ops.len(), 1);
         assert_eq!(list.ops[0].transform.apply(0.0, 0.0), (15.0, 0.0));
     }
@@ -382,7 +579,7 @@ mod tests {
                 "nodes":[{"id":"g","kind":{"type":"group"},"visible":false,
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},"style":{"fill":{"value":"#00ff00"}}}]}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(list.ops.is_empty());
     }
 
@@ -393,7 +590,7 @@ mod tests {
                 "palette":{"accent":{"name":"Accent","value":{"kind":"solid","color":"#0000ff"}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},"style":{"fill":{"ref":"palette.accent"}}}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(list.ops[0].fill, Some(Paint::Solid(Color::rgb(0, 0, 255))));
     }
@@ -405,7 +602,7 @@ mod tests {
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},
                 "style":{"fill":{"ref":"palette.missing"}}}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnresolvedGlobal);
         assert!(issues[0].detail.contains("palette.missing"));
@@ -417,7 +614,7 @@ mod tests {
             r##"{"type":"rectangle"}"##,
             r##"{"fill":{"value":"rebeccapurple"}}"##,
             r##"{"width":10,"height":10}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnreadablePaint);
         assert!(issues[0].detail.contains("rebeccapurple"));
@@ -429,7 +626,7 @@ mod tests {
             r##"{"type":"rectangle"}"##,
             r##"{"fill":{"value":"#ffffff"},"stroke":{"value":"#000000"}}"##,
             r##"{"width":10,"height":10}"##,
-        ));
+        ), &mut Fonts::new());
         assert_eq!(list.ops[0].stroke.as_ref().map(|stroke| stroke.width), Some(0.0));
         assert!(list.ops[0].fill.is_some());
     }
@@ -442,7 +639,7 @@ mod tests {
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},
                 "style":{"fill":{"value":"#ffffff"},"opacity":{"value":0.5}}}]}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert_eq!(
             list.ops[0].fill,
             Some(Paint::Solid(Color::rgb(255, 255, 255).with_alpha(64)))
@@ -457,7 +654,7 @@ mod tests {
                 "stops":[{"offset":0,"color":"#000000"},{"offset":1,"color":"#ffffff"}]}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":100,"height":50},"style":{"fill":{"ref":"palette.plate"}}}]}"##,
-        ));
+        ), &mut Fonts::new());
         assert!(issues.is_empty(), "{issues:?}");
         let Some(Paint::Linear { from, to, stops }) = &list.ops[0].fill else {
             panic!("expected a gradient");
@@ -466,5 +663,68 @@ mod tests {
         assert!((from.0 - 50.0).abs() < 1e-3 && (from.1 - 50.0).abs() < 1e-3, "{from:?}");
         assert!((to.0 - 50.0).abs() < 1e-3 && to.1.abs() < 1e-3, "{to:?}");
         assert_eq!(stops.len(), 2);
+    }
+
+    #[test]
+    fn a_literal_run_becomes_placed_text() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
+                    "typeTokens":{"body":{"family":"Inter"}},
+                    "nodes":[{"id":"n1","transform":{"x":10,"y":20,"width":200,"height":40},
+                    "kind":{"type":"text","content":{"runs":[
+                        {"kind":"literal","text":"Hello","typeToken":"typeTokens.body"}]}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+            panic!("expected a text op");
+        };
+        assert_eq!(layout.segments.len(), 1);
+        assert_eq!(layout.segments[0].text, "Hello");
+        assert_eq!(layout.segments[0].style.family.as_deref(), Some("Inter"));
+        // 675 / 67.5 is the body role's share of the artboard height.
+        assert_eq!(layout.segments[0].style.size, 10.0);
+    }
+
+    #[test]
+    fn a_run_authored_size_wins_over_the_role_default() {
+        let (list, _) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
+                    "typeTokens":{"body":{"family":"Inter"}},
+                    "nodes":[{"id":"n1","transform":{"width":200,"height":40},
+                    "kind":{"type":"text","content":{"runs":[
+                        {"kind":"literal","text":"Hi","typeToken":"typeTokens.body","style":{"fontSize":{"value":42}}}]}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+            panic!("expected a text op");
+        };
+        assert_eq!(layout.segments[0].style.size, 42.0);
+    }
+
+    #[test]
+    fn a_value_run_reads_the_placeholder_until_a_sample_exists() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
+                    "typeTokens":{"body":{"family":"Inter"}},
+                    "nodes":[{"id":"n1","transform":{"width":200,"height":40},
+                    "kind":{"type":"text","content":{"runs":[
+                        {"kind":"value","bindingId":"cpu","typeToken":"typeTokens.body"}]}}}],
+                    "bindings":{"n1":[{"id":"cpu","semanticKey":"cpu.usage"}]}}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
+        assert!(issues[0].detail.contains("cpu"));
+        let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+            panic!("expected a text op");
+        };
+        assert_eq!(layout.segments[0].text, MISSING_VALUE_TEXT);
     }
 }

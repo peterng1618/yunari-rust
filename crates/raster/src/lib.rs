@@ -6,10 +6,14 @@
 
 use tiny_skia::{
     Color as SkiaColor, FillRule, LineCap, LineJoin, LinearGradient, Paint as SkiaPaint, Path,
-    PathBuilder, Pixmap, Point, Rect, Shader, SpreadMode, Stroke as SkiaStroke, Transform,
+    PathBuilder, Pixmap, PixmapPaint, Point, Rect, Shader, SpreadMode, Stroke as SkiaStroke,
+    Transform,
 };
 
-use yunari_render::{Affine, DisplayList, Paint, PathCommand, Shape};
+use yunari_render::text::{
+    ShapeBuffer, SwashCache, TextColor, TextLayout, TextMetrics, TextSegment, TextShaping, attrs,
+};
+use yunari_render::{Affine, DisplayList, Fonts, Paint, PathCommand, Shape};
 
 /// A rendered frame in straight (not premultiplied) RGBA8.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,7 +24,7 @@ pub struct Raster {
 }
 
 /// Draw the list at `scale` device pixels per artboard unit.
-pub fn render(list: &DisplayList, scale: f32) -> Raster {
+pub fn render(list: &DisplayList, scale: f32, fonts: &mut Fonts) -> Raster {
     let width = (list.width * scale).round().max(0.0) as u32;
     let height = (list.height * scale).round().max(0.0) as u32;
     let mut pixmap = match Pixmap::new(width, height) {
@@ -45,6 +49,10 @@ pub fn render(list: &DisplayList, scale: f32) -> Raster {
     }
 
     for op in &list.ops {
+        if let Shape::Text(layout) = &op.shape {
+            draw_text(&mut pixmap, layout, op.transform, scale, fonts);
+            continue;
+        }
         let Some(path) = shape_path(&op.shape) else {
             continue;
         };
@@ -78,8 +86,129 @@ pub fn render(list: &DisplayList, scale: f32) -> Raster {
     }
 }
 
-fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {
-    let Some(shader) = shader(paint) else {
+/// Paint a laid-out paragraph. Each segment is shaped at device scale into its
+/// own pixmap and composited through the op's transform, so a rotated or
+/// scaled text node carries its glyphs with it.
+fn draw_text(
+    pixmap: &mut Pixmap,
+    layout: &TextLayout,
+    transform: Affine,
+    scale: f32,
+    fonts: &mut Fonts,
+) {
+    let mut cache = SwashCache::new();
+    for segment in &layout.segments {
+        let size = (segment.style.size * scale).max(1.0);
+        let mut buffer = ShapeBuffer::new(fonts.system_mut(), TextMetrics::new(size, size * 1.2));
+        let mut extent = (0.0_f32, 0.0_f32);
+        {
+            let mut buffer = buffer.borrow_with(fonts.system_mut());
+            buffer.set_size(None, None);
+            buffer.set_text(
+                &segment.text,
+                &attrs(&segment.style),
+                TextShaping::Advanced,
+                None,
+            );
+            for run in buffer.layout_runs() {
+                extent.0 = extent.0.max(run.line_w);
+                extent.1 = extent.1.max(run.line_top + run.line_height);
+            }
+        }
+        let width = extent.0.ceil().max(1.0) as u32 + 2;
+        let height = extent.1.ceil().max(1.0) as u32 + 2;
+        let Some(mut glyphs) = Pixmap::new(width, height) else {
+            continue;
+        };
+        {
+            let mut buffer = buffer.borrow_with(fonts.system_mut());
+            buffer.draw(&mut cache, ink(segment), |x, y, _, _, pixel| {
+                blend(&mut glyphs, x, y, pixel);
+            });
+        }
+        let place = text_transform(transform, segment, scale);
+        pixmap.draw_pixmap(
+            0,
+            0,
+            glyphs.as_ref(),
+            &PixmapPaint::default(),
+            place,
+            None,
+        );
+    }
+}
+
+/// The tint a segment's pixels multiply against. Alpha lives in the style's
+/// colour, so the shaper keeps it.
+fn ink(segment: &TextSegment) -> TextColor {
+    TextColor::rgba(
+        segment.style.color.r,
+        segment.style.color.g,
+        segment.style.color.b,
+        segment.style.color.a,
+    )
+}
+
+/// Where a segment's device-scale pixmap lands: the pixel grid it was shaped on
+/// is device pixels already, so only the box-to-device transform applies.
+fn text_transform(transform: Affine, segment: &TextSegment, scale: f32) -> Transform {
+    let (x, y) = segment.origin;
+    let x = x * scale;
+    let y = y * scale;
+    Transform::from_row(
+        transform.a,
+        transform.b,
+        transform.c,
+        transform.d,
+        transform.a * x + transform.c * y + transform.e * scale,
+        transform.b * x + transform.d * y + transform.f * scale,
+    )
+}
+
+/// Source-over in the premultiplied space tiny-skia stores.
+fn blend(pixmap: &mut Pixmap, x: i32, y: i32, color: TextColor) {
+    if x < 0 || y < 0 {
+        return;
+    }
+    let (x, y) = (x as u32, y as u32);
+    if x >= pixmap.width() || y >= pixmap.height() {
+        return;
+    }
+    let alpha = f32::from(color.a()) / 255.0;
+    if alpha <= 0.0 {
+        return;
+    }
+    let index = (y * pixmap.width() + x) as usize;
+    let pixels = pixmap.pixels_mut();
+    let Some(destination) = pixels.get_mut(index) else {
+        return;
+    };
+    let under = destination.demultiply();
+    let (under_r, under_g, under_b) = (
+        f32::from(under.red()) / 255.0,
+        f32::from(under.green()) / 255.0,
+        f32::from(under.blue()) / 255.0,
+    );
+    let keep = f32::from(under.alpha()) / 255.0 * (1.0 - alpha);
+    let alpha_out = alpha + keep;
+    let channel = |source: u8, under: f32| -> u8 {
+        // Premultiplied: the source's colour scales by its own alpha, and the
+        // destination is already premultiplied.
+        let value = f32::from(source) / 255.0 * alpha + under * keep;
+        (value.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    let alpha_out_byte = (alpha_out.clamp(0.0, 1.0) * 255.0).round() as u8;
+    if let Some(pixel) = tiny_skia::PremultipliedColorU8::from_rgba(
+        channel(color.r(), under_r),
+        channel(color.g(), under_g),
+        channel(color.b(), under_b),
+        alpha_out_byte,
+    ) {
+        *destination = pixel;
+    }
+}
+
+fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {    let Some(shader) = shader(paint) else {
         return;
     };
     let skia_paint = SkiaPaint {
@@ -127,6 +256,8 @@ fn shader(paint: &Paint) -> Option<Shader<'_>> {
 
 fn shape_path(shape: &Shape) -> Option<Path> {
     match shape {
+        // Text is glyph pixels, not an outline: draw_text paints it.
+        Shape::Text(_) => None,
         Shape::Rect {
             width,
             height,
@@ -221,7 +352,7 @@ mod tests {
 
     fn list(json: &str) -> DisplayList {
         let document = yunari_model::document::parse_document(json).expect("fixture parses");
-        yunari_render::build(&document).0
+        yunari_render::build(&document, &mut Fonts::new()).0
     }
 
     fn pixel(raster: &Raster, x: u32, y: u32) -> [u8; 4] {
@@ -244,6 +375,7 @@ mod tests {
                     "style":{"fill":{"value":"#ff0000"}}}]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         assert_eq!(raster.width, 10);
         assert_eq!(pixel(&raster, 5, 5), [255, 0, 0, 255]);
@@ -260,6 +392,7 @@ mod tests {
                     "style":{"fill":{"value":"#00ff00"}}}]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         assert_eq!(pixel(&raster, 5, 5), [0, 255, 0, 255]);
         assert_eq!(pixel(&raster, 0, 0), [0, 0, 0, 0]);
@@ -273,6 +406,7 @@ mod tests {
                     "background":{"color":{"value":"#0000ff"}},"nodes":[]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         assert_eq!(pixel(&raster, 0, 0), [0, 0, 255, 255]);
     }
@@ -288,6 +422,7 @@ mod tests {
                     "transform":{"width":8,"height":8},"style":{"fill":{"ref":"palette.p"}}}]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         let left = pixel(&raster, 1, 4);
         let right = pixel(&raster, 6, 4);
@@ -307,6 +442,7 @@ mod tests {
                     "style":{"fill":{"value":"#ffffff"}}}]}"##,
             ),
             2.0,
+            &mut Fonts::new(),
         );
         assert_eq!((raster.width, raster.height), (10, 10));
         assert_eq!(pixel(&raster, 3, 3), [255, 255, 255, 255]);
@@ -323,6 +459,7 @@ mod tests {
                     "style":{"fill":{"value":"rgba(255, 0, 0, 0)"}}}]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         assert_eq!(pixel(&raster, 2, 2), [0, 0, 0, 0]);
     }
@@ -337,8 +474,30 @@ mod tests {
                     "style":{"fill":{"value":"#ffffff"},"opacity":{"value":0.5}}}]}"##,
             ),
             1.0,
+            &mut Fonts::new(),
         );
         assert_eq!(pixel(&raster, 1, 1), [255, 255, 255, 128]);
+    }
+
+    #[test]
+    fn a_text_node_paints_glyph_pixels_inside_its_box() {
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":120,"height":60},
+                    "typeTokens":{"body":{"family":"Inter"}},
+                    "nodes":[{"id":"n","transform":{"x":0,"y":0,"width":120,"height":60},
+                    "kind":{"type":"text","content":{"runs":[
+                        {"kind":"literal","text":"HELLO","typeToken":"typeTokens.body",
+                         "style":{"fontSize":{"value":40}}}]}}}]}"##,
+            ),
+            1.0,
+            &mut Fonts::new(),
+        );
+        let painted = (0..raster.height)
+            .flat_map(|y| (0..raster.width).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&raster, *x, *y)[3] > 0)
+            .count();
+        assert!(painted > 100, "glyphs painted {painted} pixels");
     }
 
     #[test]

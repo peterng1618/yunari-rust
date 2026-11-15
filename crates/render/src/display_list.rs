@@ -6,6 +6,7 @@
 
 use crate::affine::Affine;
 use crate::color::Color;
+use crate::text::TextLayout;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayList {
@@ -48,6 +49,9 @@ pub enum Shape {
         commands: Vec<PathCommand>,
         closed: bool,
     },
+    /// Placed glyph runs. The layout is already wrapped and positioned, so a
+    /// backend shapes what it is handed and paints it where it stands.
+    Text(TextLayout),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
