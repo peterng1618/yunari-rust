@@ -77,6 +77,23 @@ impl Affine {
         )
     }
 
+    /// The transform that undoes this one, or `None` when it flattens the
+    /// plane and nothing can be mapped back.
+    pub fn inverse(self) -> Option<Self> {
+        let determinant = self.a * self.d - self.b * self.c;
+        if determinant.abs() < 1e-9 {
+            return None;
+        }
+        Some(Self {
+            a: self.d / determinant,
+            b: -self.b / determinant,
+            c: -self.c / determinant,
+            d: self.a / determinant,
+            e: (self.c * self.f - self.d * self.e) / determinant,
+            f: (self.b * self.e - self.a * self.f) / determinant,
+        })
+    }
+
     /// A node's authored transform, in artboard units.
     ///
     /// Rotation and scale turn about the box's centre, which is the origin the
@@ -151,5 +168,17 @@ mod tests {
         let parent = Affine::from_node(&node(10.0, 0.0, 4.0, 4.0, 0.0, 1.0));
         let child = Affine::from_node(&node(5.0, 0.0, 2.0, 2.0, 0.0, 1.0));
         assert_close(parent.then(child).apply(0.0, 0.0), (15.0, 0.0));
+    }
+
+    #[test]
+    fn an_inverse_lands_back_on_the_point_it_moved() {
+        let affine = Affine::from_node(&node(3.0, 7.0, 20.0, 20.0, 30.0, 2.0));
+        let inverse = affine.inverse().expect("a turned, scaled box inverts");
+        assert_close(inverse.apply(affine.apply(11.0, 4.0).0, affine.apply(11.0, 4.0).1), (11.0, 4.0));
+    }
+
+    #[test]
+    fn a_flattened_transform_has_no_inverse() {
+        assert!(Affine::scale(0.0, 1.0).inverse().is_none());
     }
 }

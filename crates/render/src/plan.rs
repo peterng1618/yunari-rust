@@ -64,16 +64,47 @@ pub fn build(document: &ThemeDocument, fonts: &mut Fonts) -> (DisplayList, Vec<P
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
     let background = resolve_background(document, width, height, &mut issues);
+    let backdrop = resolve_backdrop(document, &mut issues);
     let mut list = DisplayList {
         width,
         height,
         background,
+        backdrop,
         ops: Vec::new(),
     };
     for node in &document.nodes {
         walk(document, fonts, node, Affine::IDENTITY, 1.0, &mut list, &mut issues);
     }
     (list, issues)
+}
+
+/// The page's picture, when the theme declares one. A simple background keeps
+/// no composition: it covers the box.
+fn resolve_backdrop(
+    document: &ThemeDocument,
+    issues: &mut Vec<PlanIssue>,
+) -> Option<crate::Backdrop> {
+    let media = document.background.media.as_ref()?;
+    let Some(asset) = document
+        .assets
+        .iter()
+        .find(|asset| asset.id == media.asset_id)
+    else {
+        issues.push(PlanIssue {
+            code: IssueCode::UnresolvedGlobal,
+            node_id: None,
+            detail: format!("background media asset {} is not declared.", media.asset_id),
+        });
+        return None;
+    };
+    Some(crate::Backdrop {
+        asset_id: media.asset_id.clone(),
+        path: asset.path.clone(),
+        composition: crate::background::active(&document.background).cloned(),
+        geometry: crate::background::Geometry::of(Some(media)),
+        flip_x: media.flip_x,
+        flip_y: media.flip_y,
+    })
 }
 
 /// One owner for "where the page paint lives": the media's colour when a
@@ -182,7 +213,60 @@ fn walk(
                 }));
             None
         }
-        NodeKind::Image { .. } | NodeKind::Video { .. } => None,
+        NodeKind::Image { content } => {
+            carries_own_paint = true;
+            let monochrome = content.monochrome.as_ref().and_then(|value| {
+                match resolve_paint(
+                    document,
+                    value,
+                    Some(&node.id),
+                    &format!("nodes/{}/image/monochrome", node.id),
+                    issues,
+                )? {
+                    PaintSpec::Solid(color) => Some(scale_alpha(color, opacity)),
+                    // A mask is one colour; a ramp would have to choose a
+                    // pixel's colour from its position, which is not a mask.
+                    PaintSpec::Gradient { .. } => {
+                        issues.push(PlanIssue {
+                            code: IssueCode::UnreadablePaint,
+                            node_id: Some(node.id.clone()),
+                            detail: "A monochrome mask is a single colour.".into(),
+                        });
+                        None
+                    }
+                }
+            });
+            match document
+                .assets
+                .iter()
+                .find(|asset| asset.id == content.asset_id)
+            {
+                Some(asset) => Some(Shape::Image {
+                    asset_id: content.asset_id.clone(),
+                    path: asset.path.clone(),
+                    width: box_width,
+                    height: box_height,
+                    fit: content.fit,
+                    monochrome,
+                }),
+                None => {
+                    issues.push(PlanIssue {
+                        code: IssueCode::UnresolvedGlobal,
+                        node_id: Some(node.id.clone()),
+                        detail: format!("asset {} is not declared.", content.asset_id),
+                    });
+                    None
+                }
+            }
+        }
+        NodeKind::Video { .. } => {
+            issues.push(PlanIssue {
+                code: IssueCode::UnsupportedContent,
+                node_id: Some(node.id.clone()),
+                detail: "Video needs a media player, which this frame does not open.".into(),
+            });
+            None
+        }
     };
 
     if let Some(shape) = shape {
@@ -768,17 +852,70 @@ mod tests {
     }
 
     #[test]
-    fn a_chart_family_that_is_not_drawn_yet_says_so() {
+    fn a_video_node_says_it_needs_a_player() {
         let (list, issues) = build(
             &document(
                 r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
-                    "nodes":[{"id":"c","transform":{"width":200,"height":200},
-                    "kind":{"type":"chart","content":{"family":"pie","settings":{}}}}]}"##,
+                    "assets":[{"id":"clip","kind":"video","path":"assets/clip.mp4"}],
+                    "nodes":[{"id":"v","transform":{"width":200,"height":200},
+                    "kind":{"type":"video","content":{"assetId":"clip"}}}]}"##,
             ),
             &mut Fonts::new(),
         );
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
+    }
+
+    #[test]
+    fn an_image_node_carries_its_asset_fit_and_box() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                    "assets":[{"id":"logo","kind":"image","path":"assets/logo.png"}],
+                    "nodes":[{"id":"i","transform":{"x":10,"y":20,"width":120,"height":80},
+                    "kind":{"type":"image","content":{"assetId":"logo","fit":"cover"}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let Some(Shape::Image {
+            asset_id,
+            path,
+            width,
+            height,
+            fit,
+            monochrome,
+        }) = list.ops.first().map(|op| &op.shape)
+        else {
+            panic!("expected an image op");
+        };
+        assert_eq!(asset_id, "logo");
+        assert_eq!(path, "assets/logo.png");
+        assert_eq!((*width, *height), (120.0, 80.0));
+        assert_eq!(*fit, yunari_model::document::ImageFit::Cover);
+        assert_eq!(*monochrome, None);
+        assert_eq!(list.ops[0].transform.apply(0.0, 0.0), (10.0, 20.0));
+    }
+
+    #[test]
+    fn an_image_mask_resolves_its_palette_colour_and_node_opacity() {
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                    "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ff0000"}}},
+                    "assets":[{"id":"icon","kind":"image","path":"assets/icon.png"}],
+                    "nodes":[{"id":"i","transform":{"width":40,"height":40},
+                    "style":{"opacity":{"value":0.5}},
+                    "kind":{"type":"image","content":{"assetId":"icon",
+                    "monochrome":{"ref":"palette.ink"}}}}]}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let Some(Shape::Image { monochrome, .. }) = list.ops.first().map(|op| &op.shape) else {
+            panic!("expected an image op");
+        };
+        assert_eq!(*monochrome, Some(Color::rgb(255, 0, 0).with_alpha(128)));
     }
 
     #[test]
