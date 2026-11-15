@@ -7,6 +7,7 @@ members = [
     "crates/providers",
     "crates/library",
     "crates/editor",
+    "crates/player",
     "crates/render",
     "crates/raster",
     "crates/render-gpui",
@@ -29,6 +30,7 @@ sysinfo = "0.40"
 image = "0.25"
 proptest = "1"
 yunari-model = { path = "crates/model" }
+yunari-player = { path = "crates/player" }
 yunari-editor = { path = "crates/editor" }
 yunari-library = { path = "crates/library" }
 yunari-providers = { path = "crates/providers" }

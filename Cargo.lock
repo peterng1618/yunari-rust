@@ -8411,11 +8411,7 @@ name = "yunari-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
- "yunari-model",
- "yunari-providers",
- "yunari-render",
- "yunari-render-gpui",
- "yunari-render-raster",
+ "yunari-player",
 ]
 
 [[package]]
@@ -8455,6 +8451,18 @@ dependencies = [
  "serde_ignored",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "yunari-player"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "yunari-model",
+ "yunari-providers",
+ "yunari-render",
+ "yunari-render-gpui",
+ "yunari-render-raster",
 ]
 
 [[package]]
