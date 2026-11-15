@@ -8174,7 +8174,10 @@ name = "yunari-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
- "yunari-theme",
+ "yunari-model",
+ "yunari-render",
+ "yunari-render-gpui",
+ "yunari-render-raster",
 ]
 
 [[package]]
@@ -8206,9 +8209,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunari-render-gpui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "image",
+ "yunari-render",
+ "yunari-render-raster",
+]
+
+[[package]]
 name = "yunari-render-raster"
 version = "0.1.0"
 dependencies = [
+ "image",
  "tiny-skia",
  "yunari-golden",
  "yunari-model",

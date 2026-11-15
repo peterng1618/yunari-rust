@@ -6,6 +6,7 @@ members = [
     "crates/golden",
     "crates/render",
     "crates/raster",
+    "crates/render-gpui",
     "crates/app",
 ]
 
@@ -23,6 +24,7 @@ thiserror = "2"
 image = "0.25"
 proptest = "1"
 yunari-model = { path = "crates/model" }
-yunari-theme = { path = "crates/theme" }
 yunari-render = { path = "crates/render" }
 yunari-golden = { path = "crates/golden" }
+yunari-render-gpui = { path = "crates/render-gpui" }
+yunari-render-raster = { path = "crates/raster" }

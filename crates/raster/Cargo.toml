@@ -6,9 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+image.workspace = true
 tiny-skia = "0.11"
+yunari-model.workspace = true
 yunari-render.workspace = true
 
 [dev-dependencies]
 yunari-golden.workspace = true
-yunari-model.workspace = true

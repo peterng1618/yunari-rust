@@ -74,7 +74,7 @@ fn the_fixture_theme_matches_its_golden() {
     let (list, issues) = yunari_render::build(&document, &mut fonts);
     assert!(issues.is_empty(), "{issues:?}");
 
-    let raster = yunari_render_raster::render(&list, 1.0, &mut fonts);
+    let raster = yunari_render_raster::render(&list, 1.0, Some(&mut fonts), None);
     assert_eq!((raster.width, raster.height), (320, 180));
 
     assert_golden(

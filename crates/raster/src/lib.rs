@@ -10,10 +10,13 @@ use tiny_skia::{
     Transform,
 };
 
+mod images;
+pub use images::{Decoded, Images};
+
 use yunari_render::text::{
     ShapeBuffer, SwashCache, TextColor, TextLayout, TextMetrics, TextSegment, TextShaping, attrs,
 };
-use yunari_render::{Affine, DisplayList, Fonts, Paint, PathCommand, Shape};
+use yunari_render::{Affine, Color, DisplayList, Fonts, Paint, PathCommand, Shape};
 
 /// A rendered frame in straight (not premultiplied) RGBA8.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +27,16 @@ pub struct Raster {
 }
 
 /// Draw the list at `scale` device pixels per artboard unit.
-pub fn render(list: &DisplayList, scale: f32, fonts: &mut Fonts) -> Raster {
+///
+/// Text needs a font database and pictures need decoded bytes; passing neither
+/// draws everything else and leaves those ops absent, which is what a frame
+/// with no assets to read should show.
+pub fn render(
+    list: &DisplayList,
+    scale: f32,
+    mut fonts: Option<&mut Fonts>,
+    mut images: Option<&mut Images>,
+) -> Raster {
     let width = (list.width * scale).round().max(0.0) as u32;
     let height = (list.height * scale).round().max(0.0) as u32;
     let mut pixmap = match Pixmap::new(width, height) {
@@ -48,9 +60,40 @@ pub fn render(list: &DisplayList, scale: f32, fonts: &mut Fonts) -> Raster {
         pixmap.fill(SkiaColor::TRANSPARENT);
     }
 
+    if let (Some(backdrop), Some(store)) = (&list.backdrop, images.as_deref_mut())
+        && let Some(asset) = store.load(&backdrop.path)
+    {
+        draw_backdrop(&mut pixmap, asset, list, backdrop, scale);
+    }
+
     for op in &list.ops {
         if let Shape::Text(layout) = &op.shape {
-            draw_text(&mut pixmap, layout, op.transform, scale, fonts);
+            if let Some(fonts) = fonts.as_deref_mut() {
+                draw_text(&mut pixmap, layout, op.transform, scale, fonts);
+            }
+            continue;
+        }
+        if let Shape::Image {
+            path,
+            width,
+            height,
+            fit,
+            monochrome,
+            ..
+        } = &op.shape
+        {
+            let Some(asset) = images.as_deref_mut().and_then(|store| store.load(path)) else {
+                continue;
+            };
+            draw_image(
+                &mut pixmap,
+                asset,
+                (*width, *height),
+                *fit,
+                *monochrome,
+                op.transform,
+                scale,
+            );
             continue;
         }
         let Some(path) = shape_path(&op.shape) else {
@@ -208,6 +251,171 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, color: TextColor) {
     }
 }
 
+/// Paint the page's picture where the composition puts it, faded into the fill
+/// by its ramps.
+fn draw_backdrop(
+    pixmap: &mut Pixmap,
+    asset: &Decoded,
+    list: &DisplayList,
+    backdrop: &yunari_render::Backdrop,
+    scale: f32,
+) {
+    if asset.width == 0 || asset.height == 0 {
+        return;
+    }
+    let placed = yunari_render::background::resolve(
+        (list.width, list.height),
+        backdrop.composition.as_ref(),
+        Some((asset.width as f32, asset.height as f32)),
+        backdrop.geometry,
+    );
+    let Some(media) = placed.media else {
+        return;
+    };
+    let (cover, dest) = (media.cover, media.dest);
+    if cover.width <= 0.0 || cover.height <= 0.0 {
+        return;
+    }
+    let left = (dest.left * scale).floor().max(0.0) as i64;
+    let top = (dest.top * scale).floor().max(0.0) as i64;
+    let right = ((dest.left + dest.width) * scale).ceil().min(pixmap.width() as f32) as i64;
+    let bottom = ((dest.top + dest.height) * scale).ceil().min(pixmap.height() as f32) as i64;
+    for y in top..bottom {
+        for x in left..right {
+            let (box_x, box_y) = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
+            let u = (box_x - cover.left) / cover.width;
+            let v = (box_y - cover.top) / cover.height;
+            let alpha = fade_alpha(&placed.masks, box_x, box_y);
+            if alpha <= 0.0 {
+                continue;
+            }
+            let u = if backdrop.flip_x { 1.0 - u } else { u };
+            let v = if backdrop.flip_y { 1.0 - v } else { v };
+            let texel = sample(asset, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+            let scaled_alpha = (f32::from(texel[3]) * alpha).round() as u8;
+            blend(
+                pixmap,
+                x as i32,
+                y as i32,
+                TextColor::rgba(texel[0], texel[1], texel[2], scaled_alpha),
+            );
+        }
+    }
+}
+
+/// The ramps' combined alpha at a point: each mask is transparent on one side
+/// of its axis and opaque on the other, and the layers add.
+fn fade_alpha(masks: &[yunari_render::background::Mask], x: f32, y: f32) -> f32 {
+    if masks.is_empty() {
+        return 1.0;
+    }
+    let mut alpha = 0.0;
+    for mask in masks {
+        let run_x = mask.x2 - mask.x1;
+        let run_y = mask.y2 - mask.y1;
+        let span = run_x * run_x + run_y * run_y;
+        let t = if span <= f32::EPSILON {
+            1.0
+        } else {
+            ((x - mask.x1) * run_x + (y - mask.y1) * run_y) / span
+        };
+        alpha += yunari_render::background::blend_ramp(t);
+    }
+    alpha.min(1.0)
+}
+
+/// Paint a picture into its box, fitted and clipped, sampled per device pixel.
+///
+/// The picture is resampled here rather than scaled through tiny-skia's pixmap
+/// transform, so `contain`'s empty margin and `cover`'s overflow are the same
+/// rectangle the display list computed, whatever the node's turn or scale.
+fn draw_image(
+    pixmap: &mut Pixmap,
+    asset: &Decoded,
+    box_: (f32, f32),
+    fit: yunari_model::document::ImageFit,
+    monochrome: Option<Color>,
+    transform: Affine,
+    scale: f32,
+) {
+    if asset.width == 0 || asset.height == 0 {
+        return;
+    }
+    let place = yunari_render::placement(
+        (asset.width as f32, asset.height as f32),
+        box_,
+        fit,
+    );
+    if place.width <= 0.0 || place.height <= 0.0 {
+        return;
+    }
+    let to_device = transform.then(Affine::scale(scale, scale));
+    let Some(to_box) = to_device.inverse() else {
+        return;
+    };
+    let corners = [(0.0, 0.0), (box_.0, 0.0), (0.0, box_.1), (box_.0, box_.1)];
+    let mut low = (f32::INFINITY, f32::INFINITY);
+    let mut high = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for (x, y) in corners {
+        let device = to_device.apply(x, y);
+        low = (low.0.min(device.0), low.1.min(device.1));
+        high = (high.0.max(device.0), high.1.max(device.1));
+    }
+    let left = low.0.floor().max(0.0) as i64;
+    let top = low.1.floor().max(0.0) as i64;
+    let right = high.0.ceil().min(pixmap.width() as f32) as i64;
+    let bottom = high.1.ceil().min(pixmap.height() as f32) as i64;
+    for y in top..bottom {
+        for x in left..right {
+            let (box_x, box_y) = to_box.apply(x as f32 + 0.5, y as f32 + 0.5);
+            if box_x < 0.0 || box_y < 0.0 || box_x > box_.0 || box_y > box_.1 {
+                continue;
+            }
+            let u = (box_x - place.x) / place.width;
+            let v = (box_y - place.y) / place.height;
+            if !(-0.002..=1.002).contains(&u) || !(-0.002..=1.002).contains(&v) {
+                continue;
+            }
+            let texel = sample(asset, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+            let colour = match monochrome {
+                // A mask: the picture's shape is its alpha, its colour is the
+                // paint, and the paint's own alpha still applies.
+                Some(tint) => TextColor::rgba(
+                    tint.r,
+                    tint.g,
+                    tint.b,
+                    (u16::from(texel[3]) * u16::from(tint.a) / 255) as u8,
+                ),
+                None => TextColor::rgba(texel[0], texel[1], texel[2], texel[3]),
+            };
+            blend(pixmap, x as i32, y as i32, colour);
+        }
+    }
+}
+
+/// One texel at a point in the picture, bilinearly interpolated so a scaled
+/// picture does not shimmer.
+fn sample(asset: &Decoded, u: f32, v: f32) -> [u8; 4] {
+    let x = (u * asset.width as f32 - 0.5).clamp(0.0, (asset.width - 1) as f32);
+    let y = (v * asset.height as f32 - 0.5).clamp(0.0, (asset.height - 1) as f32);
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(asset.width - 1);
+    let y1 = (y0 + 1).min(asset.height - 1);
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let mut texel = [0_u8; 4];
+    for (channel, byte) in texel.iter_mut().enumerate() {
+        let at = |px: u32, py: u32| {
+            f32::from(asset.rgba[((py * asset.width + px) * 4) as usize + channel])
+        };
+        let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+        let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+        *byte = (top + (bottom - top) * fy).round().clamp(0.0, 255.0) as u8;
+    }
+    texel
+}
+
 fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {    let Some(shader) = shader(paint) else {
         return;
     };
@@ -258,6 +466,8 @@ fn shape_path(shape: &Shape) -> Option<Path> {
     match shape {
         // Text is glyph pixels, not an outline: draw_text paints it.
         Shape::Text(_) => None,
+        // A picture is its texels: draw_image paints it.
+        Shape::Image { .. } => None,
         Shape::Rect {
             width,
             height,
@@ -375,7 +585,8 @@ mod tests {
                     "style":{"fill":{"value":"#ff0000"}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!(raster.width, 10);
         assert_eq!(pixel(&raster, 5, 5), [255, 0, 0, 255]);
@@ -392,7 +603,8 @@ mod tests {
                     "style":{"fill":{"value":"#00ff00"}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!(pixel(&raster, 5, 5), [0, 255, 0, 255]);
         assert_eq!(pixel(&raster, 0, 0), [0, 0, 0, 0]);
@@ -406,7 +618,8 @@ mod tests {
                     "background":{"color":{"value":"#0000ff"}},"nodes":[]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!(pixel(&raster, 0, 0), [0, 0, 255, 255]);
     }
@@ -422,7 +635,8 @@ mod tests {
                     "transform":{"width":8,"height":8},"style":{"fill":{"ref":"palette.p"}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         let left = pixel(&raster, 1, 4);
         let right = pixel(&raster, 6, 4);
@@ -442,7 +656,8 @@ mod tests {
                     "style":{"fill":{"value":"#ffffff"}}}]}"##,
             ),
             2.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!((raster.width, raster.height), (10, 10));
         assert_eq!(pixel(&raster, 3, 3), [255, 255, 255, 255]);
@@ -459,7 +674,8 @@ mod tests {
                     "style":{"fill":{"value":"rgba(255, 0, 0, 0)"}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!(pixel(&raster, 2, 2), [0, 0, 0, 0]);
     }
@@ -474,7 +690,8 @@ mod tests {
                     "style":{"fill":{"value":"#ffffff"},"opacity":{"value":0.5}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         assert_eq!(pixel(&raster, 1, 1), [255, 255, 255, 128]);
     }
@@ -491,7 +708,8 @@ mod tests {
                          "style":{"fontSize":{"value":40}}}]}}}]}"##,
             ),
             1.0,
-            &mut Fonts::new(),
+            Some(&mut Fonts::new()),
+            None,
         );
         let painted = (0..raster.height)
             .flat_map(|y| (0..raster.width).map(move |x| (x, y)))
@@ -503,5 +721,140 @@ mod tests {
     #[test]
     fn color_type_is_the_render_crates() {
         assert_eq!(Color::rgb(1, 2, 3).channels(), [1, 2, 3, 255]);
+    }
+
+    /// A directory that owns `assets/pic.png`, a solid `color` square.
+    fn image_fixture(tag: &str, color: [u8; 3]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("yunari-image-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("assets")).expect("a place for the picture");
+        let mut picture = image::RgbaImage::new(2, 2);
+        for pixel in picture.pixels_mut() {
+            *pixel = image::Rgba([color[0], color[1], color[2], 255]);
+        }
+        picture
+            .save(dir.join("assets/pic.png"))
+            .expect("the picture is written");
+        dir
+    }
+
+    #[test]
+    fn an_image_node_paints_its_picture_inside_its_box() {
+        let dir = image_fixture("stretch", [255, 0, 0]);
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":8,"height":8},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[{"id":"n","kind":{"type":"image",
+                    "content":{"assetId":"pic","fit":"stretch"}},
+                    "transform":{"x":2,"y":2,"width":4,"height":4}}]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        assert_eq!(pixel(&raster, 3, 3), [255, 0, 0, 255]);
+        assert_eq!(pixel(&raster, 0, 0), [0, 0, 0, 0]);
+        assert_eq!(pixel(&raster, 6, 6), [0, 0, 0, 0]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn contain_keeps_the_pictures_shape_and_leaves_the_margin_empty() {
+        let dir = image_fixture("contain", [0, 0, 255]);
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":8,"height":4},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[{"id":"n","kind":{"type":"image",
+                    "content":{"assetId":"pic","fit":"contain"}},
+                    "transform":{"x":0,"y":0,"width":8,"height":4}}]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        // A square picture in a wide box: centred, four units wide.
+        assert_eq!(pixel(&raster, 1, 1), [0, 0, 0, 0]);
+        assert_eq!(pixel(&raster, 4, 2), [0, 0, 255, 255]);
+        assert_eq!(pixel(&raster, 6, 2), [0, 0, 0, 0]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_monochrome_picture_draws_its_alpha_in_the_paint_colour() {
+        let dir = image_fixture("mask", [0, 0, 0]);
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                    "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ff0000"}}},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[{"id":"n","kind":{"type":"image",
+                    "content":{"assetId":"pic","fit":"stretch","monochrome":{"ref":"palette.ink"}}},
+                    "transform":{"x":0,"y":0,"width":4,"height":4}}]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        assert_eq!(pixel(&raster, 2, 2), [255, 0, 0, 255]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_backdrop_covers_the_page_behind_its_nodes() {
+        let dir = image_fixture("backdrop", [0, 0, 255]);
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                    "background":{"media":{"assetId":"pic","bounds":"theme",
+                    "color":{"value":"#000000"}}},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        assert_eq!(pixel(&raster, 2, 2), [0, 0, 255, 255]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_advanced_top_band_leaves_the_fill_below_it() {
+        let dir = image_fixture("top-band", [0, 0, 255]);
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                    "background":{"mode":"advanced",
+                    "media":{"assetId":"pic","bounds":"theme",
+                    "color":{"value":"#ff0000"},
+                    "composition":{"anchor":"top","extent":0.5}}},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        assert_eq!(pixel(&raster, 2, 1), [0, 0, 255, 255]);
+        assert_eq!(pixel(&raster, 2, 3), [255, 0, 0, 255]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_picture_with_no_source_draws_nothing() {
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[{"id":"n","kind":{"type":"image",
+                    "content":{"assetId":"pic","fit":"stretch"}},
+                    "transform":{"x":0,"y":0,"width":4,"height":4}}]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::empty()),
+        );
+        assert_eq!(pixel(&raster, 2, 2), [0, 0, 0, 0]);
     }
 }

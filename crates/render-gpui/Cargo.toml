@@ -1,0 +1,12 @@
+[package]
+name = "yunari-render-gpui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui-kit = "0.9.1"
+image.workspace = true
+yunari-render.workspace = true
+yunari-render-raster = { path = "../raster" }

@@ -7,4 +7,7 @@ license.workspace = true
 
 [dependencies]
 gpui-kit = "0.9.1"
-yunari-theme.workspace = true
+yunari-model.workspace = true
+yunari-render.workspace = true
+yunari-render-gpui.workspace = true
+yunari-render-raster.workspace = true
