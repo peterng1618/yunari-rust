@@ -87,20 +87,20 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 **Interfaces:**
 - Produces: `write_package(&ThemeDocument, &BTreeMap<String, Vec<u8>>, Option<&[u8]>) -> Result<Vec<u8>, String>`; `read_package(&[u8]) -> Result<Package { document, assets, thumbnail }, String>`; `import_into(library, package) -> Result<Saved, LibraryError>` (choose the first free id from `<id>`, `<id>-2`, … `-100`, else `<id>-<6 hex>`).
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `a_written_package_reads_back_with_its_assets` — document with one asset `assets/a.png`, bytes `[1,2,3]`; round-trip yields the same document JSON and assets.
   - `a_package_without_a_manifest_is_refused` — zip containing only `theme.json`.
   - `a_package_naming_an_undeclared_asset_is_refused` — manifest + theme.json + `assets/b.png` not declared.
   - `a_package_over_the_entry_cap_is_refused` — 129 entries.
   - `import_never_overwrites` — library already has `alpha`; import returns id `alpha-2`.
 
-- [ ] **Step 2: Run tests to verify they fail.** `cargo test -p yunari-library package`.
+- [x] **Step 2: Run tests to verify they fail.** `cargo test -p yunari-library package`.
 
-- [ ] **Step 3: Implement `package.rs`.** Manifest exactly `{"format":"yunari-theme-package","kind":"theme","version":1,"theme":"theme.json"}`, optional `"thumbnail":"thumbnail.png"` and `"credits":"credits.json"`. Zip written at compression level 6. Reader refuses: file not a zip; any entry name outside the allowed set; more than 128 entries; central directory over 8 MiB; archive over 95 MiB; expanded content over 180 MiB; entry over 80 MiB; entry names containing `..` or starting with `/`; a thumbnail over 2 MiB or without the PNG signature; undeclared assets or declared assets with no file. Asset names must match `/^assets\/[A-Za-z0-9._\/-]{1,200}$/`.
+- [x] **Step 3: Implement `package.rs`.** Manifest exactly `{"format":"yunari-theme-package","kind":"theme","version":1,"theme":"theme.json"}`, optional `"thumbnail":"thumbnail.png"` and `"credits":"credits.json"`. Zip written at compression level 6. Reader refuses: file not a zip; any entry name outside the allowed set; more than 128 entries; central directory over 8 MiB; archive over 95 MiB; expanded content over 180 MiB; entry over 80 MiB; entry names containing `..` or starting with `/`; a thumbnail over 2 MiB or without the PNG signature; undeclared assets or declared assets with no file. Asset names must match `/^assets\/[A-Za-z0-9._\/-]{1,200}$/`.
 
-- [ ] **Step 4: Run tests to verify they pass**; clippy.
+- [x] **Step 4: Run tests to verify they pass**; clippy.
 
-- [ ] **Step 5: Commit.** `feat(library): export and import a theme package`
+- [x] **Step 5: Commit.** `feat(library): export and import a theme package`
 
 ### Task 3: `yunari-editor` — document, history, baseline
 

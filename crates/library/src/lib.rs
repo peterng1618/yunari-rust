@@ -6,6 +6,7 @@
 //! re-expands. A save is bounded, validated and swapped into place, and the
 //! base it returns is the identity a later save is written against.
 
+pub mod package;
 pub mod store;
 
 pub use store::{
