@@ -74,14 +74,18 @@ mutex across the UI. A driver panic stops only that display's runner.
 A versioned JSON envelope holding authored state only:
 
 - `schemaVersion` (`1.0.0`), `id`, `metadata` (name, author, description,
-  language, tags, remix provenance, timestamps).
+  version, theme language, tags, remix provenance, timestamps).
 - `artboard { width, height, contentFit, shape: rect | circle }`.
 - `background`: page paint plus optional media (asset, bounds `theme|display`,
   offset, scale, flips, fallback frame, and for an advanced background the
   anchor/extent/fade composition). One owner for the paint: media colour when
   media exists, background colour otherwise; both present is refused.
-- `palette`, `typeTokens`, `assets` (image, svg, gif, video, font), `bindings`.
-- Nodes: `group | rect | ellipse | line | path | text | chart | image | video`,
+- `palette` (each token is a display name and a solid or gradient paint),
+  `typeTokens` (family, named or numeric weight, optional packaged face),
+  `assets` (image, svg, gif, video, font — a font asset also declares the
+  family, weight, style, format and optional subset it registers), `bindings`,
+  and `editorMetadata` for editor-owned data a renderer never reads.
+- Nodes: `group | rectangle | ellipse | line | path | text | chart | image | video`,
   stable IDs, parent-local transforms, visibility, lock, style map with token
   references or literals. Properties the current inspector exposes are ported
   as-is; no new authoring capability is invented.
