@@ -278,3 +278,30 @@ integrations and store after the core product works.
 - Whether the store Worker deployment is reused unchanged or also rewritten.
 - Keeping the `yunari-theme-designer` agent skill aligned with the native MCP
   server's tool surface.
+
+## Phase status
+
+Recorded as each phase's exit is met, with the evidence that met it.
+
+**Phase 1 — met (2026-11-16).**
+
+- One fixture theme renders in a window: `crates/app` opens a 640x380 window
+  painting `crates/app/assets/fixture.json` through `render-gpui`; verified by
+  launching it and capturing the window's pixels.
+- …and to pixels within tolerance: `crates/raster/tests/fixture.rs` holds the
+  same document to `goldens/fixture-theme.png`.
+- Glass decision recorded: `2026-11-16-glass-backdrop-probe.md`, and adopted —
+  glass is a display-list op resolved by the raster backend, painted as an
+  image by the GPUI backend.
+- Delivered beyond the exit criterion: text layout owned by `yunari-render`
+  (cosmic-text), all six chart families as native geometry, image nodes with
+  contain/cover/stretch and monochrome masks, and advanced background media
+  composition (anchor, extent, fade, pan, zoom, flip).
+- Deviation: phase 1 has no separate implementation plan document. The spec's
+  phase table was used as the plan; tasks were scoped per render concern.
+- Deferred: video decode. The node and background report
+  `UnsupportedContent` rather than drawing a still without saying so. It lands
+  with the panel baking in phase 5, which needs the decoder first; the `media`
+  crate's seam is a frame-at-time reader so window and panel share it.
+- Deferred: packed font faces (woff2) — system faces and TTF/OTF registration
+  cover the fixture and the editor; woff2 needs a decompressor dependency.
