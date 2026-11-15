@@ -79,9 +79,9 @@
 
 **Files:** create `crates/providers/src/system.rs`; add `sysinfo` dependency.
 
-- [ ] **Step 1:** `cpu.load`, `ram.used`, `ram.total`, `ram.percent`, one `disk.<slug>.*` set per mounted disk, and one `network.<slug>.download|upload` set per interface, each with the vocabulary's unit and the `baseline` tier.
-- [ ] **Step 2:** Tests with an injected snapshot (the sysinfo calls behind a small `Snapshot` trait) so expectations do not depend on the machine: two disks produce two key sets; an absent reading is `Missing`, not `0`.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** `cpu.load`, `ram.used`, `ram.total`, `ram.percent`, one `disk.<slug>.*` set per mounted disk, and one `network.<slug>.download|upload` set per interface, each with the vocabulary's unit and the `baseline` tier.
+- [x] **Step 2:** Tests with an injected snapshot (the sysinfo calls behind a small `Snapshot` trait) so expectations do not depend on the machine: two disks produce two key sets; an absent reading is `Missing`, not `0`.
+- [x] **Step 3:** Commit.
 
 ### Task 6: Sampler
 
