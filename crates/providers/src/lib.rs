@@ -6,5 +6,8 @@
 //! formats a number or converts a unit: a reading stays as measured until it is
 //! presented.
 
+pub mod provider;
+pub mod registry;
+pub mod sample;
 pub mod units;
 pub mod vocabulary;

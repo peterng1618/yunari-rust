@@ -63,9 +63,9 @@
 **Interfaces:**
 - Produces: `Reading { semantic_key, status, value, unit, text, instant, message }`, `Status { Ok, Missing, Error }`; trait `Provider { fn id(&self) -> &str; fn label(&self) -> &str; fn describe(&self) -> Vec<Descriptor>; fn sample(&self, keys: &[String], now_ms: u64) -> Result<Vec<Reading>, String>; fn health(&self) -> Health }`; `Registry::{new, add, describe, sample(&[Ask]) -> Cycle}`, `Cycle { readings, failures, unmapped }`.
 
-- [ ] **Step 1:** Registry unions the asks' keys, sorts them, polls each provider once with that union, and marks every requested key no provider answered as unmapped.
-- [ ] **Step 2:** Tests: one poll for two asks with overlapping keys; a provider returning Err leaves other readings and reports a failure; a key no provider knows is unmapped exactly once; a provider that answers a key it was not asked for is ignored.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Registry unions the asks' keys, sorts them, polls each provider once with that union, and marks every requested key no provider answered as unmapped.
+- [x] **Step 2:** Tests: one poll for two asks with overlapping keys; a provider returning Err leaves other readings and reports a failure; a key no provider knows is unmapped exactly once; a provider that answers a key it was not asked for is ignored.
+- [x] **Step 3:** Commit.
 
 ### Task 4: Clock provider
 
