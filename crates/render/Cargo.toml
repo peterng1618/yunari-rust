@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 yunari-model.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
