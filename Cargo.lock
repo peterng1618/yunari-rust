@@ -8263,6 +8263,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "yunari-model",
+ "yunari-providers",
  "yunari-render",
  "yunari-render-gpui",
  "yunari-render-raster",

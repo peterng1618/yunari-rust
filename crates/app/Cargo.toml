@@ -10,4 +10,5 @@ gpui-kit = "0.9.1"
 yunari-model.workspace = true
 yunari-render.workspace = true
 yunari-render-gpui.workspace = true
+yunari-providers.workspace = true
 yunari-render-raster.workspace = true

@@ -305,3 +305,31 @@ Recorded as each phase's exit is met, with the evidence that met it.
   crate's seam is a frame-at-time reader so window and panel share it.
 - Deferred: packed font faces (woff2) — system faces and TTF/OTF registration
   cover the fixture and the editor; woff2 needs a decompressor dependency.
+
+**Phase 2 — met (2026-11-16).** Plan:
+`docs/superpowers/plans/2026-11-16-yunari-phase-2-providers.md`.
+
+- A window shows real readings from this PC: `crates/app` polls the sampler on a
+  250 ms tick, re-plans on each due cycle, and repaints. Verified by launching it
+  against a theme binding `time.now` and `cpu.load` (both tick) plus one unknown
+  key; the log names the three keys as unread on the first frame, after which the
+  unknown key is the only gap and draws the em dash.
+- Any key nothing can read renders as a gap with its reason: `IssueCode` gains
+  `UnmappedKey`, `MissingReading` and `UnsupportedUnit`; the dash is never a zero
+  and the reason names the key.
+- Vocabulary: 101 built-in semantic keys with units, tiers and instant defaults,
+  plus the discovered device-scoped shapes, generated from the source table.
+- Unit conversion at presentation only, after a binding's authored scale/offset,
+  with a refused unit keeping the measured value.
+- Providers: clock (`jiff`, IANA zones with a local fallback) and baseline system
+  readings (`sysinfo` behind a `Snapshot` seam) — CPU load, memory, per-disk
+  usage, per-interface rates (a rate needs two samples and says so).
+- Registry unions every display's asks into one poll; a failing provider leaves
+  the other readings intact and its message is redacted to one bounded line.
+- Sampler paces polls by cadence, polls early when a key changes, and never
+  re-enters a provider because sampling is synchronous.
+- Deferred: theme language for month/weekday names and the decimal separator —
+  English until an editor language choice exists (`unicode`-free tables in
+  `crates/render/src/instant.rs`, comment marks the upgrade path).
+- Deferred: chart bindings still draw from authored data; charts read readings
+  when the chart plan takes a series source (phase 3 editor work).

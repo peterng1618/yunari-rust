@@ -11,7 +11,7 @@ mod format;
 pub mod image;
 pub mod instant;
 mod path;
-mod plan;
+pub mod plan;
 pub mod text;
 
 pub use affine::Affine;
@@ -22,7 +22,7 @@ pub use display_list::{
 pub use format::{format_number, format_unit};
 pub use image::{Placement, placement};
 pub use path::{PathError, parse as parse_path};
-pub use plan::{IssueCode, PlanIssue, build};
+pub use plan::{IssueCode, PlanIssue, build, build_with};
 pub mod reading;
 pub use reading::Readings;
 pub use text::{Fonts, TextStyle};

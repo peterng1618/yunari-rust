@@ -109,6 +109,6 @@
 
 **Files:** modify `crates/app/src/main.rs`.
 
-- [ ] **Step 1:** Poll the sampler on a timer, re-plan the frame on each changed cycle, and repaint the window.
-- [ ] **Step 2:** Exit check: run the app against a theme whose bindings name `time.now`, `cpu.load` and one unknown key; the first two tick and the third shows the em-dash with its reason in the log.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Poll the sampler on a timer, re-plan the frame on each changed cycle, and repaint the window.
+- [x] **Step 2:** Exit check: run the app against a theme whose bindings name `time.now`, `cpu.load` and one unknown key; the first two tick and the third shows the em-dash with its reason in the log.
+- [x] **Step 3:** Commit.
