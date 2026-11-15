@@ -8174,7 +8174,6 @@ name = "yunari-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
- "yunari-model",
  "yunari-theme",
 ]
 
