@@ -8419,6 +8419,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunari-editor"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yunari-library",
+ "yunari-model",
+]
+
+[[package]]
 name = "yunari-golden"
 version = "0.1.0"
 dependencies = [

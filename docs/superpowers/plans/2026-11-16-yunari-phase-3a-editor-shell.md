@@ -112,7 +112,7 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 - Produces: `Editor::{new(document), document, document_mut_through(cmd), add_node, remove_nodes, rename_theme, set_metadata_name, undo, redo, can_undo, can_redo, is_dirty, saved_baseline, mark_saved(id, base), begin_burst, end_burst, source}`; `Source { Unsaved, Library { id: String, base: Option<String> } }`; `History::{new, commit, undo, redo, can_undo, can_redo, len}`.
 - The one mutation door: `Editor::edit(|document: &mut ThemeDocument| ...)` — snapshots before, mutates, commits after; a no-op edit commits nothing.
 
-- [ ] **Step 1: Write the failing tests** in `crates/editor/src/history.rs` and `document.rs`:
+- [x] **Step 1: Write the failing tests** in `crates/editor/src/history.rs` and `document.rs`:
   - `an_edit_is_one_entry_and_undo_restores_the_document`
   - `an_unchanged_document_records_no_entry`
   - `redo_is_dropped_by_a_new_edit`
@@ -121,13 +121,13 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
   - `dirty_is_derived_from_the_saved_document` — save, edit, undo → not dirty; edit differently → dirty.
   - `save_as_adopts_the_new_identity` — `mark_saved("beta", "hash")` sets `Source::Library { id: "beta", base: Some("hash") }`.
 
-- [ ] **Step 2: Run tests to verify they fail.** `cargo test -p yunari-editor`.
+- [x] **Step 2: Run tests to verify they fail.** `cargo test -p yunari-editor`.
 
-- [ ] **Step 3: Implement.** History holds `Vec<ThemeDocument>` (full snapshots — parity plus background/bindings, unlike the source's scene-only history) with index and cap 100. `Editor::edit` truncates redo, clones, compares to the current entry, pushes only when changed. `is_dirty` compares `serde_json::to_string(document)` to the baseline string captured by `mark_saved`. A burst sets a flag: the first edit inside it commits nothing and `end_burst` commits once.
+- [x] **Step 3: Implement.** History holds `Vec<ThemeDocument>` (full snapshots — parity plus background/bindings, unlike the source's scene-only history) with index and cap 100. `Editor::edit` truncates redo, clones, compares to the current entry, pushes only when changed. `is_dirty` compares `serde_json::to_string(document)` to the baseline string captured by `mark_saved`. A burst sets a flag: the first edit inside it commits nothing and `end_burst` commits once.
 
-- [ ] **Step 4: Run tests to verify they pass**; clippy.
+- [x] **Step 4: Run tests to verify they pass**; clippy.
 
-- [ ] **Step 5: Commit.** `feat(editor): one commit point for edits, history and dirty`
+- [x] **Step 5: Commit.** `feat(editor): one commit point for edits, history and dirty`
 
 ### Task 4: `yunari-editor` — save, open, export, import flows
 
