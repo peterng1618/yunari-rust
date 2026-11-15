@@ -140,15 +140,15 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 - `save` uses `Source::Unsaved` → `Conflict` unless `save_as` is used; a library source sends its base. `save_as` writes with `base: None` and then adopts the identity (before the baseline is marked, so the document is clean at birth).
 - A package import goes through `library::package::import_into` and is opened as an unsaved-for-this-id document whose `Source` is the new library entry.
 
-- [ ] **Step 1: Write the failing tests:**
+- [x] **Step 1: Write the failing tests:**
   - `a_first_save_as_adopts_the_identity_and_marks_clean`
   - `a_save_after_a_conflict_reports_it_and_stays_dirty`
   - `an_export_reads_back_as_the_same_document`
   - `an_imported_theme_gets_a_free_id`
 
-- [ ] **Step 2: Run to fail**, **Step 3: implement**, **Step 4: run to pass + clippy**.
+- [x] **Step 2: Run to fail**, **Step 3: implement**, **Step 4: run to pass + clippy**.
 
-- [ ] **Step 5: Commit.** `feat(editor): save, save-as, export and import flows`
+- [x] **Step 5: Commit.** `feat(editor): save, save-as, export and import flows`
 
 ### Task 5: `crates/player` — the live window finds its crate
 

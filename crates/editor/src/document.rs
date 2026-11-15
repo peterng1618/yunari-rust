@@ -4,6 +4,8 @@
 //! flag cannot disagree about what changed. Dirty is derived by comparing the
 //! document to the bytes last saved, never from an edit counter.
 
+use std::collections::BTreeMap;
+
 use yunari_library::{Saved, StoredTheme};
 use yunari_model::document::{Node, ThemeDocument};
 
@@ -27,6 +29,8 @@ pub struct Editor {
     /// Set while a gesture (a drag, a nudge burst) is in flight: edits change
     /// the document but record nothing until the gesture ends.
     burst: Option<ThemeDocument>,
+    /// The bytes of every asset the document declares, by path.
+    assets: BTreeMap<String, Vec<u8>>,
 }
 
 impl Editor {
@@ -36,6 +40,7 @@ impl Editor {
             saved: None,
             source: Source::Unsaved,
             burst: None,
+            assets: BTreeMap::new(),
         }
     }
 
@@ -50,6 +55,7 @@ impl Editor {
                 base: Some(stored.base),
             },
             burst: None,
+            assets: BTreeMap::new(),
         }
     }
 
@@ -59,6 +65,19 @@ impl Editor {
 
     pub fn source(&self) -> &Source {
         &self.source
+    }
+
+    pub fn assets(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.assets
+    }
+
+    /// Declares an asset's bytes. Storing the same bytes again changes nothing.
+    pub fn put_asset(&mut self, path: impl Into<String>, bytes: Vec<u8>) {
+        self.assets.insert(path.into(), bytes);
+    }
+
+    pub fn replace_assets(&mut self, assets: BTreeMap<String, Vec<u8>>) {
+        self.assets = assets;
     }
 
     /// Mutates the document and records one history entry. Returns whether the
