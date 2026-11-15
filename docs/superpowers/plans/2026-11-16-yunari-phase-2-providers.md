@@ -71,9 +71,9 @@
 
 **Files:** create `crates/providers/src/clock.rs`.
 
-- [ ] **Step 1:** `time.now` and `date.today` as ISO 8601 instants, in the configured zone when one is set and the local zone otherwise; unit `-`-free text kind.
-- [ ] **Step 2:** Tests: a fixed instant formats as the expected ISO string; `date.today` is the same instant's date; an unknown zone falls back to local rather than failing the poll.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** `time.now` and `date.today` as ISO 8601 instants, in the configured zone when one is set and the local zone otherwise; unit `-`-free text kind.
+- [x] **Step 2:** Tests: a fixed instant formats as the expected ISO string; `date.today` is the same instant's date; an unknown zone falls back to local rather than failing the poll.
+- [x] **Step 3:** Commit.
 
 ### Task 5: Baseline system provider
 
