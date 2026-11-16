@@ -3,10 +3,62 @@
 //! An agent that speaks JSON-RPC on stdin gets one line back per request. The
 //! host does the answering; this program only finds the port it is on, so a
 //! client never needs to know it.
+//!
+//! `install`, `uninstall` and `status` manage that client configuration and
+//! the theme-designer skill; with no argument the bridge is what runs.
 
 use std::io::{BufRead, Write};
 
 fn main() {
+    match std::env::args().nth(1).as_deref() {
+        Some(command @ ("install" | "uninstall" | "status")) => {
+            std::process::exit(manage(command.to_owned()));
+        }
+        Some("help" | "--help" | "-h") => {
+            println!(
+                "yunari-mcp [install|uninstall|status]\n\
+                 \n\
+                 With no argument, bridges stdin to the running Yunari host's MCP server.\n\
+                 install    registers this bridge with Claude Code and copies the theme-designer skill\n\
+                 uninstall  removes both\n\
+                 status     reports both, exiting 0 only when the bridge and skill are installed"
+            );
+        }
+        _ => bridge(),
+    }
+}
+
+/// Runs one of the managing subcommands, printing its report as one JSON line.
+fn manage(command: String) -> i32 {
+    let Some(home) = yunari_host::mcp_install::home() else {
+        eprintln!("No user profile is set, so there is nowhere to install.");
+        return 2;
+    };
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("Locating this program failed: {error}");
+            return 2;
+        }
+    };
+    let report = match command.as_str() {
+        "install" => yunari_host::mcp_install::install(&home, &executable),
+        "uninstall" => yunari_host::mcp_install::uninstall(&home),
+        _ => yunari_host::mcp_install::status(&home),
+    };
+    println!("{}", report.json());
+    if let Some(message) = &report.message {
+        eprintln!("{message}");
+        return 1;
+    }
+    let ready = report.server && report.skill == yunari_host::mcp_install::SkillState::Current;
+    match command.as_str() {
+        "status" if !ready => 1,
+        _ => 0,
+    }
+}
+
+fn bridge() {
     let config = yunari_host::config::HostConfig::resolve(None, None, false);
     let settings = config.settings_dir();
     let port = match locked_port(&settings) {

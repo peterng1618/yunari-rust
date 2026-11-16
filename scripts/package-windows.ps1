@@ -46,16 +46,24 @@ New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
 Copy-Item $app (Join-Path $stage "Yunari.exe")
 Copy-Item $mcp (Join-Path $stage "yunari-mcp.exe")
+# `yunari-mcp install` copies this skill beside the binaries, so the zip carries
+# it rather than reading the checkout it was built from.
+Copy-Item -Recurse (Join-Path $root "skills") (Join-Path $stage "skills")
 
 $readme = @"
 Yunari $Version (Windows x64)
 
 Yunari.exe        the host, the local displays and the theme editor.
 yunari-mcp.exe    the stdio bridge agents use to reach the host's MCP surface.
+skills\           the theme-designer skill an agent reads.
 
 Run Yunari.exe. On first run it creates its settings folder under
 %USERPROFILE%\.yunari and opens the editor. The host serves this PC on a loopback
 port; pairing a phone is done from the host's pair page.
+
+Agent tools: run `yunari-mcp.exe install` to register the bridge with Claude
+Code and copy the skill; `yunari-mcp.exe status` reports both, and
+`yunari-mcp.exe uninstall` removes them again.
 
 Uninstall: quit Yunari from its window, delete this folder, and delete
 %USERPROFILE%\.yunari if you also want to discard the themes and settings.

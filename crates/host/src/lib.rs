@@ -15,6 +15,7 @@ pub mod identity;
 pub mod lock;
 pub mod mcp;
 pub mod mcp_compose;
+pub mod mcp_install;
 pub mod monitors;
 pub mod origins;
 pub mod packs_routes;
