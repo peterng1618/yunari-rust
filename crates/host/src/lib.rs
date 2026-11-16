@@ -29,6 +29,7 @@ pub mod submit;
 pub mod themes_routes;
 pub mod thumbnail;
 pub mod tls;
+pub mod wallpaper_engine;
 
 pub use config::HostConfig;
 pub use identity::HostIdentity;

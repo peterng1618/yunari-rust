@@ -67,6 +67,12 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/displays", get(displays).post(add_display))
         // What this PC can drive, named so a local display record can hold it.
         .route("/api/monitors", get(monitors))
+        // The Wallpaper Engine library, and one item's preview or payload.
+        .route("/api/wallpaper-engine", get(wallpaper_engine))
+        .route(
+            "/api/wallpaper-engine/item/{id}/{part}",
+            get(wallpaper_item),
+        )
         .route("/api/path-presets", get(path_presets).post(add_path_preset))
         .route("/api/path-presets/packs", post(import_path_preset_pack))
         .route(
@@ -826,6 +832,39 @@ async fn monitors(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
         .into_response(),
         Err(reason) => (StatusCode::SERVICE_UNAVAILABLE, reason).into_response(),
     }
+}
+
+async fn wallpaper_engine(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    Json(crate::wallpaper_engine::listing()).into_response()
+}
+
+async fn wallpaper_item(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path((id, part)): axum::extract::Path<(String, String)>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    let preview = match part.as_str() {
+        "preview" => true,
+        "asset" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let Some((bytes, content_type)) = crate::wallpaper_engine::bytes(&id, preview) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut response = bytes.into_response();
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 async fn path_presets(
@@ -1612,6 +1651,10 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = ask(app.clone(), "/api/path-presets", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask(app.clone(), "/api/wallpaper-engine", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask(app.clone(), "/api/wallpaper-engine/item/1/preview", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = ask(app.clone(), "/api/pairing/code", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, body) = ask(app.clone(), "/api/host", phone).await;
@@ -1631,6 +1674,16 @@ mod tests {
         let (status, body) = ask(app.clone(), "/api/path-presets", here).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("\"line\""), "{body}");
+        // An id the library does not hold is a 404, never a filesystem probe.
+        let (status, _) = ask(
+            app.clone(),
+            "/api/wallpaper-engine/item/..%2Fsecrets/asset",
+            here,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = ask(app.clone(), "/api/wallpaper-engine/item/1/anything", here).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = ask(app, "/", here).await;
         assert_eq!(status, StatusCode::OK);
     }

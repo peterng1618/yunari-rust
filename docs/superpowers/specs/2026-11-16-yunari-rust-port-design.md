@@ -696,7 +696,7 @@ recorded product decision.
 | 21 | USB panels: Lian Li 9.2"/8.8", TURZX 5", Kraken Z53/Z63/Z73 | Met | Still frames and controls (brightness, screen, restart, status, reset-device), one runner per display (phase 5) |
 | 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
 | 23 | Kraken paletted mode B | Deferred | Comes with video |
-| 24 | Wallpaper Engine Workshop library and previews | Deferred | No provider; the asset finder that would show them is also deferred |
+| 24 | Wallpaper Engine Workshop library and previews | Partial | The install is found from `HKCU\Software\Valve\Steam` (or the Program Files fallbacks) and proven by `bin/wallpaperui.exe`; every Steam library's `steamapps/workshop/content/431960` and `projects/myprojects` are named. `GET /api/wallpaper-engine` scans each item's `project.json` with `bin/workshopcache.json` as the title/tags/author source, resolves `scene.pkg` over a stale `scene.json`, counts refusals, and hides web wallpapers; `GET /api/wallpaper-engine/item/{id}/(preview|asset)` serves bytes only for a scanned id, with both paths folded and proven inside the item's own directory. Both routes are loopback-only. Gaps: scene facts (`stillAtRest`/`hasText`), video duration and container sniffing, the listing cache/fingerprint, scene unpacking into an editable project, the mobile package import, and the asset finder grid that would show these items |
 | 25 | Steam presence and metadata | Met | The foreground game is named from Steam's local library plus Epic manifests, GOG registry keys, itch app folders and Xbox packages. A game no catalogue claims is looked up by executable name on the Steam store (app-only results, edition-insensitive comparison, `game-metadata.json` cache with a ten-minute failure backoff and 500 entries); its portrait is downloaded once and served from the settings folder. `game.artwork` prefers Steam's cached box art, then the store cover |
 | 26 | Weather backends and places | Met | Open-Meteo, WeatherAPI.com and OpenWeatherMap with faithful condition-code tables, the place from `weather.json`, Windows location as the fallback (a 24 h fix, asked through the embedded WinRT helper), and per-backend attribution. Backend keys live in the protected store and Settings names them. A stream's `?lang=` selects the German, Vietnamese or English condition and Windows-location words; a place the author chose is never translated |
 | 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
@@ -725,8 +725,8 @@ recorded product decision.
 
 What this sweep changes: nothing in the port's behaviour. It records the gaps
 most likely to surprise a user coming from the source — no widget packs or store
-installs (2, 9, 13), no panel video (22), no Wallpaper Engine (24) and a smaller
-editor chrome (43) — and the deliberate deviations (native schema 1.0.0 in 33,
+installs (2, 9, 13), no panel video (22), a read-only Wallpaper Engine library
+(24) and a smaller editor chrome (43) — and the deliberate deviations (native schema 1.0.0 in 33,
 the WASM player not needed in 40).
 
 ## Performance (2026-11-16)
