@@ -5,15 +5,27 @@
 //! same way and a refused value changes nothing.
 
 use yunari_model::document::{
-    ArtboardShape, BackgroundMode, ChartContent, ChartFamily, ContentFit, ImageFit, Node, NodeKind,
-    StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun,
-    ThemeDocument, VerticalAlign,
+    ArtboardShape, AssetKind, BackgroundAnchor, BackgroundBounds, BackgroundComposition,
+    BackgroundMedia, BackgroundMode, ChartContent, ChartFamily, ContentFit, ImageFit, Node,
+    NodeKind, StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign, TextContent, TextOverflow,
+    TextRun, ThemeDocument, UnitDisplay, VerticalAlign,
 };
 
 use crate::selection::find_mut;
 
 /// The smallest a side may be; the map and every drag share it.
 pub const MIN_SIZE: f64 = 1.0;
+/// The largest artboard edge the format accepts.
+pub const MAX_ARTBOARD: f64 = 16_384.0;
+/// Background media ranges, copied from the model's validator.
+pub const MIN_BACKGROUND_SCALE: f64 = 1.0;
+pub const MAX_BACKGROUND_SCALE: f64 = 5.0;
+pub const MIN_BACKGROUND_OFFSET: f64 = -5.0;
+pub const MAX_BACKGROUND_OFFSET: f64 = 5.0;
+pub const MIN_BACKGROUND_EXTENT: f64 = 0.1;
+pub const MAX_BACKGROUND_EXTENT: f64 = 1.0;
+pub const MIN_BACKGROUND_FADE: f64 = 0.01;
+pub const MAX_BACKGROUND_FADE: f64 = 1.0;
 /// How far a scale may grow, matching the camera's zoom ceiling.
 pub const MAX_SCALE: f64 = 64.0;
 
@@ -133,10 +145,23 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                 toggle("kind.content.muted", "Muted", content.muted),
             ],
         }),
-        NodeKind::Text { content } => sections.push(Section {
-            title: "Text",
-            rows: text_rows(content),
-        }),
+        NodeKind::Text { content } => {
+            let mut rows = text_rows(content);
+            rows.push(Field {
+                key: "kind.content.lineHeight".to_owned(),
+                label: "Line height",
+                kind: FieldKind::Number {
+                    min: 0.01,
+                    max: 10.0,
+                    step: 0.1,
+                },
+                value: style_number(node, "lineHeight").map_or_else(String::new, format_number),
+            });
+            sections.push(Section {
+                title: "Text",
+                rows,
+            });
+        }
         NodeKind::Chart { content } => sections.push(Section {
             title: "Chart",
             rows: chart_rows(content),
@@ -167,6 +192,23 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                     step: 1.0,
                 },
                 value: binding.precision.map_or_else(String::new, |p| p.to_string()),
+            });
+            rows.push(Field {
+                key: format!("bindings.{}.unitDisplay", binding.id),
+                label: "Unit display",
+                kind: FieldKind::Choice(Vec::new()),
+                value: match binding.unit_display {
+                    None => "default".to_owned(),
+                    Some(UnitDisplay::None) => "none".to_owned(),
+                    Some(UnitDisplay::Short) => "short".to_owned(),
+                    Some(UnitDisplay::Long) => "long".to_owned(),
+                },
+            });
+            rows.push(Field {
+                key: format!("bindings.{}.format", binding.id),
+                label: "Format",
+                kind: FieldKind::Text,
+                value: binding.format.clone().unwrap_or_default(),
             });
         }
         sections.push(Section {
@@ -229,17 +271,132 @@ pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
                         BackgroundMode::Advanced => "advanced",
                     },
                 ),
-                colour("background.color", "Colour", background.color.as_ref()),
+                colour(
+                    "background.color",
+                    "Colour",
+                    background
+                        .media
+                        .as_ref()
+                        .and_then(|media| media.color.as_ref())
+                        .or(background.color.as_ref()),
+                ),
+                text_field(
+                    "background.media",
+                    "Media",
+                    background.media.as_ref().map(|media| media.asset_id.as_str()),
+                ),
             ],
         },
     ];
     if let Some(media) = &background.media {
+        let mut rows = vec![
+            choice(
+                "background.media.bounds",
+                "Bounds",
+                match media.bounds {
+                    BackgroundBounds::Theme => "theme",
+                    BackgroundBounds::Display => "display",
+                },
+            ),
+            number(
+                "background.media.scale",
+                "Scale",
+                media.scale,
+                Some(MIN_BACKGROUND_SCALE),
+            ),
+            number(
+                "background.media.offsetX",
+                "Offset X",
+                media.offset_x,
+                Some(MIN_BACKGROUND_OFFSET),
+            ),
+            number(
+                "background.media.offsetY",
+                "Offset Y",
+                media.offset_y,
+                Some(MIN_BACKGROUND_OFFSET),
+            ),
+            toggle("background.media.flipX", "Flip horizontal", media.flip_x),
+            toggle("background.media.flipY", "Flip vertical", media.flip_y),
+        ];
+        let video = media_kind(document, &media.asset_id) == Some(AssetKind::Video);
+        if video {
+            rows.push(Field {
+                key: "background.media.fallbackFrame".to_owned(),
+                label: "Fallback frame",
+                kind: FieldKind::Number {
+                    min: 0.0,
+                    max: f64::MAX,
+                    step: 1.0,
+                },
+                value: media.fallback_frame.map_or_else(String::new, |frame| frame.to_string()),
+            });
+        }
+        if background.mode == BackgroundMode::Advanced {
+            rows.push(choice(
+                "background.media.anchor",
+                "Anchor",
+                match media.composition.as_ref().map(|composition| composition.anchor) {
+                    None => "full",
+                    Some(BackgroundAnchor::Top) => "top",
+                    Some(BackgroundAnchor::Right) => "right",
+                    Some(BackgroundAnchor::Bottom) => "bottom",
+                    Some(BackgroundAnchor::Left) => "left",
+                    Some(BackgroundAnchor::Center) => "center",
+                },
+            ));
+            if let Some(composition) = &media.composition
+                && composition.anchor != BackgroundAnchor::Center
+            {
+                rows.push(Field {
+                    key: "background.media.extent".to_owned(),
+                    label: "Size",
+                    kind: FieldKind::Number {
+                        min: MIN_BACKGROUND_EXTENT,
+                        max: MAX_BACKGROUND_EXTENT,
+                        step: 0.1,
+                    },
+                    value: composition
+                        .extent
+                        .map_or_else(String::new, format_number),
+                });
+            }
+            if media.composition.is_some() {
+                rows.push(Field {
+                    key: "background.media.fade".to_owned(),
+                    label: "Fade",
+                    kind: FieldKind::Number {
+                        min: 0.0,
+                        max: MAX_BACKGROUND_FADE,
+                        step: 0.1,
+                    },
+                    value: media
+                        .composition
+                        .as_ref()
+                        .and_then(|composition| composition.fade)
+                        .map_or_else(String::new, format_number),
+                });
+            }
+        }
         sections.push(Section {
             title: "Background media",
-            rows: vec![text_field("background.media", "Asset", Some(media.asset_id.as_str()))],
+            rows,
         });
     }
     sections
+}
+
+/// The kind of a declared asset, so a field only appears where it applies.
+fn media_kind(document: &ThemeDocument, asset_id: &str) -> Option<AssetKind> {
+    document
+        .assets
+        .iter()
+        .find(|asset| asset.id == asset_id)
+        .map(|asset| asset.kind)
+}
+
+fn is_media_kind(kind: AssetKind) -> bool {
+    matches!(kind, AssetKind::Image | AssetKind::Svg | AssetKind::Video)
 }
 
 fn text_field(key: &'static str, label: &'static str, value: Option<&str>) -> Field {
@@ -264,8 +421,14 @@ pub fn apply_document(
                 .trim()
                 .parse::<f64>()
                 .map_err(|_| format!("{} needs a number", friendly(key)))?;
-            if !parsed.is_finite() || parsed < MIN_SIZE {
-                return Err(format!("{} must be at least {MIN_SIZE}", friendly(key)));
+            if !parsed.is_finite() || parsed < MIN_SIZE || parsed > MAX_ARTBOARD {
+                return Err(format!(
+                    "{} must be a whole number from 1 to {MAX_ARTBOARD:.0}",
+                    friendly(key)
+                ));
+            }
+            if parsed.fract() != 0.0 {
+                return Err(format!("{} is a whole number", friendly(key)));
             }
             if key == "artboard.width" {
                 document.artboard.width = parsed;
@@ -295,10 +458,154 @@ pub fn apply_document(
             };
         }
         "background.color" => {
-            if value.trim().is_empty() {
-                document.background.color = None;
+            // The source editor paints the background from palette tokens only,
+            // and the colour belongs to the media once media is present.
+            let text = value.trim();
+            let slot = if text.is_empty() {
+                None
+            } else if text.starts_with("palette.") {
+                Some(paint(text)?)
             } else {
-                document.background.color = Some(paint(value)?);
+                return Err("A background colour is a palette.<id> reference".to_owned());
+            };
+            match &mut document.background.media {
+                Some(media) => media.color = slot,
+                None => document.background.color = slot,
+            }
+        }
+        "background.media" => {
+            let asset_id = value.trim();
+            if asset_id.is_empty() {
+                document.background.media = None;
+                document.background.color = None;
+                return Ok(());
+            }
+            let kind = media_kind(document, asset_id)
+                .ok_or_else(|| format!("No asset named {asset_id}"))?;
+            if !is_media_kind(kind) {
+                return Err(format!("{asset_id} is not a picture or video"));
+            }
+            match &mut document.background.media {
+                Some(media) => media.asset_id = asset_id.to_owned(),
+                None => {
+                    document.background.media = Some(BackgroundMedia {
+                        asset_id: asset_id.to_owned(),
+                        color: None,
+                        bounds: BackgroundBounds::Display,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        scale: 1.0,
+                        flip_x: false,
+                        flip_y: false,
+                        fallback_frame: None,
+                        composition: None,
+                    });
+                }
+            }
+        }
+        key if key.starts_with("background.media.") => {
+            let field = key.trim_start_matches("background.media.");
+            let media = document
+                .background
+                .media
+                .as_mut()
+                .ok_or_else(|| "The background has no media".to_owned())?;
+            let number = |min: f64, max: f64| -> Result<f64, String> {
+                let parsed = value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|_| format!("{field} needs a number"))?;
+                if !parsed.is_finite() || parsed < min || parsed > max {
+                    return Err(format!("{field} runs from {min} to {max}"));
+                }
+                Ok(parsed)
+            };
+            match field {
+                "bounds" => {
+                    media.bounds = match value.trim() {
+                        "theme" => BackgroundBounds::Theme,
+                        "display" => BackgroundBounds::Display,
+                        other => return Err(format!("{other} is not a background bound")),
+                    }
+                }
+                "scale" => media.scale = number(MIN_BACKGROUND_SCALE, MAX_BACKGROUND_SCALE)?,
+                "offsetX" => media.offset_x = number(MIN_BACKGROUND_OFFSET, MAX_BACKGROUND_OFFSET)?,
+                "offsetY" => media.offset_y = number(MIN_BACKGROUND_OFFSET, MAX_BACKGROUND_OFFSET)?,
+                "flipX" | "flipY" => {
+                    let flag = match value.trim() {
+                        "true" => true,
+                        "false" => false,
+                        other => return Err(format!("{other} is not true or false")),
+                    };
+                    if field == "flipX" {
+                        media.flip_x = flag;
+                    } else {
+                        media.flip_y = flag;
+                    }
+                }
+                "fallbackFrame" => {
+                    let text = value.trim();
+                    if text.is_empty() {
+                        media.fallback_frame = None;
+                    } else {
+                        let frame: u32 = text
+                            .parse()
+                            .map_err(|_| "A fallback frame is a whole number".to_owned())?;
+                        media.fallback_frame = Some(frame);
+                    }
+                }
+                "anchor" | "extent" | "fade" => {
+                    if document.background.mode != BackgroundMode::Advanced {
+                        return Err("Composition needs advanced mode".to_owned());
+                    }
+                    match field {
+                        "anchor" => {
+                            let anchor = match value.trim() {
+                                "full" => None,
+                                "top" => Some(BackgroundAnchor::Top),
+                                "right" => Some(BackgroundAnchor::Right),
+                                "bottom" => Some(BackgroundAnchor::Bottom),
+                                "left" => Some(BackgroundAnchor::Left),
+                                "center" => Some(BackgroundAnchor::Center),
+                                other => {
+                                    return Err(format!("{other} is not a background anchor"));
+                                }
+                            };
+                            media.composition = anchor.map(|anchor| BackgroundComposition {
+                                anchor,
+                                extent: None,
+                                fade: None,
+                            });
+                        }
+                        "extent" => {
+                            let composition = media.composition.as_mut().ok_or_else(|| {
+                                "Choose an edge anchor before a size".to_owned()
+                            })?;
+                            if composition.anchor == BackgroundAnchor::Center {
+                                return Err("A centred composition has no size".to_owned());
+                            }
+                            composition.extent = Some(number(
+                                MIN_BACKGROUND_EXTENT,
+                                MAX_BACKGROUND_EXTENT,
+                            )?);
+                        }
+                        "fade" => {
+                            let composition = media
+                                .composition
+                                .as_mut()
+                                .ok_or_else(|| "Choose an anchor before a fade".to_owned())?;
+                            let text = value.trim();
+                            if text.is_empty() || text == "0" {
+                                composition.fade = None;
+                            } else {
+                                composition.fade =
+                                    Some(number(MIN_BACKGROUND_FADE, MAX_BACKGROUND_FADE)?);
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => return Err(format!("{field} is not a background media field")),
             }
         }
         "theme.tags" => {
@@ -334,9 +641,11 @@ pub fn apply_document(
 fn text_rows(content: &TextContent) -> Vec<Field> {
     let mut rows = Vec::new();
     for (index, run) in content.runs.iter().enumerate() {
-        let token = match run {
+        let (token, style) = match run {
             TextRun::Literal {
-                text, type_token, ..
+                text,
+                type_token,
+                style,
             } => {
                 rows.push(Field {
                     key: format!("kind.content.runs.{index}.text"),
@@ -344,15 +653,39 @@ fn text_rows(content: &TextContent) -> Vec<Field> {
                     kind: FieldKind::Text,
                     value: text.clone(),
                 });
-                type_token
+                (type_token, style)
             }
-            TextRun::Value { type_token, .. } => type_token,
+            TextRun::Value {
+                type_token, style, ..
+            } => (type_token, style),
         };
         rows.push(Field {
             key: format!("kind.content.runs.{index}.typeToken"),
             label: "Token",
             kind: FieldKind::Text,
             value: token.clone(),
+        });
+        rows.push(Field {
+            key: format!("kind.content.runs.{index}.fontSize"),
+            label: "Size",
+            kind: FieldKind::Number {
+                min: 1.0,
+                max: MAX_SCALE * 100.0,
+                step: 1.0,
+            },
+            value: style
+                .get("fontSize")
+                .and_then(|value| match value {
+                    StyleValue::Literal(literal) => literal.value.as_f64(),
+                    StyleValue::Ref(_) => None,
+                })
+                .map_or_else(String::new, format_number),
+        });
+        rows.push(Field {
+            key: format!("kind.content.runs.{index}.fill"),
+            label: "Colour",
+            kind: FieldKind::Colour,
+            value: paint_text(style.get("fill")),
         });
     }
     rows.extend([
@@ -757,6 +1090,25 @@ pub fn apply_binding(
             }
             binding.unit = (!unit.is_empty()).then(|| unit.to_owned());
         }
+        "unitDisplay" => {
+            binding.unit_display = match value.trim() {
+                "" | "default" => None,
+                "none" => Some(UnitDisplay::None),
+                "short" => Some(UnitDisplay::Short),
+                "long" => Some(UnitDisplay::Long),
+                other => return Err(format!("{other} is not a unit display")),
+            };
+        }
+        "format" => {
+            let text = value.trim();
+            if text.len() > 64 {
+                return Err("A format is at most 64 characters".to_owned());
+            }
+            if text.chars().any(char::is_control) {
+                return Err("A format is one line".to_owned());
+            }
+            binding.format = (!text.is_empty()).then(|| text.to_owned());
+        }
         "precision" => {
             let text = value.trim();
             if text.is_empty() {
@@ -908,6 +1260,34 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
                 *type_token = token_id(value).to_owned();
                 Ok(())
             }
+            ("fontSize", TextRun::Literal { style, .. } | TextRun::Value { style, .. }) => {
+                let text = value.trim();
+                if text.is_empty() {
+                    style.remove("fontSize");
+                } else {
+                    let size: f64 = text
+                        .parse()
+                        .map_err(|_| "Size needs a number".to_owned())?;
+                    if !size.is_finite() || size < 1.0 {
+                        return Err("Size must be at least 1".to_owned());
+                    }
+                    style.insert(
+                        "fontSize".to_owned(),
+                        StyleValue::Literal(StyleLiteral {
+                            value: serde_json::json!(size),
+                        }),
+                    );
+                }
+                Ok(())
+            }
+            ("fill", TextRun::Literal { style, .. } | TextRun::Value { style, .. }) => {
+                if value.trim().is_empty() {
+                    style.remove("fill");
+                } else {
+                    style.insert("fill".to_owned(), paint(value)?);
+                }
+                Ok(())
+            }
             _ => Err(format!("{} is not editable yet", friendly(key))),
         };
     }
@@ -947,6 +1327,26 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
             }
             _ => return Err("Only a video has playback flags".to_owned()),
         },
+        "kind.content.lineHeight" => {
+            let style: &mut StyleMap = &mut node.style;
+            let text = value.trim();
+            if text.is_empty() {
+                style.remove("lineHeight");
+            } else {
+                let height: f64 = text
+                    .parse()
+                    .map_err(|_| "Line height needs a number".to_owned())?;
+                if !height.is_finite() || height < 0.01 {
+                    return Err("Line height must be at least 0.01".to_owned());
+                }
+                style.insert(
+                    "lineHeight".to_owned(),
+                    StyleValue::Literal(StyleLiteral {
+                        value: serde_json::json!(height),
+                    }),
+                );
+            }
+        }
         "kind.content.family" => match &mut node.kind {
             NodeKind::Chart { content } => {
                 let name = value.trim();
@@ -1074,14 +1474,17 @@ mod tests {
             [
                 "kind.content.runs.0.text",
                 "kind.content.runs.0.typeToken",
+                "kind.content.runs.0.fontSize",
+                "kind.content.runs.0.fill",
                 "kind.content.align",
                 "kind.content.overflow",
                 "kind.content.verticalAlign",
                 "kind.content.vertical",
+                "kind.content.lineHeight",
             ]
         );
         assert_eq!(section.rows[0].value, "Hello");
-        assert_eq!(section.rows[2].value, "left");
+        assert_eq!(section.rows[4].value, "left");
     }
 
     #[test]
@@ -1172,6 +1575,8 @@ mod tests {
         assert!(apply_document(&mut document, "artboard.width", "1920").is_ok());
         assert_eq!(document.artboard.width, 1920.0);
         assert!(apply_document(&mut document, "artboard.width", "0").is_err());
+        assert!(apply_document(&mut document, "artboard.width", "12.5").is_err());
+        assert!(apply_document(&mut document, "artboard.width", "16385").is_err());
         assert_eq!(document.artboard.width, 1920.0);
         assert!(apply_document(&mut document, "artboard.shape", "circle").is_ok());
         assert_eq!(document.artboard.shape, ArtboardShape::Circle);
@@ -1193,13 +1598,9 @@ mod tests {
     }
 
     #[test]
-    fn the_background_takes_a_colour_or_a_palette_reference() {
+    fn the_background_colour_is_a_palette_reference() {
         let mut document = document(vec![]);
-        assert!(apply_document(&mut document, "background.color", "#101014").is_ok());
-        assert!(matches!(
-            document.background.color,
-            Some(StyleValue::Literal(_))
-        ));
+        assert!(apply_document(&mut document, "background.color", "#101014").is_err());
         assert!(apply_document(&mut document, "background.color", "palette.desk").is_ok());
         assert!(matches!(document.background.color, Some(StyleValue::Ref(_))));
         assert!(apply_document(&mut document, "background.color", "").is_ok());
@@ -1207,6 +1608,51 @@ mod tests {
         assert!(apply_document(&mut document, "background.color", "navy").is_err());
         assert!(apply_document(&mut document, "background.mode", "advanced").is_ok());
         assert_eq!(document.background.mode, BackgroundMode::Advanced);
+    }
+
+    #[test]
+    fn background_media_is_chosen_from_the_declared_assets() {
+        use yunari_model::document::AssetKind;
+        let mut document = document(vec![]);
+        document.assets.push(asset("pic", AssetKind::Image));
+        document.assets.push(asset_mp4("clip"));
+        assert!(apply_document(&mut document, "background.media", "missing").is_err());
+        assert!(apply_document(&mut document, "background.media", "pic").is_ok());
+        let media = document.background.media.as_ref().expect("media");
+        assert_eq!(media.asset_id, "pic");
+        assert_eq!(media.bounds, BackgroundBounds::Display);
+        assert!(apply_document(&mut document, "background.media.bounds", "theme").is_ok());
+        assert!(apply_document(&mut document, "background.media.scale", "2").is_ok());
+        assert!(apply_document(&mut document, "background.media.scale", "9").is_err());
+        assert!(apply_document(&mut document, "background.media.offsetX", "-3").is_ok());
+        assert!(apply_document(&mut document, "background.media.flipX", "true").is_ok());
+        // Composition is refused until the mode is advanced.
+        assert!(apply_document(&mut document, "background.media.anchor", "top").is_err());
+        apply_document(&mut document, "background.mode", "advanced").expect("advanced");
+        assert!(apply_document(&mut document, "background.media.anchor", "top").is_ok());
+        assert!(apply_document(&mut document, "background.media.extent", "0.5").is_ok());
+        assert!(apply_document(&mut document, "background.media.fade", "0.3").is_ok());
+        let media = document.background.media.as_ref().expect("media");
+        let composition = media.composition.as_ref().expect("composition");
+        assert_eq!(composition.anchor, BackgroundAnchor::Top);
+        assert_eq!(composition.extent, Some(0.5));
+        assert_eq!(composition.fade, Some(0.3));
+        // With media present, the colour belongs to the media slot.
+        assert!(apply_document(&mut document, "background.color", "palette.desk").is_ok());
+        let media = document.background.media.as_ref().expect("media");
+        assert!(media.color.is_some());
+        assert_eq!(document.background.color, None);
+        // A video asset shows a fallback frame field; clearing media clears it.
+        assert!(apply_document(&mut document, "background.media", "clip").is_ok());
+        assert!(apply_document(&mut document, "background.media.fallbackFrame", "3").is_ok());
+        assert!(apply_document(&mut document, "background.media", "").is_ok());
+        assert!(document.background.media.is_none());
+    }
+
+    fn asset_mp4(id: &str) -> yunari_model::document::AssetReference {
+        let mut held = asset(id, yunari_model::document::AssetKind::Video);
+        held.path = format!("assets/{id}.mp4");
+        held
     }
 
     fn image_node(id: &str, asset: &str) -> Node {

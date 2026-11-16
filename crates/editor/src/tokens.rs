@@ -73,16 +73,22 @@ impl Editor {
             id = format!("{base}-{number}");
             number += 1;
         }
+        let token = TypeToken {
+            family: "Segoe UI, sans-serif".to_owned(),
+            weight: Some(TypeWeight::Number(300.0)),
+            face: None,
+        };
+        if let Some((taken, _)) = self
+            .document()
+            .type_tokens
+            .iter()
+            .find(|(_, held)| **held == token)
+        {
+            return Some(taken.clone());
+        }
         let id_for_edit = id.clone();
         self.edit(|document| {
-            document.type_tokens.insert(
-                id_for_edit.clone(),
-                TypeToken {
-                    family: "Segoe UI".to_owned(),
-                    weight: None,
-                    face: None,
-                },
-            );
+            document.type_tokens.insert(id_for_edit.clone(), token);
         });
         Some(id)
     }
@@ -129,6 +135,9 @@ impl Editor {
 
     /// Removes a token no run names, so a save never points at a vanished face.
     pub fn remove_token(&mut self, id: &str) -> Result<(), String> {
+        if matches!(id, "heading" | "body" | "mono") {
+            return Err("The heading, body and mono tokens are roles every theme needs".to_owned());
+        }
         if let Some(holder) = referenced_by(self.document(), id) {
             return Err(format!("{holder} and keeps it"));
         }
@@ -194,16 +203,16 @@ mod tests {
 
     #[test]
     fn a_token_in_use_is_not_removed() {
-        let mut document = document(vec![text("label", "heading")]);
+        let mut document = document(vec![text("label", "caption")]);
         document
             .type_tokens
-            .insert("heading".to_owned(), TypeToken {
+            .insert("caption".to_owned(), TypeToken {
                 family: "Segoe UI".to_owned(),
                 weight: None,
                 face: None,
             });
         let mut editor = Editor::new(document);
-        assert!(editor.remove_token("heading").is_err());
+        assert!(editor.remove_token("caption").is_err());
         editor.edit(|document| {
             if let NodeKind::Text { content } = &mut document.nodes[0].kind
                 && let TextRun::Literal { type_token, .. } = &mut content.runs[0]
@@ -211,7 +220,7 @@ mod tests {
                 *type_token = "body".to_owned();
             }
         });
-        assert!(editor.remove_token("heading").is_ok());
+        assert!(editor.remove_token("caption").is_ok());
     }
 
     #[test]
@@ -232,9 +241,25 @@ mod tests {
     }
 
     #[test]
+    fn role_tokens_are_never_removed() {
+        let mut document = document(vec![]);
+        for id in ["heading", "body", "mono"] {
+            document.type_tokens.insert(id.to_owned(), TypeToken {
+                family: "Inter".to_owned(),
+                weight: None,
+                face: None,
+            });
+        }
+        let mut editor = Editor::new(document);
+        assert!(editor.remove_token("body").is_err());
+    }
+
+    #[test]
     fn adding_a_token_mints_a_free_id() {
         let mut editor = Editor::new(document(vec![]));
         assert_eq!(editor.add_token("Heading").as_deref(), Some("heading"));
-        assert_eq!(editor.add_token("Heading").as_deref(), Some("heading-2"));
+        // The second request finds the same blank token rather than a twin.
+        assert_eq!(editor.add_token("Heading").as_deref(), Some("heading"));
+        assert_eq!(editor.document().type_tokens.len(), 1);
     }
 }

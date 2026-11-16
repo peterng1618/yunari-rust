@@ -17,9 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use gpui_kit::*;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
-    Artboard, ArtboardShape, Background, ContentFit, Metadata, Node, NodeKind, StyleLiteral,
-    StyleMap, StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform,
-    TypeToken, VerticalAlign,
+    Artboard, ArtboardShape, Background, ChartContent, ChartFamily, ContentFit, Metadata, Node,
+    NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign,
+    TextContent, TextOverflow, TextRun, ThemeDocument, Transform, TypeToken, TypeWeight,
+    VerticalAlign,
 };
 use yunari_providers::clock::ClockProvider;
 use yunari_providers::registry::Registry;
@@ -292,7 +293,21 @@ impl EditorWindow {
                 self.refresh();
             }
             Command::AddRectangle => self.add(rectangle_node),
+            Command::AddEllipse => self.add(ellipse_node),
+            Command::AddPath => self.add(path_node),
+            Command::AddLine => self.add(line_node),
+            Command::AddArc => self.add(arc_node),
+            Command::AddWedge => self.add(wedge_node),
             Command::AddText => self.add(text_node),
+            Command::AddVerticalText => self.add(vertical_text_node),
+            Command::AddGauge => self.add(|document| chart_node(document, ChartFamily::Gauge)),
+            Command::AddLineChart => self.add(|document| chart_node(document, ChartFamily::Line)),
+            Command::AddBarChart => self.add(|document| chart_node(document, ChartFamily::Bar)),
+            Command::AddPieChart => self.add(|document| chart_node(document, ChartFamily::Pie)),
+            Command::AddRadarChart => self.add(|document| chart_node(document, ChartFamily::Radar)),
+            Command::AddPolarBar => {
+                self.add(|document| chart_node(document, ChartFamily::PolarBar))
+            }
             Command::DeleteSelected => {
                 let ids = self.selection.ids().to_vec();
                 if !ids.is_empty() {
@@ -400,7 +415,7 @@ impl EditorWindow {
         }
     }
 
-    fn add(&mut self, make: fn(&ThemeDocument) -> Node) {
+    fn add(&mut self, make: impl FnOnce(&ThemeDocument) -> Node) {
         let node = make(self.editor.document());
         self.selection.set(vec![node.id.clone()]);
         if self.editor.add_node(node) {
@@ -1936,18 +1951,46 @@ impl Render for EditorWindow {
     }
 }
 
-/// The theme an author starts from: a valid document with one body token, so
-/// text added to it paints at a readable size.
+/// The theme an author starts from, matching the source editor's blank theme:
+/// the three role tokens and the eight paint tokens every card expects, on a
+/// 1920 x 1080 artboard.
 fn blank() -> ThemeDocument {
     let mut type_tokens = BTreeMap::new();
-    type_tokens.insert(
-        "body".to_owned(),
-        TypeToken {
-            family: "Segoe UI".to_owned(),
-            weight: None,
-            face: None,
-        },
-    );
+    for (id, family, weight) in [
+        ("heading", "Segoe UI, sans-serif", 600.0),
+        ("body", "Segoe UI, sans-serif", 400.0),
+        ("mono", "Consolas, monospace", 400.0),
+    ] {
+        type_tokens.insert(
+            id.to_owned(),
+            TypeToken {
+                family: family.to_owned(),
+                weight: Some(TypeWeight::Number(weight)),
+                face: None,
+            },
+        );
+    }
+    let mut palette = BTreeMap::new();
+    for (id, name, colour) in [
+        ("none", "None", "#00000000"),
+        ("text", "Text", "#ecf5ff"),
+        ("dim", "Muted text", "#a8bed0"),
+        ("panel", "Panel", "#081523d9"),
+        ("frost", "Frosted panel", "#0815234d"),
+        ("panelStroke", "Panel outline", "#9fc7e52b"),
+        ("rule", "Rule", "#7dbde0"),
+        ("chartTrack", "Chart track", "#223047"),
+    ] {
+        palette.insert(
+            id.to_owned(),
+            PaletteEntry {
+                name: name.to_owned(),
+                value: Paint::Solid {
+                    color: colour.to_owned(),
+                },
+            },
+        );
+    }
     ThemeDocument {
         schema_version: "1.0.0".to_owned(),
         id: "untitled".to_owned(),
@@ -1956,13 +1999,19 @@ fn blank() -> ThemeDocument {
             ..Metadata::default()
         },
         artboard: Artboard {
-            width: 450.0,
-            height: 675.0,
+            width: 1920.0,
+            height: 1080.0,
             content_fit: ContentFit::Contain,
             shape: ArtboardShape::Rect,
         },
-        background: Background::default(),
-        palette: BTreeMap::new(),
+        background: Background {
+            mode: Default::default(),
+            color: Some(StyleValue::Ref(StyleRef {
+                r#ref: "palette.chartTrack".to_owned(),
+            })),
+            media: None,
+        },
+        palette,
         type_tokens,
         assets: Vec::new(),
         nodes: Vec::new(),
@@ -2009,6 +2058,191 @@ fn style_with_fill(color: &str) -> StyleMap {
     style
 }
 
+fn ellipse_node(document: &ThemeDocument) -> Node {
+    Node {
+        id: free_id(document, "ellipse"),
+        name: None,
+        kind: NodeKind::Ellipse,
+        transform: place(document, 360.0, 360.0),
+        visible: true,
+        locked: false,
+        style: surface_style(document),
+        glass: None,
+        children: Vec::new(),
+    }
+}
+
+fn path_node(document: &ThemeDocument) -> Node {
+    let data = "M 0 100 L 180 100 L 180 50 L 360 100 L 180 150 L 180 200 L 0 100 Z";
+    path_with(document, "path", data, 360.0, 200.0, true)
+}
+
+fn line_node(document: &ThemeDocument) -> Node {
+    path_with(document, "line", "M 0 100 L 360 100", 360.0, 200.0, false)
+}
+
+fn arc_node(document: &ThemeDocument) -> Node {
+    path_with(document, "arc", "M 200 0 A 200 200 0 0 1 0 200", 200.0, 200.0, false)
+}
+
+fn wedge_node(document: &ThemeDocument) -> Node {
+    path_with(
+        document,
+        "wedge",
+        "M 0 0 L 200 0 A 200 200 0 0 1 0 200 Z",
+        200.0,
+        200.0,
+        true,
+    )
+}
+
+/// An open path paints as ink on a stroke; a closed one takes the surface fill.
+fn path_with(
+    document: &ThemeDocument,
+    prefix: &str,
+    data: &str,
+    width: f64,
+    height: f64,
+    closed: bool,
+) -> Node {
+    let style = if closed {
+        surface_style(document)
+    } else {
+        let mut style = StyleMap::new();
+        style.insert(
+            "stroke".to_owned(),
+            ref_or_literal(ink_ref(document), "#ecf5ff"),
+        );
+        style.insert(
+            "strokeWidth".to_owned(),
+            StyleValue::Literal(StyleLiteral {
+                value: serde_json::json!(2),
+            }),
+        );
+        style
+    };
+    Node {
+        id: free_id(document, prefix),
+        name: None,
+        kind: NodeKind::Path {
+            data: data.to_owned(),
+            stroke_width: 2.0,
+            closed,
+        },
+        transform: place(document, width, height),
+        visible: true,
+        locked: false,
+        style,
+        glass: None,
+        children: Vec::new(),
+    }
+}
+
+fn vertical_text_node(document: &ThemeDocument) -> Node {
+    let mut node = text_node(document);
+    if let NodeKind::Text { content } = &mut node.kind {
+        content.vertical = true;
+    }
+    node
+}
+
+fn chart_node(document: &ThemeDocument, family: ChartFamily) -> Node {
+    let mut settings = serde_json::Map::new();
+    let surface = surface_ref(document);
+    let ink = ink_ref(document);
+    let paints: &[(&str, Option<&String>)] = match family {
+        ChartFamily::Gauge => &[("track", surface.as_ref()), ("progress", ink.as_ref())],
+        ChartFamily::Line => &[("stroke", ink.as_ref())],
+        ChartFamily::Bar => &[("fill", ink.as_ref()), ("track", surface.as_ref())],
+        ChartFamily::Pie => &[("remainderFill", surface.as_ref())],
+        ChartFamily::Radar => &[("stroke", ink.as_ref())],
+        ChartFamily::PolarBar => &[("fill", ink.as_ref()), ("track", surface.as_ref())],
+    };
+    for (key, reference) in paints {
+        if let Some(reference) = reference {
+            settings.insert(
+                (*key).to_owned(),
+                serde_json::json!({ "ref": (**reference).clone() }),
+            );
+        }
+    }
+    if family == ChartFamily::Pie
+        && let Some(reference) = &ink
+    {
+        settings.insert("palette".to_owned(), serde_json::json!([reference.clone()]));
+    }
+    Node {
+        id: free_id(document, "chart"),
+        name: None,
+        kind: NodeKind::Chart {
+            content: ChartContent {
+                family,
+                settings: yunari_model::document::ChartSettings(settings),
+            },
+        },
+        transform: place(document, 240.0, 160.0),
+        visible: true,
+        locked: false,
+        style: StyleMap::new(),
+        glass: None,
+        children: Vec::new(),
+    }
+}
+
+/// The card surface the source editor prefers, as a `palette.<id>` reference.
+fn surface_ref(document: &ThemeDocument) -> Option<String> {
+    palette_ref(
+        document,
+        &[
+            "panel",
+            "frost",
+            "background",
+            "scene",
+            "surface",
+            "track",
+            "chartTrack",
+            "charttrack",
+        ],
+    )
+}
+
+/// The ink the source editor prefers, as a `palette.<id>` reference.
+fn ink_ref(document: &ThemeDocument) -> Option<String> {
+    palette_ref(document, &["text", "ink", "foreground", "primary", "accent"]).or_else(|| {
+        let surface = surface_ref(document);
+        document
+            .palette
+            .keys()
+            .find(|id| Some(&format!("palette.{id}")) != surface.as_ref() && *id != "none")
+            .map(|id| format!("palette.{id}"))
+    })
+}
+
+fn palette_ref(document: &ThemeDocument, names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find(|name| document.palette.contains_key(**name))
+        .map(|name| format!("palette.{name}"))
+}
+
+fn ref_or_literal(reference: Option<String>, fallback: &str) -> StyleValue {
+    match reference {
+        Some(reference) => StyleValue::Ref(StyleRef { r#ref: reference }),
+        None => StyleValue::Literal(StyleLiteral {
+            value: serde_json::Value::String(fallback.to_owned()),
+        }),
+    }
+}
+
+fn surface_style(document: &ThemeDocument) -> StyleMap {
+    let mut style = StyleMap::new();
+    style.insert(
+        "fill".to_owned(),
+        ref_or_literal(surface_ref(document), "#1b2330"),
+    );
+    style
+}
+
 fn rectangle_node(document: &ThemeDocument) -> Node {
     Node {
         id: free_id(document, "rect"),
@@ -2039,7 +2273,7 @@ fn text_node(document: &ThemeDocument) -> Node {
         kind: NodeKind::Text {
             content: TextContent {
                 runs: vec![TextRun::Literal {
-                    text: "Text".to_owned(),
+                    text: "New text".to_owned(),
                     type_token: "typeTokens.body".to_owned(),
                     style,
                 }],
@@ -2209,9 +2443,52 @@ mod tests {
     // Named imports, not the module glob: GPUI exports its own `test`
     // attribute, and a glob would shadow the built-in one.
     use super::{
-        INSET, STEP, Node, NodeKind, Path, StyleMap, ThemeDocument, Transform, blank, export_path,
-        free_id, place, rectangle_node, slug, suggested_id,
+        INSET, STEP, Node, NodeKind, Path, StyleMap, ThemeDocument, Transform, blank, chart_node,
+        export_path, free_id, line_node, place, rectangle_node, slug, suggested_id,
     };
+
+    #[test]
+    fn the_blank_theme_holds_the_source_defaults() {
+        let document = blank();
+        assert_eq!(document.artboard.width, 1920.0);
+        assert_eq!(document.artboard.height, 1080.0);
+        assert_eq!(document.type_tokens.len(), 3);
+        assert!(document.palette.contains_key("none"));
+        assert_eq!(document.palette.len(), 8);
+        assert!(yunari_model::validate::validate_document(&document).is_ok());
+    }
+
+    #[test]
+    fn a_new_chart_names_the_blank_themes_paints() {
+        use yunari_model::document::ChartFamily;
+
+        let document = blank();
+        let node = chart_node(&document, ChartFamily::Gauge);
+        let NodeKind::Chart { content } = &node.kind else {
+            panic!("a chart");
+        };
+        assert_eq!(content.family, ChartFamily::Gauge);
+        assert_eq!(
+            content.settings.0["track"],
+            serde_json::json!({ "ref": "palette.panel" })
+        );
+        assert_eq!(
+            content.settings.0["progress"],
+            serde_json::json!({ "ref": "palette.text" })
+        );
+    }
+
+    #[test]
+    fn an_open_path_draws_its_ink_as_a_stroke() {
+        let document = blank();
+        let node = line_node(&document);
+        let NodeKind::Path { closed, .. } = &node.kind else {
+            panic!("a path");
+        };
+        assert!(!closed);
+        assert!(node.style.contains_key("stroke"));
+        assert!(!node.style.contains_key("fill"));
+    }
 
     fn document_with(nodes: Vec<Node>) -> ThemeDocument {
         let mut document = blank();

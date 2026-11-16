@@ -69,6 +69,9 @@ impl Editor {
         let base = slug(name);
         let mut id = base.clone();
         let mut number = 2;
+        if base == "none" {
+            return None;
+        }
         while self.document().palette.contains_key(&id) {
             id = format!("{base}-{number}");
             number += 1;
@@ -91,6 +94,9 @@ impl Editor {
     }
 
     pub fn rename_palette(&mut self, id: &str, name: &str) -> bool {
+        if id == "none" {
+            return false;
+        }
         let name = name.trim();
         if name.is_empty() || name.chars().any(char::is_control) {
             return false;
@@ -104,6 +110,9 @@ impl Editor {
     }
 
     pub fn set_palette_colour(&mut self, id: &str, colour: &str) -> Result<(), String> {
+        if id == "none" {
+            return Err("The none token is reserved".to_owned());
+        }
         let paint = solid(colour)?;
         let id = id.to_owned();
         let mut found = false;
@@ -123,6 +132,9 @@ impl Editor {
     /// Removes a token nothing points at. A reference keeps it: the reason names
     /// the token rather than a silent deletion that would blank a save.
     pub fn remove_palette(&mut self, id: &str) -> Result<(), String> {
+        if id == "none" {
+            return Err("The none token is reserved".to_owned());
+        }
         if let Some(reference) = referenced_by(self.document(), id) {
             return Err(format!("{reference} is still in use"));
         }
@@ -145,6 +157,16 @@ mod tests {
     use crate::fixtures::{document, rect};
 
     use super::*;
+
+    #[test]
+    fn the_none_token_is_reserved() {
+        let mut editor = Editor::new(document(vec![]));
+        assert!(editor.add_palette("none", "#00000000").is_none());
+        editor.add_palette("Panel", "#000000");
+        assert!(editor.rename_palette("panel", "other"));
+        assert!(!editor.rename_palette("none", "other"));
+        assert!(editor.set_palette_colour("none", "#ffffff").is_err());
+    }
 
     #[test]
     fn a_slug_is_lowercase_with_dashes() {
