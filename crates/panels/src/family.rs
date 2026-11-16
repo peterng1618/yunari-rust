@@ -2,6 +2,32 @@
 
 use std::time::Duration;
 
+/// How a panel's frames are laid out on the wire. Mode A is straight RGBA;
+/// mode B is CAM's paletted stream, which costs about 3.7 times less to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RenderMode {
+    ModeA,
+    ModeB,
+}
+
+impl RenderMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ModeA => "mode-a",
+            Self::ModeB => "mode-b",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mode-a" => Some(Self::ModeA),
+            "mode-b" => Some(Self::ModeB),
+            _ => None,
+        }
+    }
+}
+
 /// A panel's wire geometry, in pixels, as the device expects them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Geometry {
@@ -90,6 +116,8 @@ pub struct PanelFamily {
     pub commands: &'static [CommandKind],
     pub geometry: Geometry,
     pub shape: PanelShape,
+    /// The frame layouts this panel's driver can write.
+    pub render_modes: &'static [RenderMode],
 }
 
 impl PanelFamily {
@@ -141,6 +169,7 @@ static FAMILIES: [PanelFamily; 4] = [
             height: 1920,
         },
         shape: PanelShape::Rect,
+        render_modes: &[RenderMode::ModeA],
     },
     PanelFamily {
         id: "lianli-8-8",
@@ -163,6 +192,7 @@ static FAMILIES: [PanelFamily; 4] = [
             height: 1920,
         },
         shape: PanelShape::Rect,
+        render_modes: &[RenderMode::ModeA],
     },
     PanelFamily {
         id: "turzx-5",
@@ -188,6 +218,7 @@ static FAMILIES: [PanelFamily; 4] = [
             height: 480,
         },
         shape: PanelShape::Rect,
+        render_modes: &[RenderMode::ModeA],
     },
     PanelFamily {
         id: "kraken-z3",
@@ -210,6 +241,7 @@ static FAMILIES: [PanelFamily; 4] = [
             height: 320,
         },
         shape: PanelShape::Circle,
+        render_modes: &[RenderMode::ModeA, RenderMode::ModeB],
     },
 ];
 
@@ -319,6 +351,17 @@ pub trait PanelDevice: Send {
     fn telemetry(&mut self) -> Result<Telemetry, String> {
         Err("That device reports no telemetry.".to_owned())
     }
+
+    /// The frame layouts this driver can write.
+    fn render_modes(&self) -> &'static [RenderMode] {
+        &[]
+    }
+
+    /// Chooses how frames are laid out on the wire.
+    fn set_render_mode(&mut self, mode: RenderMode) -> Result<(), String> {
+        let _ = mode;
+        Err("That device takes only one frame layout.".to_owned())
+    }
 }
 
 /// A boxed driver is a driver: the manager keeps one runner per panel and only
@@ -374,6 +417,14 @@ impl PanelDevice for Box<dyn PanelDevice> {
 
     fn telemetry(&mut self) -> Result<Telemetry, String> {
         (**self).telemetry()
+    }
+
+    fn render_modes(&self) -> &'static [RenderMode] {
+        (**self).render_modes()
+    }
+
+    fn set_render_mode(&mut self, mode: RenderMode) -> Result<(), String> {
+        (**self).set_render_mode(mode)
     }
 }
 

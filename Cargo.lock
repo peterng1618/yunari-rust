@@ -8862,6 +8862,7 @@ dependencies = [
  "yunari-library",
  "yunari-model",
  "yunari-packs",
+ "yunari-panels",
  "yunari-player",
  "yunari-providers",
  "yunari-render",

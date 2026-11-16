@@ -204,6 +204,7 @@ pub fn manager_record(
         panel: record.kind == crate::displays::DisplayKind::Panel,
         rotation: record.rotation,
         device: record.device.clone(),
+        render_mode: record.render_mode,
     }
 }
 
@@ -344,6 +345,7 @@ mod tests {
                 serial: String::new(),
                 device_id: None,
             }),
+            render_mode: None,
         }
     }
 

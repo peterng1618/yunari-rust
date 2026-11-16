@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::family::{
-    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, PanelFamily, StillFormat,
-    Telemetry, for_device,
+    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, PanelFamily, RenderMode,
+    StillFormat, Telemetry, for_device,
 };
 use crate::open_device;
 use crate::runner::{Capture, Runner};
@@ -106,6 +106,8 @@ pub struct DisplayRecord {
     /// The quarter turn the owner chose, when the panel's glass is not upright.
     pub rotation: Option<u16>,
     pub device: Option<PanelDeviceId>,
+    /// How the owner wants frames laid out on this device's wire.
+    pub render_mode: Option<RenderMode>,
 }
 
 struct Entry {
@@ -235,6 +237,17 @@ impl Manager {
 
         let mut panel = (self.open)(family)?;
         panel.open()?;
+        if let Some(mode) = record.render_mode {
+            if !panel.render_modes().contains(&mode) {
+                let _ = panel.close();
+                return Err(format!(
+                    "{} does not take the {} frame layout.",
+                    family.label,
+                    mode.as_str()
+                ));
+            }
+            panel.set_render_mode(mode)?;
+        }
         let interval = panel.frame_interval_ms();
         let format = panel.still_format();
         let capture: Capture = {

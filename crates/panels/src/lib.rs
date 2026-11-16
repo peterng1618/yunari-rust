@@ -12,7 +12,7 @@ pub mod turzx;
 
 pub use family::{
     CommandKind, Geometry, PanelCommand, PanelDevice, PanelFamily, PanelHint, PanelShape,
-    StillFormat, families, for_device,
+    RenderMode, StillFormat, families, for_device,
 };
 
 /// The panels of this family attached right now.

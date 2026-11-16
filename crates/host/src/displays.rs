@@ -84,6 +84,9 @@ pub struct DisplayRecord {
     /// The physical panel this record drives, when it is a panel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<PanelDeviceId>,
+    /// How this record's panel lays frames out on its wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_mode: Option<yunari_panels::RenderMode>,
 }
 
 impl DisplayRecord {
@@ -101,6 +104,7 @@ impl DisplayRecord {
             "shape": self.shape,
             "rotation": self.rotation,
             "device": self.device,
+            "renderMode": self.render_mode,
         })
     }
 }
@@ -161,6 +165,7 @@ impl DisplayStore {
             shape: None,
             rotation: None,
             device: None,
+            render_mode: None,
         }
     }
 
@@ -186,6 +191,7 @@ impl DisplayStore {
             shape,
             rotation,
             device: None,
+            render_mode: None,
         };
         self.records.push(record.clone());
         self.save();
@@ -213,6 +219,7 @@ impl DisplayStore {
             shape,
             rotation,
             device: None,
+            render_mode: None,
         };
         self.records.push(record.clone());
         self.save();
@@ -246,6 +253,7 @@ impl DisplayStore {
             shape,
             rotation: None,
             device: Some(device),
+            render_mode: None,
         };
         self.records.push(record.clone());
         self.save();
@@ -259,6 +267,7 @@ impl DisplayStore {
         label: Option<&str>,
         shape: Option<DisplayShape>,
         rotation: Option<u16>,
+        render_mode: Option<yunari_panels::RenderMode>,
     ) -> Result<DisplayRecord, LabelRefusal> {
         let label = match label {
             Some(label) => Some(normalize_label(label)?),
@@ -275,6 +284,21 @@ impl DisplayStore {
         }
         if rotation.is_some() {
             record.rotation = rotation;
+        }
+        if let Some(mode) = render_mode {
+            // Only a mode the record's own panel advertises is stored: a
+            // driver that takes one layout cannot be handed another.
+            let supported = record
+                .device
+                .as_ref()
+                .and_then(|device| yunari_panels::for_device(device.vendor_id, device.product_id))
+                .is_some_and(|family| family.render_modes.contains(&mode));
+            if !supported {
+                return Err(LabelRefusal(
+                    "That display's panel does not take that frame layout.".to_owned(),
+                ));
+            }
+            record.render_mode = Some(mode);
         }
         let patched = record.clone();
         self.save();

@@ -2,6 +2,7 @@
 
 pub mod device;
 pub mod lighting;
+pub mod palette;
 pub mod transport;
 
 use crate::family::{PanelFamily, PanelHint};

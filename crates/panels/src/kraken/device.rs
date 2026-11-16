@@ -8,7 +8,8 @@
 use std::time::{Duration, Instant};
 
 use crate::family::{
-    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, StillFormat, Telemetry,
+    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, RenderMode, StillFormat,
+    Telemetry,
 };
 
 pub const SIZE: u32 = 320;
@@ -18,6 +19,8 @@ pub const HEADER_MAGIC: [u8; 12] = [
 ];
 /// Upload type `0x02`: one still, 32 bits per pixel, alpha ignored.
 pub const RGBA_MODE: u8 = 0x02;
+/// Upload type `0x03`: a 256-entry RGBA palette, then 8-bit indices.
+pub const PALETTED_MODE: u8 = 0x03;
 /// The unit a bucket's start and size are counted in, both on the device.
 pub const SLOT_BYTES: u32 = 1024;
 /// The device's bucket table; every index in it can hold one frame.
@@ -25,10 +28,16 @@ pub const BUCKET_COUNT: u8 = 16;
 const FRAME_BYTES: u32 = SIZE * SIZE * 4;
 const HEADER_BYTES: u32 = HEADER_MAGIC.len() as u32 + 8;
 const BUCKET_SLOTS: u16 = ((HEADER_BYTES + FRAME_BYTES) / SLOT_BYTES) as u16;
+/// CAM's paletted bucket is exactly its payload: 101 slots cover the palette
+/// and the indices, and the header written anyway lands in the next region,
+/// which the next frame deletes and recreates.
+pub const PALETTED_SLOTS: u16 = 101;
 /// The glass honours a mode-A switch only about every 140 ms: the firmware
 /// answers every command with status 1 and silently drops a switch that
 /// arrives before the previous bucket is on the glass.
 pub const KRAKEN_FRAME_INTERVAL_MS: u32 = 140;
+/// A paletted switch costs the glass about 110 ms, which is CAM's own cadence.
+pub const KRAKEN_PALETTED_FRAME_INTERVAL_MS: u32 = 110;
 /// A single blocking read's timeout.
 const READ_TIMEOUT_MS: u32 = 120;
 /// How long a command waits for its own reply. A window in time, not a count of
@@ -99,6 +108,8 @@ pub struct KrakenZ3<H: Hid, B: BulkStream> {
     /// The level a screen-on restores.
     level: u8,
     off: bool,
+    /// How frames are laid out on the wire.
+    render_mode: RenderMode,
 }
 
 impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
@@ -110,6 +121,7 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
             shown: None,
             level: 100,
             off: false,
+            render_mode: RenderMode::ModeA,
         }
     }
 
@@ -214,16 +226,25 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
     }
 
     /// The bucket this frame goes into: the one not on the glass. Mode A keeps
-    /// a two-bucket ring because the firmware's 140 ms glass only fits two.
+    /// a two-bucket ring because the firmware's 140 ms glass only fits two;
+    /// mode B uses CAM's full 16, each holding one paletted frame.
     fn next_bucket(&self) -> u8 {
-        match self.shown {
-            Some(0) => 1,
-            _ => 0,
+        if self.render_mode == RenderMode::ModeA {
+            return match self.shown {
+                Some(0) => 1,
+                _ => 0,
+            };
         }
+        Self::bucket_after(self.render_mode, self.shown.unwrap_or(BUCKET_COUNT - 1))
     }
 
-    fn bucket_after(index: u8) -> u8 {
-        (index + 1) % 2
+    fn bucket_after(mode: RenderMode, index: u8) -> u8 {
+        let count = if mode == RenderMode::ModeA {
+            2
+        } else {
+            BUCKET_COUNT
+        };
+        (index + 1) % count
     }
 
     fn transfer_header(mode: u8, payload_bytes: u32) -> [u8; HEADER_BYTES as usize] {
@@ -235,11 +256,25 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
     }
 
     fn write_frame(&mut self, index: u8, rgba: &[u8]) -> Result<(), FrameRefused> {
+        let paletted = self.render_mode == RenderMode::ModeB;
+        let mode = if paletted { PALETTED_MODE } else { RGBA_MODE };
+        let slots = if paletted {
+            PALETTED_SLOTS
+        } else {
+            BUCKET_SLOTS
+        };
+        let payload = if paletted {
+            crate::kraken::palette::to_paletted_frame(rgba)
+        } else {
+            rgba.to_vec()
+        };
+
         // A refused delete must never be written over: the firmware keeps the
         // first graphic a bucket stored. A second delete is the retry for a
-        // refusal the firmware answers once.
+        // refusal the firmware answers once, and CAM deletes twice on every
+        // paletted frame regardless.
         let mut status = self.delete_bucket(index);
-        if status != Some(0x01) {
+        if paletted || status != Some(0x01) {
             status = self.delete_bucket(index);
         }
         if status != Some(0x01) {
@@ -247,7 +282,7 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
         }
         // Never stream into a bucket the firmware refused to set up: on the
         // 2024 firmware that produced wrong pictures and wedged the device.
-        let status = self.create_bucket(index, BUCKET_SLOTS);
+        let status = self.create_bucket(index, slots);
         if status != Some(0x01) {
             return Err(FrameRefused::new(status, "create"));
         }
@@ -265,17 +300,20 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
             return Err(FrameRefused::new(begin, "begin"));
         }
 
-        let header = Self::transfer_header(RGBA_MODE, rgba.len() as u32);
+        let header = Self::transfer_header(mode, payload.len() as u32);
         self.bulk
             .write(&header)
-            .and_then(|()| self.bulk.write(rgba))
+            .and_then(|()| self.bulk.write(&payload))
             .map_err(|_| FrameRefused::new(None, "write"))?;
 
         let _ = self.write(&[0x36, 0x02, index]);
         self.read_until(0x37, 0x02);
         // The switch races the write: `36 02` answers before the glass has the
-        // bucket's last tiles, and switching on its heels shows a tear.
-        std::thread::sleep(Duration::from_millis(UPLOAD_SETTLE_MS));
+        // bucket's last tiles, and switching on its heels shows a tear. CAM's
+        // paletted stream carries a quarter of the tiles and needs no settle.
+        if !paletted {
+            std::thread::sleep(Duration::from_millis(UPLOAD_SETTLE_MS));
+        }
         let status = self.switch_bucket(index, 0x04);
         if status != Some(0x01) {
             return Err(FrameRefused::new(status, "switch"));
@@ -310,7 +348,7 @@ impl<H: Hid, B: BulkStream> KrakenZ3<H, B> {
             // the firmware refuses the bucket it is displaying, so the bucket
             // `shown` names is not the one on the glass. Write it instead.
             Err(refusal) if refusal.status == Some(9) => {
-                let other = Self::bucket_after(target);
+                let other = Self::bucket_after(self.render_mode, target);
                 match self.write_frame(other, rgba) {
                     Ok(()) => {
                         self.shown = Some(other);
@@ -370,7 +408,20 @@ impl<H: Hid, B: BulkStream> PanelDevice for KrakenZ3<H, B> {
     }
 
     fn frame_interval_ms(&self) -> u32 {
-        KRAKEN_FRAME_INTERVAL_MS
+        if self.render_mode == RenderMode::ModeB {
+            KRAKEN_PALETTED_FRAME_INTERVAL_MS
+        } else {
+            KRAKEN_FRAME_INTERVAL_MS
+        }
+    }
+
+    fn render_modes(&self) -> &'static [RenderMode] {
+        &[RenderMode::ModeA, RenderMode::ModeB]
+    }
+
+    fn set_render_mode(&mut self, mode: RenderMode) -> Result<(), String> {
+        self.render_mode = mode;
+        Ok(())
     }
 
     fn accepts(&self, kind: CommandKind) -> bool {
@@ -650,6 +701,56 @@ mod tests {
         assert_eq!(panel.bulk.writes[0][12], RGBA_MODE);
         assert_eq!(&panel.bulk.writes[0][16..20], &FRAME_BYTES.to_le_bytes());
         assert_eq!(panel.bulk.writes[1].len() as u32, FRAME_BYTES);
+        assert_eq!(panel.shown, Some(1));
+    }
+
+    #[test]
+    fn a_paletted_frame_writes_cam_s_own_payload_shape() {
+        let mut panel = opened(FakeHid::new());
+        panel.control.writes.clear();
+        panel
+            .set_render_mode(RenderMode::ModeB)
+            .expect("mode B is this driver's own");
+        assert_eq!(panel.frame_interval_ms(), KRAKEN_PALETTED_FRAME_INTERVAL_MS);
+
+        panel.control.replies.push_back(reply(0x37, 0x03, 1)); // liquid mode
+        panel.control.replies.push_back(reply(0x39, 0x01, 1)); // switch bucket 0
+        for _ in 0..BUCKET_COUNT {
+            panel.control.replies.push_back(reply(0x33, 0x02, 1)); // prepare deletes
+        }
+        // Two deletes, create, begin, end, switch: CAM deletes twice a frame.
+        panel.control.replies.push_back(reply(0x33, 0x02, 1));
+        panel.control.replies.push_back(reply(0x33, 0x02, 1));
+        panel.control.replies.push_back(reply(0x33, 0x01, 1));
+        panel.control.replies.push_back(reply(0x37, 0x01, 1));
+        panel.control.replies.push_back(reply(0x37, 0x02, 1));
+        panel.control.replies.push_back(reply(0x39, 0x01, 1));
+        panel.present(&still()).expect("a paletted frame");
+
+        // Header then a palette-plus-indices payload, one bulk write each.
+        assert_eq!(panel.bulk.writes[0][12], PALETTED_MODE);
+        assert_eq!(
+            &panel.bulk.writes[0][16..20],
+            &(crate::kraken::palette::FRAME_BYTES as u32).to_le_bytes()
+        );
+        assert_eq!(
+            panel.bulk.writes[1].len(),
+            crate::kraken::palette::FRAME_BYTES
+        );
+        // CAM's bucket is exactly its payload: 101 slots, not the RGBA count.
+        let create = panel
+            .control
+            .writes
+            .iter()
+            .find(|report| report[0] == 0x32 && report[1] == 0x01)
+            .expect("a create");
+        assert_eq!(
+            u16::from_le_bytes([create[6], create[7]]),
+            PALETTED_SLOTS,
+            "the paletted bucket is 101 slots"
+        );
+        // Mode A leaves bucket 0 on the glass from `prepare`; the frame lands
+        // in the next bucket of the 16-bucket ring.
         assert_eq!(panel.shown, Some(1));
     }
 

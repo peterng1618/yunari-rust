@@ -110,6 +110,7 @@ fn record(id: &str) -> DisplayRecord {
             serial: format!("{id}-serial"),
             device_id: None,
         }),
+        render_mode: None,
     }
 }
 

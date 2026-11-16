@@ -787,7 +787,7 @@ impl EditorWindow {
         let current = record.shape.unwrap_or(DisplayShape::Rect);
         let rotation = record.rotation.unwrap_or(0);
         let (shape, rotation) = settings_dialog::next_presentation(current, rotation, shape);
-        let message = match displays.patch(id, None, Some(shape), Some(rotation)) {
+        let message = match displays.patch(id, None, Some(shape), Some(rotation), None) {
             Ok(record) => format!(
                 "{}: {}°, {}.",
                 record.label,
@@ -797,6 +797,42 @@ impl EditorWindow {
                     DisplayShape::Circle => "circle",
                 }
             ),
+            Err(refusal) => refusal.0,
+        };
+        drop(displays);
+        let monitors = settings_dialog::monitor_rows(Some(&host), cx);
+        let displays = settings_dialog::display_rows(Some(&host));
+        if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
+            dialog.monitors = monitors;
+            dialog.displays = displays;
+            dialog.message = Some(message);
+        }
+        cx.notify();
+    }
+
+    /// Switches a panel's frame layout to the next one it accepts. The store
+    /// checks the choice against the panel's own family before storing it.
+    fn change_render_mode(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let Ok(mut displays) = host.displays.lock() else {
+            return;
+        };
+        let Some(record) = displays.get(&id) else {
+            return;
+        };
+        let modes = record
+            .device
+            .as_ref()
+            .and_then(|device| yunari_panels::for_device(device.vendor_id, device.product_id))
+            .map(|family| family.render_modes)
+            .unwrap_or(&[]);
+        let Some(mode) = settings_dialog::next_render_mode(modes, record.render_mode) else {
+            return;
+        };
+        let message = match displays.patch(&id, None, None, None, Some(mode)) {
+            Ok(record) => format!("{}: {}.", record.label, settings_dialog::mode_text(mode)),
             Err(refusal) => refusal.0,
         };
         drop(displays);
@@ -1094,7 +1130,7 @@ impl EditorWindow {
     ) {
         let message = match self.host.clone() {
             Some(host) => match host.displays.lock() {
-                Ok(mut displays) => match displays.patch(id, Some(value), None, None) {
+                Ok(mut displays) => match displays.patch(id, Some(value), None, None, None) {
                     Ok(record) => format!("Renamed to {}.", record.label),
                     Err(refusal) => refusal.0,
                 },

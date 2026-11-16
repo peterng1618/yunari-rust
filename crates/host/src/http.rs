@@ -727,6 +727,8 @@ struct DisplayPatch {
     label: Option<String>,
     shape: Option<String>,
     rotation: Option<u16>,
+    #[serde(rename = "renderMode")]
+    render_mode: Option<String>,
 }
 
 async fn patch_display(
@@ -742,13 +744,32 @@ async fn patch_display(
         Ok(shape) => shape,
         Err((status, message)) => return (status, message).into_response(),
     };
+    let render_mode = match body.render_mode.as_deref() {
+        None => None,
+        Some(value) => match yunari_panels::RenderMode::parse(value) {
+            Some(mode) => Some(mode),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "The frame layout must be mode-a or mode-b.",
+                )
+                    .into_response();
+            }
+        },
+    };
     let mut store = match app.displays.lock() {
         Ok(store) => store,
         Err(_) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
         }
     };
-    match store.patch(&id, body.label.as_deref(), shape, body.rotation) {
+    match store.patch(
+        &id,
+        body.label.as_deref(),
+        shape,
+        body.rotation,
+        render_mode,
+    ) {
         Ok(record) => Json(json!({"display": record.peer_json()})).into_response(),
         Err(refusal) => (StatusCode::NOT_FOUND, refusal.0).into_response(),
     }

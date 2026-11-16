@@ -35,6 +35,10 @@ pub struct NamedDisplay {
     pub kind: &'static str,
     pub shape: DisplayShape,
     pub rotation: u16,
+    /// The frame layout the panel is written in, and every layout it takes.
+    /// Empty for a phone, which has no wire format to choose.
+    pub render_mode: Option<yunari_panels::RenderMode>,
+    pub render_modes: &'static [yunari_panels::RenderMode],
 }
 
 /// The switches, read once when the dialog opens.
@@ -282,6 +286,13 @@ pub fn display_rows(host: Option<&Shared>) -> Vec<NamedDisplay> {
                 DisplayKind::Panel => "panel",
                 DisplayKind::Local => "monitor",
             },
+            render_mode: record.render_mode,
+            render_modes: record
+                .device
+                .as_ref()
+                .and_then(|device| yunari_panels::for_device(device.vendor_id, device.product_id))
+                .map(|family| family.render_modes)
+                .unwrap_or(&[]),
             id: record.id,
             label: record.label,
             shape: record.shape.unwrap_or(DisplayShape::Rect),
@@ -360,6 +371,25 @@ fn shape_text(shape: DisplayShape) -> String {
             DisplayShape::Circle => "Circle",
         }
     )
+}
+
+/// The frame layout as a person reads it.
+pub fn mode_text(mode: yunari_panels::RenderMode) -> &'static str {
+    match mode {
+        yunari_panels::RenderMode::ModeA => "Mode A",
+        yunari_panels::RenderMode::ModeB => "Mode B",
+    }
+}
+
+/// The layout one click chooses: the next one the panel advertises, wrapping.
+/// A record that has never chosen one is written in mode A.
+pub fn next_render_mode(
+    modes: &'static [yunari_panels::RenderMode],
+    current: Option<yunari_panels::RenderMode>,
+) -> Option<yunari_panels::RenderMode> {
+    let current = current.unwrap_or(yunari_panels::RenderMode::ModeA);
+    let at = modes.iter().position(|mode| *mode == current)?;
+    modes.get((at + 1) % modes.len()).copied()
 }
 
 /// One clickable presentation row. Clicking it switches the shape, or turns the
@@ -622,6 +652,33 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
             display.id.clone(),
             false,
         ));
+        // Only a panel with more than one wire format has a choice to offer.
+        if display.render_modes.len() > 1 {
+            let change = display.id.clone();
+            let text = format!(
+                "Frame layout: {}  ·  click to change",
+                mode_text(
+                    display
+                        .render_mode
+                        .unwrap_or(yunari_panels::RenderMode::ModeA)
+                )
+            );
+            column = column.child(
+                div()
+                    .id(("settings-display-mode", index))
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(0xe8e8ea))
+                    .bg(rgb(0x22222a))
+                    .child(text)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.change_render_mode(change.clone(), cx);
+                    })),
+            );
+        }
     }
     let mut footer = div()
         .flex()
@@ -666,9 +723,22 @@ mod tests {
     use yunari_host::hosting::Hosting;
 
     use super::{
-        DisplayShape, next_presentation, read_weather, read_weather_key_set, set_device_slot,
-        set_lan, set_weather_key, weather_key_id, write_weather,
+        DisplayShape, next_presentation, next_render_mode, read_weather, read_weather_key_set,
+        set_device_slot, set_lan, set_weather_key, weather_key_id, write_weather,
     };
+
+    #[test]
+    fn one_click_moves_the_frame_layout_to_the_next_the_panel_takes() {
+        use yunari_panels::RenderMode;
+        const BOTH: &[RenderMode] = &[RenderMode::ModeA, RenderMode::ModeB];
+        assert_eq!(next_render_mode(BOTH, None), Some(RenderMode::ModeB));
+        assert_eq!(
+            next_render_mode(BOTH, Some(RenderMode::ModeB)),
+            Some(RenderMode::ModeA)
+        );
+        // A panel with one layout cycles back to it; its row is never shown.
+        assert_eq!(next_render_mode(&BOTH[..1], None), Some(RenderMode::ModeA));
+    }
 
     fn temp_settings(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
