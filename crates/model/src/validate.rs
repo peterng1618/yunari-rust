@@ -513,7 +513,10 @@ fn validate_glass(node: &Node, path: &str, issues: &mut Vec<ValidationIssue>) {
     {
         issues.push(issue(
             format!("{path}/glass/blurRadius"),
-            format!("A glass blur is from 0 to {} artboard units.", crate::document::MAX_GLASS_BLUR_RADIUS),
+            format!(
+                "A glass blur is from 0 to {} artboard units.",
+                crate::document::MAX_GLASS_BLUR_RADIUS
+            ),
         ));
     }
 }
@@ -836,7 +839,10 @@ mod tests {
 
     #[test]
     fn a_glass_blur_is_bounded() {
-        let document = with_nodes(vec![frosted(NodeKind::Rectangle { corner_radius: 4.0 }, 60.0)]);
+        let document = with_nodes(vec![frosted(
+            NodeKind::Rectangle { corner_radius: 4.0 },
+            60.0,
+        )]);
         assert_eq!(
             paths(validate_document(&document)),
             vec!["nodes/0/glass/blurRadius"]

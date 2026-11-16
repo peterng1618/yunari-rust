@@ -64,30 +64,70 @@ mod tests {
     #[test]
     fn contain_letterboxes_a_square_in_a_wide_box() {
         let placed = placement((50.0, 50.0), (100.0, 50.0), ImageFit::Contain);
-        assert_eq!(placed, Placement { x: 25.0, y: 0.0, width: 50.0, height: 50.0 });
+        assert_eq!(
+            placed,
+            Placement {
+                x: 25.0,
+                y: 0.0,
+                width: 50.0,
+                height: 50.0
+            }
+        );
     }
 
     #[test]
     fn contain_pillarboxes_a_wide_picture_in_a_tall_box() {
         let placed = placement((200.0, 100.0), (100.0, 100.0), ImageFit::Contain);
-        assert_eq!(placed, Placement { x: 0.0, y: 25.0, width: 100.0, height: 50.0 });
+        assert_eq!(
+            placed,
+            Placement {
+                x: 0.0,
+                y: 25.0,
+                width: 100.0,
+                height: 50.0
+            }
+        );
     }
 
     #[test]
     fn cover_overflows_the_box_equally_on_two_sides() {
         let placed = placement((100.0, 100.0), (200.0, 100.0), ImageFit::Cover);
-        assert_eq!(placed, Placement { x: 0.0, y: -50.0, width: 200.0, height: 200.0 });
+        assert_eq!(
+            placed,
+            Placement {
+                x: 0.0,
+                y: -50.0,
+                width: 200.0,
+                height: 200.0
+            }
+        );
     }
 
     #[test]
     fn stretch_takes_the_box_and_ignores_the_picture_shape() {
         let placed = placement((10.0, 40.0), (100.0, 25.0), ImageFit::Stretch);
-        assert_eq!(placed, Placement { x: 0.0, y: 0.0, width: 100.0, height: 25.0 });
+        assert_eq!(
+            placed,
+            Placement {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 25.0
+            }
+        );
     }
 
     #[test]
     fn a_sizeless_picture_falls_back_to_the_box() {
         let placed = placement((0.0, 0.0), (30.0, 20.0), ImageFit::Contain);
-        assert_eq!(placed, Placement { x: 0.0, y: 0.0, width: 30.0, height: 20.0 });
+        assert_eq!(
+            placed,
+            Placement {
+                x: 0.0,
+                y: 0.0,
+                width: 30.0,
+                height: 20.0
+            }
+        );
     }
 }

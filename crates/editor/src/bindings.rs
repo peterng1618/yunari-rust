@@ -21,7 +21,9 @@ pub fn referenced_by(document: &ThemeDocument, binding_id: &str) -> Option<Strin
 fn find_holder<'a>(node: &'a Node, binding_id: &str) -> Option<&'a Node> {
     if let NodeKind::Text { content } = &node.kind {
         for run in &content.runs {
-            if let TextRun::Value { binding_id: held, .. } = run
+            if let TextRun::Value {
+                binding_id: held, ..
+            } = run
                 && held == binding_id
             {
                 return Some(node);
@@ -96,7 +98,8 @@ impl Editor {
         let (field, value) = (field.to_owned(), value.to_owned());
         let mut outcome = Ok(());
         self.edit(|document| {
-            outcome = crate::inspector::apply_binding(document, node_id, binding_id, &field, &value);
+            outcome =
+                crate::inspector::apply_binding(document, node_id, binding_id, &field, &value);
         });
         outcome
     }
@@ -165,7 +168,10 @@ mod tests {
         let id = editor.add_binding("a", "cpu.load").expect("a binding");
         assert_eq!(id, "binding-1");
         assert_eq!(editor.document().bindings["a"][0].semantic_key, "cpu.load");
-        assert_eq!(editor.add_binding("a", "gpu.temp").as_deref(), Ok("binding-2"));
+        assert_eq!(
+            editor.add_binding("a", "gpu.temp").as_deref(),
+            Ok("binding-2")
+        );
     }
 
     #[test]

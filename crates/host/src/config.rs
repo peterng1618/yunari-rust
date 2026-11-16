@@ -22,7 +22,12 @@ pub struct HostConfig {
 impl HostConfig {
     pub fn resolve(app_dir: Option<PathBuf>, port: Option<u16>, lan: bool) -> Self {
         Self {
-            app_dir: app_dir.unwrap_or_else(default_app_dir),
+            // An explicit directory wins, then the environment's, then the
+            // source's default. The environment is what a test or a second
+            // install uses to keep its settings apart.
+            app_dir: app_dir
+                .or_else(|| std::env::var_os("YUNARI_APP_DIR").map(PathBuf::from))
+                .unwrap_or_else(default_app_dir),
             port: port.unwrap_or(DEFAULT_PORT),
             lan,
         }

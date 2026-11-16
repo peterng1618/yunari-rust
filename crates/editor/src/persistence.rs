@@ -239,7 +239,9 @@ mod tests {
             Some(&b"not really a png"[..])
         );
         reopened.rename_theme("Edited");
-        reopened.save(&library, false).expect("a save after opening");
+        reopened
+            .save(&library, false)
+            .expect("a save after opening");
         // The file is still on disk, because the save handed it back.
         let stored = fs::read(library.root().join("alpha/assets/pic.png"));
         assert_eq!(stored.expect("a kept file"), b"not really a png");

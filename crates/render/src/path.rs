@@ -83,10 +83,9 @@ pub fn parse(data: &str) -> Result<Vec<PathCommand>, PathError> {
             }
             PathSegment::SmoothCurveTo { abs, x2, y2, x, y } => {
                 let first = match (control, control_is_cubic) {
-                    (Some(control), true) => (
-                        cursor.0 * 2.0 - control.0,
-                        cursor.1 * 2.0 - control.1,
-                    ),
+                    (Some(control), true) => {
+                        (cursor.0 * 2.0 - control.0, cursor.1 * 2.0 - control.1)
+                    }
                     _ => cursor,
                 };
                 let second = if abs {
@@ -125,10 +124,9 @@ pub fn parse(data: &str) -> Result<Vec<PathCommand>, PathError> {
             }
             PathSegment::SmoothQuadratic { abs, x, y } => {
                 let reflect = match (control, control_is_cubic) {
-                    (Some(control), false) => (
-                        cursor.0 * 2.0 - control.0,
-                        cursor.1 * 2.0 - control.1,
-                    ),
+                    (Some(control), false) => {
+                        (cursor.0 * 2.0 - control.0, cursor.1 * 2.0 - control.1)
+                    }
                     _ => cursor,
                 };
                 let end = place(abs, cursor, x, y);

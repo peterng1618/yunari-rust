@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::write_json;
 #[cfg(test)]
 use crate::config::write_atomic;
+use crate::config::write_json;
 
 pub const LOCK_FILE: &str = "host.lock";
 

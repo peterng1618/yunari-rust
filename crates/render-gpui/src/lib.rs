@@ -80,7 +80,12 @@ pub fn paint_fitted(
     // A page picture is composed against the whole artboard, and a frosted
     // panel samples what is painted beneath it, so either makes the frame one
     // image rather than an op-by-op paint.
-    if list.backdrop.is_some() || list.ops.iter().any(|op| matches!(op.shape, Shape::Glass { .. })) {
+    if list.backdrop.is_some()
+        || list
+            .ops
+            .iter()
+            .any(|op| matches!(op.shape, Shape::Glass { .. }))
+    {
         paint_whole(list, &fit, window, images);
         return;
     }
@@ -132,9 +137,7 @@ fn paint_op(
                 border_widths: stroke.map_or(Edges::default(), |stroke| {
                     Edges::all(px(stroke.width * fit.scale))
                 }),
-                border_color: stroke.map_or(transparent_black(), |stroke| {
-                    colour_of(&stroke.paint)
-                }),
+                border_color: stroke.map_or(transparent_black(), |stroke| colour_of(&stroke.paint)),
                 border_style: BorderStyle::Solid,
             });
         }
@@ -244,10 +247,13 @@ fn background_of(paint: &Paint) -> Background {
             // ends and loses the middle. A theme's gradients are authored in
             // palette pairs, which is what a stop pair expresses.
             let angle = gradient_angle(*from, *to);
-            let first = stops.first().copied().unwrap_or(yunari_render::GradientStop {
-                offset: 0.0,
-                color: Color::BLACK,
-            });
+            let first = stops
+                .first()
+                .copied()
+                .unwrap_or(yunari_render::GradientStop {
+                    offset: 0.0,
+                    color: Color::BLACK,
+                });
             let last = stops.last().copied().unwrap_or(first);
             linear_gradient(
                 angle,
@@ -371,9 +377,7 @@ mod tests {
             stroke: None,
         };
         assert!(axis_aligned(&op));
-        op.transform = op
-            .transform
-            .then(yunari_render::Affine::rotate(45.0));
+        op.transform = op.transform.then(yunari_render::Affine::rotate(45.0));
         assert!(!axis_aligned(&op));
     }
 }

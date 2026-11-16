@@ -9,7 +9,28 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Picker grouping order. A provider may contribute families of its own.
-pub static FAMILIES: &[&str] = &["cpu", "ram", "gpu", "vram", "disk", "network", "time", "date", "cooling", "motherboard", "battery", "psu", "system", "audio", "wifi", "weather", "media", "frame", "game", "custom"];
+pub static FAMILIES: &[&str] = &[
+    "cpu",
+    "ram",
+    "gpu",
+    "vram",
+    "disk",
+    "network",
+    "time",
+    "date",
+    "cooling",
+    "motherboard",
+    "battery",
+    "psu",
+    "system",
+    "audio",
+    "wifi",
+    "weather",
+    "media",
+    "frame",
+    "game",
+    "custom",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
@@ -497,7 +518,9 @@ pub static SEMANTIC_KEYS: &[SemanticKeyDescriptor] = &[
         media_kind: None,
         expected_tier: Tier::Baseline,
         converts: None,
-        instant: Some(Instant { default_format: "HH:mm" }),
+        instant: Some(Instant {
+            default_format: "HH:mm",
+        }),
     },
     SemanticKeyDescriptor {
         key: "date.today",
@@ -510,7 +533,9 @@ pub static SEMANTIC_KEYS: &[SemanticKeyDescriptor] = &[
         media_kind: None,
         expected_tier: Tier::Baseline,
         converts: None,
-        instant: Some(Instant { default_format: "DD MMM YYYY" }),
+        instant: Some(Instant {
+            default_format: "DD MMM YYYY",
+        }),
     },
     SemanticKeyDescriptor {
         key: "disk.used",
@@ -1160,7 +1185,9 @@ pub static SEMANTIC_KEYS: &[SemanticKeyDescriptor] = &[
         media_kind: None,
         expected_tier: Tier::Baseline,
         converts: None,
-        instant: Some(Instant { default_format: "HH:mm" }),
+        instant: Some(Instant {
+            default_format: "HH:mm",
+        }),
     },
     SemanticKeyDescriptor {
         key: "weather.sunset",
@@ -1173,7 +1200,9 @@ pub static SEMANTIC_KEYS: &[SemanticKeyDescriptor] = &[
         media_kind: None,
         expected_tier: Tier::Baseline,
         converts: None,
-        instant: Some(Instant { default_format: "HH:mm" }),
+        instant: Some(Instant {
+            default_format: "HH:mm",
+        }),
     },
     SemanticKeyDescriptor {
         key: "weather.attribution",
@@ -1676,9 +1705,9 @@ fn is_custom(value: &str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= 32
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_' || *byte == b'-')
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_' || *byte == b'-'
+        })
 }
 
 fn is_custom_field(value: &str) -> bool {
@@ -1770,7 +1799,10 @@ mod tests {
         let key = describe("cpu.core.3.load").expect("a core key");
         assert_eq!(key.label, "CPU core 3 load");
         assert_eq!(key.unit, Some("%"));
-        assert!(describe("cpu.core.0.load").is_none(), "cores count from one");
+        assert!(
+            describe("cpu.core.0.load").is_none(),
+            "cores count from one"
+        );
         assert!(describe("cpu.core.x.load").is_none());
     }
 

@@ -82,14 +82,19 @@ pub fn value_text(
             code: IssueCode::MissingReading,
             node_id: Some(node.id.clone()),
             detail: match &reading.message {
-                Some(message) => format!("{} reads {MISSING_VALUE_TEXT}: {message}", binding.semantic_key),
+                Some(message) => format!(
+                    "{} reads {MISSING_VALUE_TEXT}: {message}",
+                    binding.semantic_key
+                ),
                 None => format!("{} has no reading.", binding.semantic_key),
             },
         });
         return MISSING_VALUE_TEXT.to_owned();
     }
     let authored_precision = precision.or(binding.precision);
-    let display = unit_display.or(binding.unit_display).unwrap_or(UnitDisplay::Short);
+    let display = unit_display
+        .or(binding.unit_display)
+        .unwrap_or(UnitDisplay::Short);
 
     if let Some(value) = reading.value.filter(|value| value.is_finite()) {
         // The author's scale and offset act on the measurement, once; the
@@ -130,7 +135,10 @@ pub fn value_text(
         issues.push(PlanIssue {
             code: IssueCode::MissingReading,
             node_id: Some(node.id.clone()),
-            detail: format!("{} carries neither a figure nor text.", binding.semantic_key),
+            detail: format!(
+                "{} carries neither a figure nor text.",
+                binding.semantic_key
+            ),
         });
         return MISSING_VALUE_TEXT.to_owned();
     };
@@ -185,4 +193,3 @@ pub fn wanted_keys(document: &ThemeDocument) -> Vec<String> {
     }
     keys
 }
-

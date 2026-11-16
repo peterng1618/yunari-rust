@@ -63,21 +63,31 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         rows: vec![
             number("transform.x", "X", transform.x, None),
             number("transform.y", "Y", transform.y, None),
-            number(
-                "transform.width",
-                "Width",
-                transform.width,
-                Some(MIN_SIZE),
-            ),
+            number("transform.width", "Width", transform.width, Some(MIN_SIZE)),
             number(
                 "transform.height",
                 "Height",
                 transform.height,
                 Some(MIN_SIZE),
             ),
-            number("transform.rotation", "Rotation", transform.rotation, Some(0.0)),
-            number("transform.scaleX", "Scale X", transform.scale_x, Some(0.000_001)),
-            number("transform.scaleY", "Scale Y", transform.scale_y, Some(0.000_001)),
+            number(
+                "transform.rotation",
+                "Rotation",
+                transform.rotation,
+                Some(0.0),
+            ),
+            number(
+                "transform.scaleX",
+                "Scale X",
+                transform.scale_x,
+                Some(0.000_001),
+            ),
+            number(
+                "transform.scaleY",
+                "Scale Y",
+                transform.scale_y,
+                Some(0.000_001),
+            ),
         ],
     }];
     sections.push(Section {
@@ -124,7 +134,11 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         NodeKind::Image { content } => sections.push(Section {
             title: "Image",
             rows: vec![
-                text_field("kind.content.assetId", "Asset", Some(content.asset_id.as_str())),
+                text_field(
+                    "kind.content.assetId",
+                    "Asset",
+                    Some(content.asset_id.as_str()),
+                ),
                 Field {
                     key: "kind.content.fit".to_owned(),
                     label: "Fit",
@@ -140,7 +154,11 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         NodeKind::Video { content } => sections.push(Section {
             title: "Video",
             rows: vec![
-                text_field("kind.content.assetId", "Asset", Some(content.asset_id.as_str())),
+                text_field(
+                    "kind.content.assetId",
+                    "Asset",
+                    Some(content.asset_id.as_str()),
+                ),
                 toggle("kind.content.loop", "Loop", content.loop_),
                 toggle("kind.content.muted", "Muted", content.muted),
             ],
@@ -191,7 +209,9 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                     max: 6.0,
                     step: 1.0,
                 },
-                value: binding.precision.map_or_else(String::new, |p| p.to_string()),
+                value: binding
+                    .precision
+                    .map_or_else(String::new, |p| p.to_string()),
             });
             rows.push(Field {
                 key: format!("bindings.{}.unitDisplay", binding.id),
@@ -231,10 +251,22 @@ pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
             rows: vec![
                 text_field("theme.name", "Name", metadata.name.as_deref()),
                 text_field("theme.author", "Author", metadata.author.as_deref()),
-                text_field("theme.description", "Description", metadata.description.as_deref()),
+                text_field(
+                    "theme.description",
+                    "Description",
+                    metadata.description.as_deref(),
+                ),
                 text_field("theme.version", "Version", metadata.version.as_deref()),
-                text_field("theme.language", "Language", metadata.theme_language.as_deref()),
-                text_field("theme.tags", "Tags", Some(metadata.tags.join(", ").as_str())),
+                text_field(
+                    "theme.language",
+                    "Language",
+                    metadata.theme_language.as_deref(),
+                ),
+                text_field(
+                    "theme.tags",
+                    "Tags",
+                    Some(metadata.tags.join(", ").as_str()),
+                ),
             ],
         },
         Section {
@@ -283,7 +315,10 @@ pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
                 text_field(
                     "background.media",
                     "Media",
-                    background.media.as_ref().map(|media| media.asset_id.as_str()),
+                    background
+                        .media
+                        .as_ref()
+                        .map(|media| media.asset_id.as_str()),
                 ),
             ],
         },
@@ -329,14 +364,20 @@ pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
                     max: f64::MAX,
                     step: 1.0,
                 },
-                value: media.fallback_frame.map_or_else(String::new, |frame| frame.to_string()),
+                value: media
+                    .fallback_frame
+                    .map_or_else(String::new, |frame| frame.to_string()),
             });
         }
         if background.mode == BackgroundMode::Advanced {
             rows.push(choice(
                 "background.media.anchor",
                 "Anchor",
-                match media.composition.as_ref().map(|composition| composition.anchor) {
+                match media
+                    .composition
+                    .as_ref()
+                    .map(|composition| composition.anchor)
+                {
                     None => "full",
                     Some(BackgroundAnchor::Top) => "top",
                     Some(BackgroundAnchor::Right) => "right",
@@ -356,9 +397,7 @@ pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
                         max: MAX_BACKGROUND_EXTENT,
                         step: 0.1,
                     },
-                    value: composition
-                        .extent
-                        .map_or_else(String::new, format_number),
+                    value: composition.extent.map_or_else(String::new, format_number),
                 });
             }
             if media.composition.is_some() {
@@ -410,11 +449,7 @@ fn text_field(key: &'static str, label: &'static str, value: Option<&str>) -> Fi
 
 /// Writes one document-level field: the theme's metadata, the artboard or the
 /// background. The same refusal rule applies — a rejected value changes nothing.
-pub fn apply_document(
-    document: &mut ThemeDocument,
-    key: &str,
-    value: &str,
-) -> Result<(), String> {
+pub fn apply_document(document: &mut ThemeDocument, key: &str, value: &str) -> Result<(), String> {
     match key {
         "artboard.width" | "artboard.height" => {
             let parsed = value
@@ -578,16 +613,15 @@ pub fn apply_document(
                             });
                         }
                         "extent" => {
-                            let composition = media.composition.as_mut().ok_or_else(|| {
-                                "Choose an edge anchor before a size".to_owned()
-                            })?;
+                            let composition = media
+                                .composition
+                                .as_mut()
+                                .ok_or_else(|| "Choose an edge anchor before a size".to_owned())?;
                             if composition.anchor == BackgroundAnchor::Center {
                                 return Err("A centred composition has no size".to_owned());
                             }
-                            composition.extent = Some(number(
-                                MIN_BACKGROUND_EXTENT,
-                                MAX_BACKGROUND_EXTENT,
-                            )?);
+                            composition.extent =
+                                Some(number(MIN_BACKGROUND_EXTENT, MAX_BACKGROUND_EXTENT)?);
                         }
                         "fade" => {
                             let composition = media
@@ -690,7 +724,11 @@ fn text_rows(content: &TextContent) -> Vec<Field> {
     }
     rows.extend([
         choice("kind.content.align", "Align", align_name(content.align)),
-        choice("kind.content.overflow", "Overflow", overflow_name(content.overflow)),
+        choice(
+            "kind.content.overflow",
+            "Overflow",
+            overflow_name(content.overflow),
+        ),
         choice(
             "kind.content.verticalAlign",
             "Vertical align",
@@ -841,7 +879,9 @@ fn chart_rows(content: &ChartContent) -> Vec<Field> {
                     max: f64::MAX,
                     step: 1.0,
                 },
-                value.and_then(serde_json::Value::as_f64).map_or_else(String::new, format_number),
+                value
+                    .and_then(serde_json::Value::as_f64)
+                    .map_or_else(String::new, format_number),
             ),
             Setting::Flag(..) => (
                 FieldKind::Toggle,
@@ -1028,7 +1068,8 @@ pub fn apply(document: &mut ThemeDocument, id: &str, key: &str, value: &str) -> 
     if key.ends_with(".assetId") {
         check_asset(document, id, value)?;
     }
-    let node = find_mut(&mut document.nodes, id).ok_or_else(|| "No node with that id".to_owned())?;
+    let node =
+        find_mut(&mut document.nodes, id).ok_or_else(|| "No node with that id".to_owned())?;
     apply_to_node(node, key, value)
 }
 
@@ -1054,7 +1095,9 @@ fn check_asset(document: &ThemeDocument, node_id: &str, value: &str) -> Result<(
         _ => false,
     };
     if !fits {
-        return Err(format!("{asset_id} is not the kind of asset this node draws"));
+        return Err(format!(
+            "{asset_id} is not the kind of asset this node draws"
+        ));
     }
     Ok(())
 }
@@ -1265,9 +1308,7 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
                 if text.is_empty() {
                     style.remove("fontSize");
                 } else {
-                    let size: f64 = text
-                        .parse()
-                        .map_err(|_| "Size needs a number".to_owned())?;
+                    let size: f64 = text.parse().map_err(|_| "Size needs a number".to_owned())?;
                     if !size.is_finite() || size < 1.0 {
                         return Err("Size must be at least 1".to_owned());
                     }
@@ -1350,8 +1391,8 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
         "kind.content.family" => match &mut node.kind {
             NodeKind::Chart { content } => {
                 let name = value.trim();
-                content.family = chart_family(name)
-                    .ok_or_else(|| format!("{name} is not a chart family"))?;
+                content.family =
+                    chart_family(name).ok_or_else(|| format!("{name} is not a chart family"))?;
             }
             _ => return Err("Only a chart has a family".to_owned()),
         },
@@ -1369,7 +1410,9 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
                 }
             }
         }
-        "kind.content.align" | "kind.content.overflow" | "kind.content.verticalAlign"
+        "kind.content.align"
+        | "kind.content.overflow"
+        | "kind.content.verticalAlign"
         | "kind.content.vertical" => match &mut node.kind {
             NodeKind::Text { content } => match (key, value.trim()) {
                 ("kind.content.align", "left") => content.align = TextAlign::Left,
@@ -1453,11 +1496,14 @@ mod tests {
     }
 
     fn with_token(mut document: ThemeDocument) -> ThemeDocument {
-        document.type_tokens.insert("body".to_owned(), TypeToken {
-            family: "Inter".to_owned(),
-            weight: None,
-            face: None,
-        });
+        document.type_tokens.insert(
+            "body".to_owned(),
+            TypeToken {
+                family: "Inter".to_owned(),
+                weight: None,
+                face: None,
+            },
+        );
         document
     }
 
@@ -1490,10 +1536,23 @@ mod tests {
     #[test]
     fn run_text_and_a_known_token_are_written() {
         let mut document = with_token(document(vec![text_node()]));
-        assert!(apply(&mut document, "label", "kind.content.runs.0.text", "Hi there").is_ok());
         assert!(
-            apply(&mut document, "label", "kind.content.runs.0.typeToken", "typeTokens.body")
-                .is_ok()
+            apply(
+                &mut document,
+                "label",
+                "kind.content.runs.0.text",
+                "Hi there"
+            )
+            .is_ok()
+        );
+        assert!(
+            apply(
+                &mut document,
+                "label",
+                "kind.content.runs.0.typeToken",
+                "typeTokens.body"
+            )
+            .is_ok()
         );
         let NodeKind::Text { content } = &document.nodes[0].kind else {
             panic!("still text");
@@ -1511,7 +1570,15 @@ mod tests {
     #[test]
     fn an_unknown_token_or_run_is_refused() {
         let mut document = with_token(document(vec![text_node()]));
-        assert!(apply(&mut document, "label", "kind.content.runs.0.typeToken", "title").is_err());
+        assert!(
+            apply(
+                &mut document,
+                "label",
+                "kind.content.runs.0.typeToken",
+                "title"
+            )
+            .is_err()
+        );
         assert!(apply(&mut document, "label", "kind.content.runs.7.text", "x").is_err());
         assert!(apply(&mut document, "label", "kind.content.runs.zero.text", "x").is_err());
     }
@@ -1522,7 +1589,13 @@ mod tests {
         assert!(apply(&mut document, "label", "kind.content.align", "center").is_ok());
         assert!(apply(&mut document, "label", "kind.content.overflow", "ellipsis").is_ok());
         assert!(
-            apply(&mut document, "label", "kind.content.verticalAlign", "middle").is_ok()
+            apply(
+                &mut document,
+                "label",
+                "kind.content.verticalAlign",
+                "middle"
+            )
+            .is_ok()
         );
         let NodeKind::Text { content } = &document.nodes[0].kind else {
             panic!("still text");
@@ -1602,7 +1675,10 @@ mod tests {
         let mut document = document(vec![]);
         assert!(apply_document(&mut document, "background.color", "#101014").is_err());
         assert!(apply_document(&mut document, "background.color", "palette.desk").is_ok());
-        assert!(matches!(document.background.color, Some(StyleValue::Ref(_))));
+        assert!(matches!(
+            document.background.color,
+            Some(StyleValue::Ref(_))
+        ));
         assert!(apply_document(&mut document, "background.color", "").is_ok());
         assert_eq!(document.background.color, None);
         assert!(apply_document(&mut document, "background.color", "navy").is_err());
@@ -1667,7 +1743,10 @@ mod tests {
         node
     }
 
-    fn asset(id: &str, kind: yunari_model::document::AssetKind) -> yunari_model::document::AssetReference {
+    fn asset(
+        id: &str,
+        kind: yunari_model::document::AssetKind,
+    ) -> yunari_model::document::AssetReference {
         yunari_model::document::AssetReference {
             id: id.to_owned(),
             kind,
@@ -1714,7 +1793,15 @@ mod tests {
         assert!(apply(&mut document, "chart", "kind.chart.min", "10").is_ok());
         assert!(apply(&mut document, "chart", "kind.chart.vertical", "true").is_ok());
         assert!(apply(&mut document, "chart", "kind.chart.fill", "#ff0000").is_ok());
-        assert!(apply(&mut document, "chart", "kind.chart.stroke", "palette.accent").is_ok());
+        assert!(
+            apply(
+                &mut document,
+                "chart",
+                "kind.chart.stroke",
+                "palette.accent"
+            )
+            .is_ok()
+        );
         assert!(apply(&mut document, "chart", "kind.content.family", "pie").is_ok());
         let NodeKind::Chart { content } = &document.nodes[0].kind else {
             panic!("still a chart");

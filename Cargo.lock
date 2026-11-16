@@ -8712,7 +8712,9 @@ name = "yunari-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "tokio",
  "yunari-editor",
+ "yunari-host",
  "yunari-player",
 ]
 
@@ -8724,6 +8726,7 @@ dependencies = [
  "serde_json",
  "yunari-library",
  "yunari-model",
+ "yunari-player",
  "yunari-providers",
  "yunari-render",
  "yunari-render-gpui",

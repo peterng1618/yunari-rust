@@ -123,9 +123,7 @@ impl Library {
 
     pub fn read(&self, id: &str) -> Result<StoredTheme, LibraryError> {
         if !is_stable_id(id) {
-            return Err(LibraryError::Unreadable(format!(
-                "{id} is not a theme id"
-            )));
+            return Err(LibraryError::Unreadable(format!("{id} is not a theme id")));
         }
         let directory = self.root.join(id);
         let bytes = fs::read(directory.join("theme.json"))
@@ -266,7 +264,11 @@ impl Library {
         let _ = fs::remove_dir_all(&retired);
         let base = sha256_hex(&bytes);
         Ok(Saved {
-            entry: entry_of(request.id, request.document, file_time(&target.join("theme.json"))),
+            entry: entry_of(
+                request.id,
+                request.document,
+                file_time(&target.join("theme.json")),
+            ),
             base,
         })
     }
@@ -275,9 +277,7 @@ impl Library {
     /// recoverable by hand.
     pub fn remove(&self, id: &str) -> Result<(), LibraryError> {
         if !is_stable_id(id) {
-            return Err(LibraryError::Unreadable(format!(
-                "{id} is not a theme id"
-            )));
+            return Err(LibraryError::Unreadable(format!("{id} is not a theme id")));
         }
         let target = self.root.join(id);
         if !target.exists() {
@@ -469,7 +469,12 @@ mod tests {
         }
     }
 
-    fn save(library: &Library, document: &ThemeDocument, base: Option<&str>, overwrite: bool) -> Result<Saved, LibraryError> {
+    fn save(
+        library: &Library,
+        document: &ThemeDocument,
+        base: Option<&str>,
+        overwrite: bool,
+    ) -> Result<Saved, LibraryError> {
         let assets = BTreeMap::new();
         library.save(&SaveRequest {
             id: &document.id,
@@ -508,7 +513,12 @@ mod tests {
         let temp = TempLibrary::new();
         save(&temp.library, &document("alpha"), None, false).expect("a first save");
         assert!(matches!(
-            save(&temp.library, &document("alpha"), Some("not the base"), false),
+            save(
+                &temp.library,
+                &document("alpha"),
+                Some("not the base"),
+                false
+            ),
             Err(LibraryError::Conflict { .. })
         ));
     }

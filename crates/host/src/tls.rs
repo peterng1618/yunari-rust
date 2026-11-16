@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use rand::prelude::*;
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
-    IsCa, Issuer, KeyPair, KeyUsagePurpose, SerialNumber, date_time_ymd,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose, SerialNumber, date_time_ymd,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -90,10 +90,12 @@ impl Authority {
                     .map_err(|error| TlsError::Certificate(format!("no root cert: {error}")))?;
                 let root_pem = certificate.pem();
                 let root_der = certificate.der().to_vec();
-                std::fs::create_dir_all(&dir)
-                    .map_err(|error| TlsError::Io(format!("cannot create {}: {error}", dir.display())))?;
-                crate::config::write_atomic(&cert_path, root_pem.as_bytes())
-                    .map_err(|error| TlsError::Io(format!("cannot write the root cert: {error}")))?;
+                std::fs::create_dir_all(&dir).map_err(|error| {
+                    TlsError::Io(format!("cannot create {}: {error}", dir.display()))
+                })?;
+                crate::config::write_atomic(&cert_path, root_pem.as_bytes()).map_err(|error| {
+                    TlsError::Io(format!("cannot write the root cert: {error}"))
+                })?;
                 crate::config::write_atomic(&key_path, &key.serialize_der())
                     .map_err(|error| TlsError::Io(format!("cannot write the root key: {error}")))?;
                 let issuer = Issuer::new(root_params(), key);
@@ -223,11 +225,17 @@ fn random_serial() -> SerialNumber {
 }
 
 fn date_years_from_now(days: i64) -> time::OffsetDateTime {
-    let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
     let later = today
         .checked_add(jiff::Span::new().days(days))
         .unwrap_or(today);
-    date_time_ymd(i32::from(later.year()), later.month() as u8, later.day() as u8)
+    date_time_ymd(
+        i32::from(later.year()),
+        later.month() as u8,
+        later.day() as u8,
+    )
 }
 
 /// The DER a PEM certificate holds, when it holds exactly one.
@@ -269,8 +277,17 @@ mod tests {
         assert_eq!(first.certificate_pem(), second.certificate_pem());
         assert_eq!(first.fingerprint_hex(), second.fingerprint_hex());
         assert_eq!(first.fingerprint_hex().len(), 64);
-        assert!(first.fingerprint_hex().chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        assert_ne!(first.leaf_pem(), second.leaf_pem(), "the leaf is minted each start");
+        assert!(
+            first
+                .fingerprint_hex()
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_ne!(
+            first.leaf_pem(),
+            second.leaf_pem(),
+            "the leaf is minted each start"
+        );
         assert!(dir.join("tls").join("ca.crt").exists());
         std::fs::remove_dir_all(&dir).ok();
     }

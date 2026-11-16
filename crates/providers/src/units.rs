@@ -297,7 +297,11 @@ fn rate<'a>(
     }
     // Canonical rates are decimal bits or bytes per second, whichever the
     // family reports; both come back to bits so one scale rule governs them.
-    let bits = if unit == Some("MB/s") { value * 8.0 } else { value };
+    let bits = if unit == Some("MB/s") {
+        value * 8.0
+    } else {
+        value
+    };
     let (bytes, scale) = match overrides.unit {
         // `kb/s` is bits, `kB/s` is bytes; the leading letter is the magnitude.
         Some(explicit) => {
@@ -314,8 +318,7 @@ fn rate<'a>(
         None => {
             // A byte-native family (disk throughput) stays in bytes; the
             // `rate` preference chooses the form of a bit-native one.
-            let bytes =
-                unit == Some("MB/s") || preferences.rate == Some(Rate::Bytes);
+            let bytes = unit == Some("MB/s") || preferences.rate == Some(Rate::Bytes);
             let scale = if overrides.auto_scale {
                 RateScale::Auto
             } else {
@@ -409,7 +412,13 @@ mod tests {
 
     #[test]
     fn a_temperature_follows_the_measurement_preference() {
-        let converted = convert("cpu.temp", 25.0, Some("°C"), &imperial(), Overrides::default());
+        let converted = convert(
+            "cpu.temp",
+            25.0,
+            Some("°C"),
+            &imperial(),
+            Overrides::default(),
+        );
         assert_eq!(converted.unit, Some("°F"));
         assert!((converted.value - 77.0).abs() < 1e-9);
         assert!(!converted.unsupported);
@@ -451,7 +460,13 @@ mod tests {
         assert!((converted.value - 3.6).abs() < 1e-9);
         assert_eq!(converted.precision, Some(2));
 
-        let big = convert("cpu.clock", 12_500.0, Some("MHz"), &ghz, Overrides::default());
+        let big = convert(
+            "cpu.clock",
+            12_500.0,
+            Some("MHz"),
+            &ghz,
+            Overrides::default(),
+        );
         assert_eq!(big.precision, Some(1));
     }
 

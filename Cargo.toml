@@ -39,3 +39,4 @@ yunari-render = { path = "crates/render" }
 yunari-golden = { path = "crates/golden" }
 yunari-render-gpui = { path = "crates/render-gpui" }
 yunari-render-raster = { path = "crates/raster" }
+yunari-host = { path = "crates/host" }

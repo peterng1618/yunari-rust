@@ -124,12 +124,12 @@ pub fn marquee(document: &ThemeDocument, rect: (f64, f64, f64, f64)) -> Vec<Stri
             let width = node.transform.width as f32;
             let height = node.transform.height as f32;
             [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
-            .iter()
-            .all(|(x, y)| {
-                let (x, y) = affine.apply(*x, *y);
-                let (x, y) = (f64::from(x), f64::from(y));
-                x >= left && x <= right && y >= top && y <= bottom
-            })
+                .iter()
+                .all(|(x, y)| {
+                    let (x, y) = affine.apply(*x, *y);
+                    let (x, y) = (f64::from(x), f64::from(y));
+                    x >= left && x <= right && y >= top && y <= bottom
+                })
         })
         .map(|node| node.id.clone())
         .collect()
@@ -180,9 +180,7 @@ mod tests {
         Node {
             id: id.to_owned(),
             name: None,
-            kind: NodeKind::Rectangle {
-                corner_radius: 0.0,
-            },
+            kind: NodeKind::Rectangle { corner_radius: 0.0 },
             transform: Transform {
                 x,
                 y,

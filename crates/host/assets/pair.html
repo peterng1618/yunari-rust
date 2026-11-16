@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Pair this display · Yunari</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #081523;
+        color: #ecf5ff;
+        font: 16px/1.4 "Segoe UI", system-ui, sans-serif;
+      }
+      form { width: min(24rem, 90vw); display: grid; gap: 0.75rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.25rem; }
+      label { display: grid; gap: 0.25rem; font-size: 0.85rem; color: #a8bed0; }
+      input, select, button {
+        font: inherit;
+        padding: 0.6rem;
+        border-radius: 0.4rem;
+        border: 1px solid #9fc7e52b;
+        background: #0d1d2c;
+        color: inherit;
+      }
+      input[name="code"] { letter-spacing: 0.4em; text-transform: uppercase; font-size: 1.4rem; text-align: center; }
+      button { background: #7dbde0; color: #081523; font-weight: 600; border: 0; }
+      p { color: #a8bed0; font-size: 0.9rem; margin: 0; min-height: 1.4em; }
+      p.error { color: #ff9b9b; }
+    </style>
+  </head>
+  <body>
+    <form id="pair">
+      <h1>Pair this display</h1>
+      <p id="reason" hidden></p>
+      <label>Code <input name="code" autocomplete="one-time-code" maxlength="7" required /></label>
+      <label>Name <input name="label" maxlength="64" required /></label>
+      <label>Shape
+        <select name="shape">
+          <option value="rect">Rect</option>
+          <option value="circle">Circle</option>
+        </select>
+      </label>
+      <label>Rotation <input name="rotation" type="number" min="0" max="270" step="90" value="0" /></label>
+      <button type="submit">Pair</button>
+      <p id="status" role="status"></p>
+    </form>
+    <script>
+      const form = document.getElementById("pair");
+      const status = document.getElementById("status");
+      const reason = document.getElementById("reason");
+      const params = new URLSearchParams(location.search);
+      if (params.get("code")) form.code.value = params.get("code").toUpperCase();
+      if (params.get("reason") === "unpaired") {
+        reason.hidden = false;
+        reason.textContent = "This display is no longer paired with the host. Enter a new code to pair it again.";
+      }
+      form.shape.addEventListener("change", () => {
+        const circle = form.shape.value === "circle";
+        form.rotation.max = circle ? 359 : 270;
+        form.rotation.step = circle ? 1 : 90;
+      });
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        status.className = "";
+        status.textContent = "Pairing…";
+        const body = {
+          code: form.code.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase(),
+          label: form.label.value.trim(),
+          shape: form.shape.value,
+          rotation: Number(form.rotation.value),
+        };
+        const claimed = await fetch("/api/pairing/claim", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!claimed.ok) {
+          status.className = "error";
+          status.textContent = (await claimed.text()) || "That pairing code is not the one this host is showing.";
+          return;
+        }
+        const { token } = await claimed.json();
+        const session = await fetch("/api/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        if (!session.ok) {
+          status.className = "error";
+          status.textContent = "The host did not accept that session.";
+          return;
+        }
+        location.replace("/");
+      });
+    </script>
+  </body>
+</html>

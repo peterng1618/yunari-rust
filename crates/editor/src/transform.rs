@@ -121,13 +121,21 @@ pub fn resize(
     );
     let moves_x = matches!(
         handle,
-        Handle::Left | Handle::Right | Handle::TopLeft | Handle::TopRight
-            | Handle::BottomLeft | Handle::BottomRight
+        Handle::Left
+            | Handle::Right
+            | Handle::TopLeft
+            | Handle::TopRight
+            | Handle::BottomLeft
+            | Handle::BottomRight
     );
     let moves_y = matches!(
         handle,
-        Handle::Top | Handle::Bottom | Handle::TopLeft | Handle::TopRight
-            | Handle::BottomLeft | Handle::BottomRight
+        Handle::Top
+            | Handle::Bottom
+            | Handle::TopLeft
+            | Handle::TopRight
+            | Handle::BottomLeft
+            | Handle::BottomRight
     );
 
     if from_centre {
@@ -189,22 +197,18 @@ pub fn resize(
         _ => top,
     };
     (
-        anchor_x - if matches!(
-            handle,
-            Handle::Left | Handle::TopLeft | Handle::BottomLeft
-        ) {
-            new_width
-        } else {
-            0.0
-        },
-        anchor_y - if matches!(
-            handle,
-            Handle::Top | Handle::TopLeft | Handle::TopRight
-        ) {
-            new_height
-        } else {
-            0.0
-        },
+        anchor_x
+            - if matches!(handle, Handle::Left | Handle::TopLeft | Handle::BottomLeft) {
+                new_width
+            } else {
+                0.0
+            },
+        anchor_y
+            - if matches!(handle, Handle::Top | Handle::TopLeft | Handle::TopRight) {
+                new_height
+            } else {
+                0.0
+            },
         new_width,
         new_height,
     )

@@ -64,12 +64,8 @@ impl Stage {
         // Ask once for exactly the keys this theme's value runs name.
         sampler.request("window", yunari_render::reading::wanted_keys(&document));
         let preferences = UnitPreferences::default();
-        let (list, issues) = yunari_render::build_with(
-            &document,
-            &mut fonts,
-            &Readings::default(),
-            &preferences,
-        );
+        let (list, issues) =
+            yunari_render::build_with(&document, &mut fonts, &Readings::default(), &preferences);
         report(&issues, &[]);
         Self {
             document,
@@ -163,18 +159,44 @@ impl Render for Stage {
 /// Opens the live window for a theme file, or for the fixture when no path is
 /// given.
 pub fn open(path: Option<&Path>, cx: &mut App) {
+    open_at(path, None, cx);
+}
+
+/// Opens a live window fullscreen on `monitor` (a platform display uuid), or
+/// on the primary display when no monitor is named.
+pub fn open_fullscreen(path: Option<&Path>, monitor: Option<&str>, cx: &mut App) {
+    open_at(path, Some(monitor), cx);
+}
+
+fn open_at(path: Option<&Path>, monitor: Option<Option<&str>>, cx: &mut App) {
     let path: Option<PathBuf> = path.map(Path::to_path_buf);
+    let bounds = match monitor {
+        None => WindowBounds::Windowed(Bounds::centered(None, size(px(640.0), px(380.0)), cx)),
+        Some(uuid) => {
+            let display = cx
+                .displays()
+                .into_iter()
+                .find(|display| match (display.uuid(), uuid) {
+                    (Ok(display_uuid), Some(wanted)) => display_uuid.to_string() == wanted,
+                    (Ok(_), None) => true,
+                    (Err(_), Some(_)) => false,
+                    (Err(_), None) => false,
+                });
+            match display {
+                Some(display) => WindowBounds::Fullscreen(display.bounds()),
+                None => {
+                    WindowBounds::Windowed(Bounds::centered(None, size(px(640.0), px(380.0)), cx))
+                }
+            }
+        }
+    };
     open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some("Yunari".into()),
                 ..Default::default()
             }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(640.0), px(380.0)),
-                cx,
-            ))),
+            window_bounds: Some(bounds),
             ..Default::default()
         },
         cx,

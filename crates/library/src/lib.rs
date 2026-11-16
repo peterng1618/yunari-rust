@@ -10,6 +10,5 @@ pub mod package;
 pub mod store;
 
 pub use store::{
-    Library, LibraryError, SaveRequest, Saved, StoredTheme, ThemeEntry, default_root,
-    sha256_hex,
+    Library, LibraryError, SaveRequest, Saved, StoredTheme, ThemeEntry, default_root, sha256_hex,
 };

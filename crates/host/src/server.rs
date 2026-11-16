@@ -53,6 +53,11 @@ pub struct Server {
 }
 
 impl Server {
+    /// Keep serving until the process ends.
+    pub async fn wait(self) {
+        self.handle.await.ok();
+    }
+
     /// Stop accepting, drop live connections and wait for the loop to finish.
     pub async fn stop(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
@@ -74,6 +79,9 @@ pub fn app(config: HostConfig) -> Shared {
         library: yunari_library::Library::new(config.themes_dir()),
         bound_port: AtomicU16::new(config.port),
         streams: crate::stream::Streams::new(),
+        assignment: std::sync::Mutex::new(crate::assignment::Assignment::load(
+            &config.settings_dir(),
+        )),
         registry: providers(),
         authority,
         config,
@@ -110,7 +118,9 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
         HostError(format!(
             "Ports {}–{} are all in use. Free one, or pass a different port.",
             app.config.port,
-            app.config.port.saturating_add(crate::config::MAX_PORT_ATTEMPTS - 1)
+            app.config
+                .port
+                .saturating_add(crate::config::MAX_PORT_ATTEMPTS - 1)
         ))
     })?;
     let addr = listener.local_addr()?;
@@ -157,7 +167,10 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
         addr,
         local_url,
         secure_url,
-        fingerprint: app.authority.as_ref().map(crate::tls::Authority::fingerprint_hex),
+        fingerprint: app
+            .authority
+            .as_ref()
+            .map(crate::tls::Authority::fingerprint_hex),
         certificate_pem: app
             .authority
             .as_ref()
@@ -185,11 +198,13 @@ async fn serve(
         return Ok(());
     }
     let router = router.clone();
-    let service = tower::service_fn(move |mut request: axum::http::Request<hyper::body::Incoming>| {
-        request.extensions_mut().insert(ConnectInfo(peer));
-        let mut router = router.clone();
-        async move { router.call(request).await }
-    });
+    let service = tower::service_fn(
+        move |mut request: axum::http::Request<hyper::body::Incoming>| {
+            request.extensions_mut().insert(ConnectInfo(peer));
+            let mut router = router.clone();
+            async move { router.call(request).await }
+        },
+    );
     let service = TowerToHyperService::new(service);
     let mut builder = Builder::new(TokioExecutor::new());
     builder.http1().keep_alive(true);
@@ -270,7 +285,9 @@ mod tests {
             .take_while(|line| !line.starts_with("-----END"))
             .collect();
         use base64::Engine;
-        base64::engine::general_purpose::STANDARD.decode(body).unwrap()
+        base64::engine::general_purpose::STANDARD
+            .decode(body)
+            .unwrap()
     }
 
     #[tokio::test]

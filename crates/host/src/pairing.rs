@@ -114,7 +114,9 @@ impl Pairing {
         if !self.matches(code, now_ms) {
             return Err(ClaimError::Refused);
         }
-        let adopted = store.adopt(label, shape, rotation).map_err(ClaimError::Label)?;
+        let adopted = store
+            .adopt(label, shape, rotation)
+            .map_err(ClaimError::Label)?;
         self.spend();
         Ok(adopted)
     }
@@ -136,7 +138,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn store(name: &str) -> (PathBuf, DisplayStore) {
-        let dir = std::env::temp_dir().join(format!("yunari-pairing-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yunari-pairing-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok();
         let store = DisplayStore::load(&dir);
         (dir, store)
@@ -181,9 +184,19 @@ mod tests {
         let mut pairing = Pairing::default();
         let view = pairing.mint(0);
         let (record, token) = pairing
-            .claim(&view.code, 1, &mut store, "Phone", Some(DisplayShape::Rect), Some(90))
+            .claim(
+                &view.code,
+                1,
+                &mut store,
+                "Phone",
+                Some(DisplayShape::Rect),
+                Some(90),
+            )
             .expect("the live code");
-        assert_eq!(store.authenticate(&token).as_deref(), Some(record.id.as_str()));
+        assert_eq!(
+            store.authenticate(&token).as_deref(),
+            Some(record.id.as_str())
+        );
         assert_eq!(
             pairing.claim(&view.code, 2, &mut store, "Again", None, None),
             Err(ClaimError::Refused)
@@ -199,7 +212,14 @@ mod tests {
         let mut pairing = Pairing::default();
         let view = pairing.mint(0);
         assert_eq!(
-            pairing.claim(&view.code, PAIRING_CODE_TTL_MS, &mut store, "Phone", None, None),
+            pairing.claim(
+                &view.code,
+                PAIRING_CODE_TTL_MS,
+                &mut store,
+                "Phone",
+                None,
+                None
+            ),
             Err(ClaimError::Refused)
         );
         let view = pairing.mint(0);

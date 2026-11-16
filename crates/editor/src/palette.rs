@@ -41,7 +41,11 @@ pub fn slug(name: &str) -> String {
         }
     }
     let id = id.trim_matches('-').to_owned();
-    if id.is_empty() { "token".to_owned() } else { id }
+    if id.is_empty() {
+        "token".to_owned()
+    } else {
+        id
+    }
 }
 
 /// The first thing in the document that points at `palette.<id>`, if any.
@@ -83,12 +87,10 @@ impl Editor {
         };
         let id_for_edit = id.clone();
         let changed = self.edit(|document| {
-            document
-                .palette
-                .insert(id_for_edit.clone(), yunari_model::document::PaletteEntry {
-                    name,
-                    value: paint,
-                });
+            document.palette.insert(
+                id_for_edit.clone(),
+                yunari_model::document::PaletteEntry { name, value: paint },
+            );
         });
         changed.then_some(id)
     }
@@ -177,8 +179,14 @@ mod tests {
     #[test]
     fn adding_a_token_mints_a_free_id() {
         let mut editor = Editor::new(document(vec![]));
-        assert_eq!(editor.add_palette("Accent", "#ff0000").as_deref(), Some("accent"));
-        assert_eq!(editor.add_palette("Accent", "#00ff00").as_deref(), Some("accent-2"));
+        assert_eq!(
+            editor.add_palette("Accent", "#ff0000").as_deref(),
+            Some("accent")
+        );
+        assert_eq!(
+            editor.add_palette("Accent", "#00ff00").as_deref(),
+            Some("accent-2")
+        );
         assert_eq!(editor.document().palette.len(), 2);
         assert!(editor.undo());
         assert_eq!(editor.document().palette.len(), 1);

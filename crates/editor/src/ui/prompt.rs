@@ -64,7 +64,10 @@ mod tests {
         for key in ["t", "h", "e", "m", "e"] {
             assert_eq!(prompt.key(key, Some(key)), Outcome::Pending);
         }
-        assert_eq!(prompt.key("enter", None), Outcome::Submit("theme".to_owned()));
+        assert_eq!(
+            prompt.key("enter", None),
+            Outcome::Submit("theme".to_owned())
+        );
     }
 
     #[test]

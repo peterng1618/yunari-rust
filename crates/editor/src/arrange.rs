@@ -41,7 +41,9 @@ pub fn apply(document: &mut ThemeDocument, ids: &[String], action: Action) -> bo
         return false;
     }
     match action {
-        Action::DistributeX | Action::DistributeY => distribute(&mut document.nodes, &indices, action),
+        Action::DistributeX | Action::DistributeY => {
+            distribute(&mut document.nodes, &indices, action)
+        }
         _ => align(&mut document.nodes, &indices, action),
     }
 }
@@ -54,7 +56,8 @@ fn align(nodes: &mut [yunari_model::document::Node], indices: &[usize], action: 
         let (x, y) = match action {
             Action::AlignLeft => (anchor.x, transform.y),
             Action::AlignCenterX => (
-                anchor.x + (anchor.width * anchor.scale_x - transform.width * transform.scale_x) / 2.0,
+                anchor.x
+                    + (anchor.width * anchor.scale_x - transform.width * transform.scale_x) / 2.0,
                 transform.y,
             ),
             Action::AlignRight => (
@@ -64,7 +67,8 @@ fn align(nodes: &mut [yunari_model::document::Node], indices: &[usize], action: 
             Action::AlignTop => (transform.x, anchor.y),
             Action::AlignCenterY => (
                 transform.x,
-                anchor.y + (anchor.height * anchor.scale_y - transform.height * transform.scale_y) / 2.0,
+                anchor.y
+                    + (anchor.height * anchor.scale_y - transform.height * transform.scale_y) / 2.0,
             ),
             Action::AlignBottom => (
                 transform.x,
@@ -169,7 +173,11 @@ mod tests {
             rect("a", 0.0, 0.0, 100.0, 10.0),
             rect("b", 0.0, 50.0, 20.0, 10.0),
         ]);
-        assert!(apply(&mut document, &ids(&["a", "b"]), Action::AlignCenterX));
+        assert!(apply(
+            &mut document,
+            &ids(&["a", "b"]),
+            Action::AlignCenterX
+        ));
         assert_eq!(x_of(&document, "b"), 40.0);
     }
 
@@ -180,8 +188,16 @@ mod tests {
             rect("b", 50.0, 0.0, 10.0, 10.0),
             rect("c", 200.0, 0.0, 10.0, 10.0),
         ]);
-        assert!(!apply(&mut document, &ids(&["a", "b"]), Action::DistributeX));
-        assert!(apply(&mut document, &ids(&["a", "b", "c"]), Action::DistributeX));
+        assert!(!apply(
+            &mut document,
+            &ids(&["a", "b"]),
+            Action::DistributeX
+        ));
+        assert!(apply(
+            &mut document,
+            &ids(&["a", "b", "c"]),
+            Action::DistributeX
+        ));
         assert_eq!(x_of(&document, "a"), 0.0);
         assert_eq!(x_of(&document, "b"), 100.0);
         assert_eq!(x_of(&document, "c"), 200.0);

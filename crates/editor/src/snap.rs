@@ -239,7 +239,12 @@ fn excluded_ids(document: &ThemeDocument, moving: &[String]) -> BTreeSet<String>
     excluded
 }
 
-fn walk(nodes: &[Node], moving: &BTreeSet<&str>, parents: &mut Vec<String>, excluded: &mut BTreeSet<String>) {
+fn walk(
+    nodes: &[Node],
+    moving: &BTreeSet<&str>,
+    parents: &mut Vec<String>,
+    excluded: &mut BTreeSet<String>,
+) {
     for node in nodes {
         let inside = moving.contains(node.id.as_str());
         let under_moving = parents.iter().any(|id| moving.contains(id.as_str()));
@@ -299,9 +304,7 @@ mod tests {
         Node {
             id: id.to_owned(),
             name: None,
-            kind: NodeKind::Rectangle {
-                corner_radius: 0.0,
-            },
+            kind: NodeKind::Rectangle { corner_radius: 0.0 },
             transform: Transform {
                 x,
                 y,
@@ -366,7 +369,10 @@ mod tests {
             rect("b", 100.0, 100.0, 10.0, 10.0),
         ]);
         let (x, _, guides) = snap_move(&document, &ids(&["a"]), (91.0, 300.0), 1.0, true);
-        assert!((x - 90.0).abs() < 1e-9, "right edge 101 lands on b's left 100");
+        assert!(
+            (x - 90.0).abs() < 1e-9,
+            "right edge 101 lands on b's left 100"
+        );
         assert_eq!(guides.len(), 1);
     }
 
@@ -394,7 +400,10 @@ mod tests {
             at: 100.0,
             rank: Rank::Centre,
         };
-        assert_eq!(nearest(&[edge, boundary], 100.0).unwrap().rank, Rank::Boundary);
+        assert_eq!(
+            nearest(&[edge, boundary], 100.0).unwrap().rank,
+            Rank::Boundary
+        );
         assert_eq!(nearest(&[centre, edge], 100.0).unwrap().rank, Rank::Edge);
         assert_eq!(nearest(&[centre], 100.0).unwrap().rank, Rank::Centre);
     }

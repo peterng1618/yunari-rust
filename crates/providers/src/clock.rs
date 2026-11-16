@@ -120,7 +120,10 @@ mod tests {
     #[test]
     fn the_date_and_the_clock_are_one_instant() {
         let readings = ClockProvider::with_zone("UTC")
-            .sample(&["time.now".to_owned(), "date.today".to_owned()], INSTANT_MS)
+            .sample(
+                &["time.now".to_owned(), "date.today".to_owned()],
+                INSTANT_MS,
+            )
             .expect("readable instants");
         assert_eq!(readings.len(), 2);
         assert_eq!(readings[0].instant, readings[1].instant);

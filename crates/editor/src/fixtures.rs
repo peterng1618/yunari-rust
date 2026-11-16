@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use yunari_model::document::{
-    Artboard, ArtboardShape, Background, ContentFit, Metadata, Node, NodeKind, StyleMap, Transform,
-    ThemeDocument,
+    Artboard, ArtboardShape, Background, ContentFit, Metadata, Node, NodeKind, StyleMap,
+    ThemeDocument, Transform,
 };
 
 pub fn document(nodes: Vec<Node>) -> ThemeDocument {
@@ -32,9 +32,7 @@ pub fn rect(id: &str, x: f64, y: f64, width: f64, height: f64) -> Node {
     Node {
         id: id.to_owned(),
         name: None,
-        kind: NodeKind::Rectangle {
-            corner_radius: 0.0,
-        },
+        kind: NodeKind::Rectangle { corner_radius: 0.0 },
         transform: Transform {
             x,
             y,

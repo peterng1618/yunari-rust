@@ -480,3 +480,66 @@ has a row unless listed below.
   metadata, SVG sanitising); the eight-card bundled widget pack (needs its
   packaged icons); shadow, border-width and frosted-glass shape fields; polygon
   and triangle kinds, which the Rust model does not carry yet.
+
+## Phase 4 — host, pairing and the browser display — met (2026-11-16)
+
+- `yunari-host` is a library the app starts on a worker thread: one port serves
+  plain HTTP and TLS, chosen by the first byte (`0x16` takes the TLS handshake),
+  through `hyper-util`'s auto server. The app keeps its editor when the port is
+  taken (5227–5236 are tried), when the folder is held by another host (pid and
+  port are named in the refusal), and when the TLS root cannot be written.
+- A local certificate authority (`tls/ca.crt`, `tls/ca-key.bin`) is minted on
+  first use and reused; a 397-day leaf with SANs for `localhost`, the machine
+  name, `<name>.local` and every interface address is minted each start.
+  `GET /yunari-ca.crt` serves the root before any gate with the source's
+  content type, filename and `x-yunari-ca-sha256` fingerprint.
+- Pairing: six characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, ten minutes,
+  one live code, per-address penalty `min(250·2^(missed−1), 4000)` ms, the
+  source's single refusal sentence, a 32-byte base64url token stored only as a
+  SHA-256 hash, and the source's cookie (`Max-Age=34560000; HttpOnly;
+  SameSite=Strict; Path=/`, `Secure` over TLS). The `/pair` page and the
+  `POST /api/session` exchange complete the flow.
+- The sample stream is SSE at `/ws` with the source's limits (64 keys, 128-byte
+  keys, 64 streams, 8 per display, 120-frame queue) and its connected comment,
+  event name and payload version. Each one-second tick samples the registry
+  once for every display, builds that display's missing readings with the
+  product's message, and publishes the batch together with the display's frame
+  as the planner's own `DisplayList` JSON.
+- The phone page is embedded (`pair.html`, `player.html`, `player.js`) and paints
+  that list on a canvas: solid and linear paints, rects with radii, ellipses,
+  paths, lines, text runs with family/weight/size/colour, pictures from
+  `/api/themes/:id/assets/<path>`, wake lock and tap-to-fullscreen. It polls
+  `/api/published` for the assignment and reconnects when the theme changes.
+- Loopback-only surfaces are checked per request (the source's rule): displays,
+  pairing codes and sessions, theme writes, autostart, hosting, and any `/api/*`
+  request from a loopback peer with a foreign `Origin` are refused. A remote
+  unpaired page is redirected to `/pair?reason=unpaired`; remote asset requests
+  are refused with the source's sentence.
+- Persistence matches the source's files: `host-identity.json`,
+  `display-clients.json` (`{displays:[…]}`, kinds, token hashes, 5 s touch),
+  `active-theme.json` (including the legacy `{id}` shape and the retired
+  `this-pc` key), `hosting.json`, `host.lock` (pid + port), `tls/`. Autostart
+  writes the shell's UTF-16LE startup script and reports the source's two
+  sentences.
+- Driven: the app's host answered `/api/health` on plain HTTP and, through the
+  CA, on HTTPS on the same port; `/api/host` returned the minted identity;
+  a theme copied into the library was listed and served; a code minted over
+  loopback was claimed by the pairing page in a headless browser, which then
+  landed on `/` and painted the theme live (screenshot); `Ctrl+Shift+F` in the
+  editor wrote `live-theme.json` and opened the player fullscreen on this
+  display (2560×1440).
+- Deliberate deviations: the root is ECDSA P-256 rather than RSA-2048; the
+  frame rides in the SSE batch (a field the source's payload lacks) so the page
+  never re-implements the renderer; a full frame queue drops the newest frame
+  instead of the oldest (either way the next frame is a whole snapshot); the CA
+  key is a plain file, since Windows' credential protector has no Rust crate
+  here yet.
+- Not exercised: a real phone installing the root certificate (the browser
+  refused the untrusted root, and installing one is the user's decision), LAN
+  reachability, and the display peer API from another machine. 44 host tests and
+  the workspace suite pass; clippy is clean with `-D warnings`.
+- Deferred: the tray icon and its menu; local-display launching from the host
+  process (the editor opens it today, because gpui windows must be created on
+  the UI thread); monitor enumeration over `/api/displays/monitors`; applying a
+  LAN toggle without a restart; the admin SPA (`/admin/`) and the store/MCP
+  routes (phase 6); panels and video (phase 5).

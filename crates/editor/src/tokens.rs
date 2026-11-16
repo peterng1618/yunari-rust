@@ -183,10 +183,7 @@ mod tests {
 
     #[test]
     fn a_weight_reads_and_writes_both_shapes() {
-        assert_eq!(
-            parse_weight("600"),
-            Ok(Some(TypeWeight::Number(600.0)))
-        );
+        assert_eq!(parse_weight("600"), Ok(Some(TypeWeight::Number(600.0))));
         assert_eq!(
             parse_weight("semibold"),
             Ok(Some(TypeWeight::Name("semibold".to_owned())))
@@ -195,22 +192,20 @@ mod tests {
         assert!(parse_weight("0").is_err());
         assert!(parse_weight("600 kg").is_err());
         assert_eq!(weight_text(&TypeWeight::Number(300.0)), "300");
-        assert_eq!(
-            weight_text(&TypeWeight::Name("bold".to_owned())),
-            "bold"
-        );
+        assert_eq!(weight_text(&TypeWeight::Name("bold".to_owned())), "bold");
     }
 
     #[test]
     fn a_token_in_use_is_not_removed() {
         let mut document = document(vec![text("label", "caption")]);
-        document
-            .type_tokens
-            .insert("caption".to_owned(), TypeToken {
+        document.type_tokens.insert(
+            "caption".to_owned(),
+            TypeToken {
                 family: "Segoe UI".to_owned(),
                 weight: None,
                 face: None,
-            });
+            },
+        );
         let mut editor = Editor::new(document);
         assert!(editor.remove_token("caption").is_err());
         editor.edit(|document| {
@@ -226,11 +221,14 @@ mod tests {
     #[test]
     fn family_and_weight_edits_are_one_entry_each() {
         let mut document = document(vec![]);
-        document.type_tokens.insert("body".to_owned(), TypeToken {
-            family: "Segoe UI".to_owned(),
-            weight: None,
-            face: None,
-        });
+        document.type_tokens.insert(
+            "body".to_owned(),
+            TypeToken {
+                family: "Segoe UI".to_owned(),
+                weight: None,
+                face: None,
+            },
+        );
         let mut editor = Editor::new(document);
         assert!(editor.set_token_family("body", "Inter").is_ok());
         assert!(editor.set_token_weight("body", "600").is_ok());
@@ -244,11 +242,14 @@ mod tests {
     fn role_tokens_are_never_removed() {
         let mut document = document(vec![]);
         for id in ["heading", "body", "mono"] {
-            document.type_tokens.insert(id.to_owned(), TypeToken {
-                family: "Inter".to_owned(),
-                weight: None,
-                face: None,
-            });
+            document.type_tokens.insert(
+                id.to_owned(),
+                TypeToken {
+                    family: "Inter".to_owned(),
+                    weight: None,
+                    face: None,
+                },
+            );
         }
         let mut editor = Editor::new(document);
         assert!(editor.remove_token("body").is_err());

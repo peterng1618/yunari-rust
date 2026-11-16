@@ -40,10 +40,7 @@ impl HostIdentity {
 
 fn is_stable_identity(identity: &HostIdentity) -> bool {
     identity.id.len() == 16
-        && identity
-            .id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit())
+        && identity.id.chars().all(|c| c.is_ascii_hexdigit())
         && !identity.name.trim().is_empty()
         && identity.name.chars().count() <= MAX_HOST_NAME_LENGTH
 }
@@ -69,7 +66,8 @@ mod tests {
     use super::*;
 
     fn dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("yunari-identity-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yunari-identity-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok();
         dir
     }

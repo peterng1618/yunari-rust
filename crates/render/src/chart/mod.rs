@@ -104,14 +104,15 @@ fn stop_color_at(stops: &[(f32, Color)], position: f32) -> Color {
         }
         previous = Some((*at, *color));
     }
-    stops.last().map_or(Color::rgb(0, 0, 0), |(_, color)| *color)
+    stops
+        .last()
+        .map_or(Color::rgb(0, 0, 0), |(_, color)| *color)
 }
 
 fn mix(from: Color, to: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
-    let channel = |a: u8, b: u8| -> u8 {
-        (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8
-    };
+    let channel =
+        |a: u8, b: u8| -> u8 { (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8 };
     Color {
         r: channel(from.r, to.r),
         g: channel(from.g, to.g),
@@ -228,18 +229,18 @@ fn palette_paint(document: &ThemeDocument, reference: &str) -> Option<ChartFill>
     let id = reference.strip_prefix("palette.")?;
     let entry = document.palette.get(id)?;
     match &entry.value {
-        yunari_model::document::Paint::Solid { color } => {
-            parse_color(color).map(ChartFill::Solid)
+        yunari_model::document::Paint::Solid { color } => parse_color(color).map(ChartFill::Solid),
+        yunari_model::document::Paint::Gradient { stops, .. } => {
+            Some(ChartFill::Gradient(normalize(
+                stops
+                    .iter()
+                    .filter_map(|stop| {
+                        let color = parse_color(&stop.color)?;
+                        Some((stop.offset as f32, color))
+                    })
+                    .collect(),
+            )))
         }
-        yunari_model::document::Paint::Gradient { stops, .. } => Some(ChartFill::Gradient(normalize(
-            stops
-                .iter()
-                .filter_map(|stop| {
-                    let color = parse_color(&stop.color)?;
-                    Some((stop.offset as f32, color))
-                })
-                .collect(),
-        ))),
     }
 }
 
@@ -323,13 +324,7 @@ pub fn ring(
 
 /// A circular arc as cubics, a quarter turn at a time so the approximation
 /// stays within a fraction of a pixel at any size a display uses.
-pub fn arc(
-    commands: &mut Vec<PathCommand>,
-    centre: (f32, f32),
-    radius: f32,
-    from: f32,
-    to: f32,
-) {
+pub fn arc(commands: &mut Vec<PathCommand>, centre: (f32, f32), radius: f32, from: f32, to: f32) {
     let sweep = to - from;
     let steps = (sweep.abs() / 90.0).ceil().max(1.0) as usize;
     let step = sweep / steps as f32;
@@ -367,38 +362,10 @@ pub fn circle(centre: (f32, f32), radius: f32) -> Vec<PathCommand> {
     let (x, y) = centre;
     vec![
         PathCommand::MoveTo(x + radius, y),
-        PathCommand::CubicTo(
-            x + radius,
-            y + kappa,
-            x + kappa,
-            y + radius,
-            x,
-            y + radius,
-        ),
-        PathCommand::CubicTo(
-            x - kappa,
-            y + radius,
-            x - radius,
-            y + kappa,
-            x - radius,
-            y,
-        ),
-        PathCommand::CubicTo(
-            x - radius,
-            y - kappa,
-            x - kappa,
-            y - radius,
-            x,
-            y - radius,
-        ),
-        PathCommand::CubicTo(
-            x + kappa,
-            y - radius,
-            x + radius,
-            y - kappa,
-            x + radius,
-            y,
-        ),
+        PathCommand::CubicTo(x + radius, y + kappa, x + kappa, y + radius, x, y + radius),
+        PathCommand::CubicTo(x - kappa, y + radius, x - radius, y + kappa, x - radius, y),
+        PathCommand::CubicTo(x - radius, y - kappa, x - kappa, y - radius, x, y - radius),
+        PathCommand::CubicTo(x + kappa, y - radius, x + radius, y - kappa, x + radius, y),
         PathCommand::Close,
     ]
 }

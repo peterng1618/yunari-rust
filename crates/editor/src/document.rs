@@ -199,7 +199,10 @@ impl Editor {
 
     /// Replaces the transforms of the named nodes in one edit, which is what a
     /// drag step is.
-    pub fn apply_transforms(&mut self, changes: &[(String, yunari_model::document::Transform)]) -> bool {
+    pub fn apply_transforms(
+        &mut self,
+        changes: &[(String, yunari_model::document::Transform)],
+    ) -> bool {
         if changes.is_empty() {
             return false;
         }
@@ -352,7 +355,10 @@ mod tests {
         editor.rename_theme("Renamed");
         assert!(editor.is_dirty());
         editor.undo();
-        assert!(!editor.is_dirty(), "undoing back to the saved state is clean");
+        assert!(
+            !editor.is_dirty(),
+            "undoing back to the saved state is clean"
+        );
     }
 
     #[test]
@@ -375,9 +381,7 @@ mod tests {
         group.children.push(rectangle("child"));
         editor.add_node(group);
         editor.edit(|document| {
-            document
-                .bindings
-                .insert("child".to_owned(), Vec::new());
+            document.bindings.insert("child".to_owned(), Vec::new());
         });
         assert!(editor.remove_nodes(&["group".to_owned()]));
         assert!(editor.document().nodes.is_empty());

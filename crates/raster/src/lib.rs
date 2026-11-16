@@ -55,7 +55,12 @@ pub fn render(
         let board = PathBuilder::from_rect(
             Rect::from_xywh(0.0, 0.0, width as f32, height as f32).expect("a sized board"),
         );
-        fill(&mut pixmap, &board, paint, Transform::from_scale(scale, scale));
+        fill(
+            &mut pixmap,
+            &board,
+            paint,
+            Transform::from_scale(scale, scale),
+        );
     } else {
         pixmap.fill(SkiaColor::TRANSPARENT);
     }
@@ -73,11 +78,7 @@ pub fn render(
             }
             continue;
         }
-        if let Shape::Glass {
-            shape,
-            blur_radius,
-        } = &op.shape
-        {
+        if let Shape::Glass { shape, blur_radius } = &op.shape {
             draw_glass(&mut pixmap, shape, *blur_radius, op.transform, scale);
             continue;
         }
@@ -178,14 +179,7 @@ fn draw_text(
             });
         }
         let place = text_transform(transform, segment, scale);
-        pixmap.draw_pixmap(
-            0,
-            0,
-            glyphs.as_ref(),
-            &PixmapPaint::default(),
-            place,
-            None,
-        );
+        pixmap.draw_pixmap(0, 0, glyphs.as_ref(), &PixmapPaint::default(), place, None);
     }
 }
 
@@ -267,13 +261,7 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, color: TextColor) {
 /// back out of the frame that is already painted, so a panel sees exactly its
 /// own backdrop — not a canvas-wide copy — and costs one pass per changed
 /// frame.
-fn draw_glass(
-    pixmap: &mut Pixmap,
-    shape: &Shape,
-    blur_radius: f32,
-    transform: Affine,
-    scale: f32,
-) {
+fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: Affine, scale: f32) {
     let Some(path) = shape_path(shape) else {
         return;
     };
@@ -290,8 +278,13 @@ fn draw_glass(
     if right <= left || bottom <= top {
         return;
     }
-    let Some(mut region) = extract(pixmap, left, top, (right - left) as usize, (bottom - top) as usize)
-    else {
+    let Some(mut region) = extract(
+        pixmap,
+        left,
+        top,
+        (right - left) as usize,
+        (bottom - top) as usize,
+    ) else {
         return;
     };
     // CSS reads a blur radius as twice the deviation, and three box passes of
@@ -312,7 +305,13 @@ fn draw_glass(
         ..SkiaPaint::default()
     };
     paint.blend_mode = tiny_skia::BlendMode::SourceOver;
-    pixmap.fill_path(&path, &paint, FillRule::Winding, transform_of(to_device), None);
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        transform_of(to_device),
+        None,
+    );
 }
 
 /// The box a shape's own geometry occupies, in its node's coordinates.
@@ -352,13 +351,7 @@ fn shape_bounds(shape: &Shape) -> Option<((f32, f32), (f32, f32))> {
 
 /// The frame's pixels under a rectangle, as their own pixmap. Missing pixels
 /// stay transparent, which is what a panel hanging off the artboard samples.
-fn extract(
-    pixmap: &Pixmap,
-    left: i32,
-    top: i32,
-    width: usize,
-    height: usize,
-) -> Option<Pixmap> {
+fn extract(pixmap: &Pixmap, left: i32, top: i32, width: usize, height: usize) -> Option<Pixmap> {
     let mut region = Pixmap::new(width as u32, height as u32)?;
     let frame_width = pixmap.width() as i32;
     let frame_height = pixmap.height() as i32;
@@ -422,7 +415,11 @@ fn box_blur(
     for line in 0..outer {
         for channel in 0..4 {
             let at = |step: usize| -> usize {
-                let (x, y) = if horizontal { (step, line) } else { (line, step) };
+                let (x, y) = if horizontal {
+                    (step, line)
+                } else {
+                    (line, step)
+                };
                 (y * width + x) * 4 + channel
             };
             let mut total: u32 = 0;
@@ -432,8 +429,7 @@ fn box_blur(
             for step in 0..inner {
                 target[at(step)] = (total / span as u32) as u8;
                 let leaving = (step as isize - radius as isize).clamp(0, inner as isize - 1);
-                let entering =
-                    (step as isize + radius as isize + 1).clamp(0, inner as isize - 1);
+                let entering = (step as isize + radius as isize + 1).clamp(0, inner as isize - 1);
                 total = total
                     .saturating_sub(u32::from(source[at(leaving as usize)]))
                     .saturating_add(u32::from(source[at(entering as usize)]));
@@ -469,8 +465,12 @@ fn draw_backdrop(
     }
     let left = (dest.left * scale).floor().max(0.0) as i64;
     let top = (dest.top * scale).floor().max(0.0) as i64;
-    let right = ((dest.left + dest.width) * scale).ceil().min(pixmap.width() as f32) as i64;
-    let bottom = ((dest.top + dest.height) * scale).ceil().min(pixmap.height() as f32) as i64;
+    let right = ((dest.left + dest.width) * scale)
+        .ceil()
+        .min(pixmap.width() as f32) as i64;
+    let bottom = ((dest.top + dest.height) * scale)
+        .ceil()
+        .min(pixmap.height() as f32) as i64;
     for y in top..bottom {
         for x in left..right {
             let (box_x, box_y) = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
@@ -532,11 +532,7 @@ fn draw_image(
     if asset.width == 0 || asset.height == 0 {
         return;
     }
-    let place = yunari_render::placement(
-        (asset.width as f32, asset.height as f32),
-        box_,
-        fit,
-    );
+    let place = yunari_render::placement((asset.width as f32, asset.height as f32), box_, fit);
     if place.width <= 0.0 || place.height <= 0.0 {
         return;
     }
@@ -607,7 +603,8 @@ fn sample(asset: &Decoded, u: f32, v: f32) -> [u8; 4] {
     texel
 }
 
-fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {    let Some(shader) = shader(paint) else {
+fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {
+    let Some(shader) = shader(paint) else {
         return;
     };
     let skia_paint = SkiaPaint {
@@ -710,7 +707,14 @@ fn rounded_rect(width: f32, height: f32, radius: f32) -> Path {
     let mut builder = PathBuilder::new();
     builder.move_to(radius, 0.0);
     builder.line_to(width - radius, 0.0);
-    builder.cubic_to(width - radius + kappa, 0.0, width, radius - kappa, width, radius);
+    builder.cubic_to(
+        width - radius + kappa,
+        0.0,
+        width,
+        radius - kappa,
+        width,
+        radius,
+    );
     builder.line_to(width, height - radius);
     builder.cubic_to(
         width,

@@ -37,10 +37,7 @@ pub fn segment_fill_of(
     settings: &serde_json::Map<String, serde_json::Value>,
     fallback: SegmentFill,
 ) -> SegmentFill {
-    match settings
-        .get("segmentFill")
-        .and_then(|value| value.as_str())
-    {
+    match settings.get("segmentFill").and_then(|value| value.as_str()) {
         Some("whole") => SegmentFill::Whole,
         Some("partial") => SegmentFill::Partial,
         _ => fallback,
@@ -49,7 +46,10 @@ pub fn segment_fill_of(
 
 /// The authored divisor, or continuous when the document carries none.
 pub fn segment_divisor_of(settings: &serde_json::Map<String, serde_json::Value>) -> u32 {
-    match settings.get("segmentDivisor").and_then(|value| value.as_u64()) {
+    match settings
+        .get("segmentDivisor")
+        .and_then(|value| value.as_u64())
+    {
         Some(divisor) if SEGMENT_DIVISORS.contains(&(divisor as u32)) => divisor as u32,
         _ => 100,
     }
@@ -165,6 +165,9 @@ mod tests {
     fn an_absent_setting_takes_the_default_spacing() {
         let settings = serde_json::Map::new();
         assert_eq!(segment_spacing_percent_of(&settings), 10.0);
-        assert_eq!(segment_fill_of(&settings, SegmentFill::Whole), SegmentFill::Whole);
+        assert_eq!(
+            segment_fill_of(&settings, SegmentFill::Whole),
+            SegmentFill::Whole
+        );
     }
 }

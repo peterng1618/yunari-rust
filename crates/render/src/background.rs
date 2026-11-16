@@ -137,7 +137,12 @@ pub fn resolve(
 ) -> Composition {
     let known = known_size(source, box_);
     let Some(composition) = composition else {
-        let region = scaled(box_rect(box_), BackgroundAnchor::Center, geometry.scale, box_);
+        let region = scaled(
+            box_rect(box_),
+            BackgroundAnchor::Center,
+            geometry.scale,
+            box_,
+        );
         return Composition {
             media: known.map(|known| place_media(region, box_, known, geometry)),
             region,
@@ -461,7 +466,9 @@ fn edge_masks(
 fn extent_of(value: Option<f32>) -> f32 {
     value
         .filter(|extent| extent.is_finite())
-        .map_or(DEFAULT_EXTENT, |extent| extent.clamp(MIN_EXTENT, MAX_EXTENT))
+        .map_or(DEFAULT_EXTENT, |extent| {
+            extent.clamp(MIN_EXTENT, MAX_EXTENT)
+        })
 }
 
 fn fade_of(value: Option<f32>) -> Option<f32> {
@@ -484,7 +491,11 @@ mod tests {
     const BOX: (f32, f32) = (400.0, 100.0);
     const SOURCE: (f32, f32) = (160.0, 90.0);
 
-    fn composition(anchor: BackgroundAnchor, extent: Option<f32>, fade: Option<f32>) -> BackgroundComposition {
+    fn composition(
+        anchor: BackgroundAnchor,
+        extent: Option<f32>,
+        fade: Option<f32>,
+    ) -> BackgroundComposition {
         BackgroundComposition {
             anchor,
             extent: extent.map(f64::from),
@@ -510,11 +521,32 @@ mod tests {
         let resolved = resolve(BOX, None, Some(SOURCE), Geometry::default());
         assert_eq!(
             resolved.region,
-            Rect { left: 0.0, top: 0.0, width: 400.0, height: 100.0 }
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 400.0,
+                height: 100.0
+            }
         );
         let media = resolved.media.expect("a known source places the picture");
-        assert_eq!(media.dest, Rect { left: 0.0, top: 0.0, width: 400.0, height: 100.0 });
-        assert_eq!(media.crop, Crop { x: 0.0, y: 25.0, width: 160.0, height: 40.0 });
+        assert_eq!(
+            media.dest,
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 400.0,
+                height: 100.0
+            }
+        );
+        assert_eq!(
+            media.crop,
+            Crop {
+                x: 0.0,
+                y: 25.0,
+                width: 160.0,
+                height: 40.0
+            }
+        );
         assert!(resolved.masks.is_empty());
     }
 
@@ -524,14 +556,30 @@ mod tests {
             BOX,
             None,
             Some(SOURCE),
-            Geometry { scale: 2.0, ..Geometry::default() },
+            Geometry {
+                scale: 2.0,
+                ..Geometry::default()
+            },
         );
         assert_eq!(
             resolved.region,
-            Rect { left: -200.0, top: -50.0, width: 800.0, height: 200.0 }
+            Rect {
+                left: -200.0,
+                top: -50.0,
+                width: 800.0,
+                height: 200.0
+            }
         );
         let media = resolved.media.expect("a known source places the picture");
-        assert_eq!(media.crop, Crop { x: 40.0, y: 35.0, width: 80.0, height: 20.0 });
+        assert_eq!(
+            media.crop,
+            Crop {
+                x: 40.0,
+                y: 35.0,
+                width: 80.0,
+                height: 20.0
+            }
+        );
     }
 
     #[test]
@@ -541,16 +589,31 @@ mod tests {
         close(resolved.region.width, 177.778);
         close(resolved.region.height, 100.0);
         let media = resolved.media.expect("a known source places the picture");
-        assert_eq!(media.crop, Crop { x: 0.0, y: 0.0, width: 160.0, height: 90.0 });
+        assert_eq!(
+            media.crop,
+            Crop {
+                x: 0.0,
+                y: 0.0,
+                width: 160.0,
+                height: 90.0
+            }
+        );
     }
 
     #[test]
     fn a_centred_picture_pans_inside_its_area_and_stops_at_the_source_edge() {
         let still = at(Geometry::default());
-        let panned = at(Geometry { offset_x: 5.0, ..Geometry::default() });
+        let panned = at(Geometry {
+            offset_x: 5.0,
+            ..Geometry::default()
+        });
         close(panned.region.left, still.region.left);
         assert_eq!(
-            panned.media.expect("a known source places the picture").crop.x,
+            panned
+                .media
+                .expect("a known source places the picture")
+                .crop
+                .x,
             0.0
         );
     }
@@ -562,15 +625,31 @@ mod tests {
             BOX,
             Some(&top),
             Some(SOURCE),
-            Geometry { offset_y: -0.5, ..Geometry::default() },
+            Geometry {
+                offset_y: -0.5,
+                ..Geometry::default()
+            },
         );
         assert_eq!(
             panned.region,
-            Rect { left: 0.0, top: 0.0, width: 400.0, height: 50.0 }
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 400.0,
+                height: 50.0
+            }
         );
         assert_eq!(
-            panned.media.expect("a known source places the picture").crop,
-            Crop { x: 0.0, y: 45.0, width: 160.0, height: 20.0 }
+            panned
+                .media
+                .expect("a known source places the picture")
+                .crop,
+            Crop {
+                x: 0.0,
+                y: 45.0,
+                width: 160.0,
+                height: 20.0
+            }
         );
     }
 
@@ -579,8 +658,24 @@ mod tests {
         let top = composition(BackgroundAnchor::Top, Some(0.5), None);
         let resolved = resolve(BOX, Some(&top), Some(SOURCE), Geometry::default());
         let media = resolved.media.expect("a known source places the picture");
-        assert_eq!(media.dest, Rect { left: 0.0, top: 0.0, width: 400.0, height: 50.0 });
-        assert_eq!(media.crop, Crop { x: 0.0, y: 35.0, width: 160.0, height: 20.0 });
+        assert_eq!(
+            media.dest,
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 400.0,
+                height: 50.0
+            }
+        );
+        assert_eq!(
+            media.crop,
+            Crop {
+                x: 0.0,
+                y: 35.0,
+                width: 160.0,
+                height: 20.0
+            }
+        );
     }
 
     #[test]
@@ -599,11 +694,21 @@ mod tests {
         let resolved = resolve(BOX, Some(&left), None, Geometry::default());
         assert_eq!(
             resolved.region,
-            Rect { left: 0.0, top: 0.0, width: 140.0, height: 100.0 }
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 140.0,
+                height: 100.0
+            }
         );
         assert_eq!(
             resolved.masks,
-            vec![Mask { x1: 140.0, y1: 0.0, x2: 40.0, y2: 0.0 }]
+            vec![Mask {
+                x1: 140.0,
+                y1: 0.0,
+                x2: 40.0,
+                y2: 0.0
+            }]
         );
     }
 
@@ -611,7 +716,15 @@ mod tests {
     fn a_fade_longer_than_the_band_stops_at_the_opposite_edge() {
         let left = composition(BackgroundAnchor::Left, Some(0.25), Some(1.0));
         let resolved = resolve(BOX, Some(&left), None, Geometry::default());
-        assert_eq!(resolved.masks, vec![Mask { x1: 100.0, y1: 0.0, x2: 0.0, y2: 0.0 }]);
+        assert_eq!(
+            resolved.masks,
+            vec![Mask {
+                x1: 100.0,
+                y1: 0.0,
+                x2: 0.0,
+                y2: 0.0
+            }]
+        );
     }
 
     #[test]
@@ -619,12 +732,22 @@ mod tests {
         let right = composition(BackgroundAnchor::Right, Some(0.25), None);
         assert_eq!(
             resolve(BOX, Some(&right), None, Geometry::default()).region,
-            Rect { left: 300.0, top: 0.0, width: 100.0, height: 100.0 }
+            Rect {
+                left: 300.0,
+                top: 0.0,
+                width: 100.0,
+                height: 100.0
+            }
         );
         let bottom = composition(BackgroundAnchor::Bottom, Some(0.25), None);
         assert_eq!(
             resolve(BOX, Some(&bottom), None, Geometry::default()).region,
-            Rect { left: 0.0, top: 75.0, width: 400.0, height: 25.0 }
+            Rect {
+                left: 0.0,
+                top: 75.0,
+                width: 400.0,
+                height: 25.0
+            }
         );
     }
 
@@ -639,14 +762,24 @@ mod tests {
         );
         assert_eq!(
             resolved.region,
-            Rect { left: 0.0, top: 0.0, width: 800.0, height: 480.0 }
+            Rect {
+                left: 0.0,
+                top: 0.0,
+                width: 800.0,
+                height: 480.0
+            }
         );
         assert!(resolved.masks.is_empty());
     }
 
     #[test]
     fn no_media_is_placed_until_the_source_size_is_known() {
-        let resolved = resolve(BOX, Some(&composition(BackgroundAnchor::Center, None, None)), None, Geometry::default());
+        let resolved = resolve(
+            BOX,
+            Some(&composition(BackgroundAnchor::Center, None, None)),
+            None,
+            Geometry::default(),
+        );
         assert!(resolved.media.is_none());
     }
 
@@ -666,7 +799,11 @@ mod tests {
         };
         assert_eq!(
             Geometry::of(Some(&media)),
-            Geometry { scale: 5.0, offset_x: -5.0, offset_y: 0.0 }
+            Geometry {
+                scale: 5.0,
+                offset_x: -5.0,
+                offset_y: 0.0
+            }
         );
         assert_eq!(Geometry::of(None), Geometry::default());
     }

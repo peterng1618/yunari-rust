@@ -39,10 +39,11 @@ pub enum Command {
     Cut,
     Paste,
     Duplicate,
+    OpenDisplay,
 }
 
 impl Command {
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 38] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -80,6 +81,7 @@ impl Command {
         Self::Cut,
         Self::Paste,
         Self::Duplicate,
+        Self::OpenDisplay,
     ];
 
     pub fn label(self) -> &'static str {
@@ -121,6 +123,7 @@ impl Command {
             Self::Cut => "Cut",
             Self::Paste => "Paste",
             Self::Duplicate => "Duplicate",
+            Self::OpenDisplay => "Open display",
         }
     }
 
@@ -163,6 +166,7 @@ impl Command {
             Self::Cut => "Ctrl+X",
             Self::Paste => "Ctrl+V",
             Self::Duplicate => "Ctrl+D",
+            Self::OpenDisplay => "Ctrl+Shift+F",
         }
     }
 
@@ -189,6 +193,7 @@ impl Command {
             (true, false, "x") => Some(Self::Cut),
             (true, false, "v") => Some(Self::Paste),
             (true, false, "d") => Some(Self::Duplicate),
+            (true, true, "f") => Some(Self::OpenDisplay),
             (false, _, "delete" | "backspace") => Some(Self::DeleteSelected),
             (false, false, "r") => Some(Self::AddRectangle),
             (false, false, "e") => Some(Self::AddEllipse),
@@ -204,13 +209,22 @@ mod tests {
 
     #[test]
     fn the_shortcuts_ask_for_the_commands_they_name() {
-        assert_eq!(Command::from_key("s", true, false, false), Some(Command::Save));
+        assert_eq!(
+            Command::from_key("s", true, false, false),
+            Some(Command::Save)
+        );
         assert_eq!(
             Command::from_key("s", true, true, false),
             Some(Command::SaveAs)
         );
-        assert_eq!(Command::from_key("z", true, true, false), Some(Command::Redo));
-        assert_eq!(Command::from_key("y", true, false, false), Some(Command::Redo));
+        assert_eq!(
+            Command::from_key("z", true, true, false),
+            Some(Command::Redo)
+        );
+        assert_eq!(
+            Command::from_key("y", true, false, false),
+            Some(Command::Redo)
+        );
         assert_eq!(
             Command::from_key("s", false, false, true),
             Some(Command::Save)
@@ -219,12 +233,22 @@ mod tests {
             Command::from_key("delete", false, false, false),
             Some(Command::DeleteSelected)
         );
-        assert_eq!(Command::from_key("g", true, false, false), Some(Command::Group));
+        assert_eq!(
+            Command::from_key("g", true, false, false),
+            Some(Command::Group)
+        );
         assert_eq!(
             Command::from_key("g", true, true, false),
             Some(Command::Ungroup)
         );
-        assert_eq!(Command::from_key("v", true, false, false), Some(Command::Paste));
+        assert_eq!(
+            Command::from_key("v", true, false, false),
+            Some(Command::Paste)
+        );
+        assert_eq!(
+            Command::from_key("f", true, true, false),
+            Some(Command::OpenDisplay)
+        );
         assert_eq!(Command::from_key("s", false, false, false), None);
         assert_eq!(Command::from_key("q", true, false, false), None);
     }

@@ -8,8 +8,8 @@
 use serde::Serialize;
 
 use cosmic_text::{
-    Align, Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping,
-    Style as TextPosture, Weight,
+    Align, Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style as TextPosture,
+    Weight,
 };
 
 // Re-exported so a backend shapes with the same settings this module measured
@@ -166,12 +166,11 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
         let mut buffer = buffer.borrow_with(&mut fonts.system);
         buffer.set_size(width, None);
         buffer.set_rich_text(
-            request.runs.iter().enumerate().map(|(index, run)| {
-                (
-                    run.text.as_str(),
-                    attrs(&run.style).metadata(index),
-                )
-            }),
+            request
+                .runs
+                .iter()
+                .enumerate()
+                .map(|(index, run)| (run.text.as_str(), attrs(&run.style).metadata(index))),
             &Attrs::new(),
             Shaping::Advanced,
             Some(align(request.align)),
@@ -355,7 +354,10 @@ fn vertical(fonts: &mut Fonts, request: &TextRequest<'_>, line_height: f32) -> T
             segment.origin.1 += offset;
         }
     }
-    TextLayout { segments, clip: None }
+    TextLayout {
+        segments,
+        clip: None,
+    }
 }
 
 #[cfg(test)]

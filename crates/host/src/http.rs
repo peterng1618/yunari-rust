@@ -36,6 +36,7 @@ pub struct App {
     pub bound_port: std::sync::atomic::AtomicU16,
     pub streams: crate::stream::Streams,
     pub registry: yunari_providers::registry::Registry,
+    pub assignment: Mutex<crate::assignment::Assignment>,
 }
 
 pub type Shared = Arc<App>;
@@ -53,13 +54,37 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/health", get(health))
         .route("/pair", get(pair_page))
         .route("/api/pairing/code", get(code).post(mint_code))
+        .route("/api/pairing/sessions", get(sessions).post(new_session))
+        .route("/api/displays", get(displays).post(add_display))
         .route(
-            "/api/pairing/sessions",
-            get(sessions).post(new_session),
+            "/api/displays/{id}",
+            axum::routing::patch(patch_display).delete(remove_display),
         )
-        .route("/api/displays", get(displays))
+        .route(
+            "/api/displays/autostart",
+            get(autostart_enabled).post(set_autostart),
+        )
+        .route("/api/hosting", get(hosting).put(set_hosting))
         .route("/ws", get(ws))
         .route("/api/sensors", get(sensors))
+        .route("/api/themes", get(crate::themes_routes::themes))
+        .route(
+            "/api/themes/active",
+            get(crate::themes_routes::active).put(crate::themes_routes::set_active),
+        )
+        .route(
+            "/api/themes/{id}/document",
+            get(crate::themes_routes::document),
+        )
+        .route(
+            "/api/themes/{id}/assets/{*path}",
+            get(crate::themes_routes::asset),
+        )
+        .route("/api/published", get(crate::themes_routes::published))
+        .route("/", get(root))
+        .route("/player.js", get(player_script))
+        .route("/favicon.svg", get(favicon))
+        .route("/manifest.webmanifest", get(manifest))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
         app,
@@ -78,12 +103,20 @@ async fn refuse_foreign_loopback_api(
     let path = request.uri().path();
     if path.starts_with("/api/") && path != "/api/host" && peer.ip().is_loopback() {
         let headers = request.headers();
-        if let Some(origin) = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok())
-            && let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok())
+        if let Some(origin) = headers
+            .get(header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+            && let Some(host) = headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
             && host_of(origin) != host_of(host)
         {
             let _ = &app;
-            return (StatusCode::FORBIDDEN, "That request is from another origin.").into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                "That request is from another origin.",
+            )
+                .into_response();
         }
     }
     next.run(request).await
@@ -91,7 +124,9 @@ async fn refuse_foreign_loopback_api(
 
 fn host_of(value: &str) -> String {
     let value = value.trim().to_ascii_lowercase();
-    let without_scheme = value.split_once("://").map_or(value.as_str(), |(_, rest)| rest);
+    let without_scheme = value
+        .split_once("://")
+        .map_or(value.as_str(), |(_, rest)| rest);
     let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
     let authority = authority.rsplit('@').next().unwrap_or(authority);
     authority
@@ -104,14 +139,19 @@ fn host_of(value: &str) -> String {
 pub fn is_loopback(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => address.is_loopback(),
-        IpAddr::V6(address) => address.is_loopback() || address.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()),
+        IpAddr::V6(address) => {
+            address.is_loopback() || address.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
     }
 }
 
 /// The token a request proves, from the cookie first and then the header.
 /// The query string is never accepted here; `/?session=` has its own exchange.
 pub fn request_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(cookie) = headers.get(header::COOKIE).and_then(|value| value.to_str().ok()) {
+    if let Some(cookie) = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+    {
         for pair in cookie.split(';') {
             let Some((name, value)) = pair.trim().split_once('=') else {
                 continue;
@@ -128,7 +168,7 @@ pub fn request_token(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn authenticated(app: &App, headers: &HeaderMap) -> Option<String> {
+pub(crate) fn authenticated(app: &App, headers: &HeaderMap) -> Option<String> {
     let token = request_token(headers)?;
     app.displays.lock().ok()?.authenticate(&token)
 }
@@ -156,15 +196,20 @@ async fn host(State(app): State<Shared>, headers: HeaderMap) -> Response {
         body["token"] = Value::String(token);
     }
     let mut response = Json(body).into_response();
-    response
-        .headers_mut()
-        .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    response.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
     response
 }
 
 async fn certificate(State(app): State<Shared>) -> Response {
     let Some(authority) = &app.authority else {
-        return (StatusCode::NOT_FOUND, "This host serves no certificate of its own.").into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            "This host serves no certificate of its own.",
+        )
+            .into_response();
     };
     let mut response = authority.certificate_pem().to_owned().into_response();
     let headers = response.headers_mut();
@@ -197,14 +242,22 @@ struct SessionBody {
     token: String,
 }
 
-async fn session(State(app): State<Shared>, headers: HeaderMap, Json(body): Json<SessionBody>) -> Response {
+async fn session(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<SessionBody>,
+) -> Response {
     let Some(_display) = app
         .displays
         .lock()
         .ok()
         .and_then(|mut store| store.authenticate(&body.token))
     else {
-        return (StatusCode::FORBIDDEN, "That session is not one this host issued.").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "That session is not one this host issued.",
+        )
+            .into_response();
     };
     let secure = app.authority.is_some();
     let mut response = StatusCode::FOUND.into_response();
@@ -241,13 +294,19 @@ async fn claim(
         None => None,
         Some(name) => match DisplayShape::parse(name) {
             Some(shape) => Some(shape),
-            None => return (StatusCode::BAD_REQUEST, "A display is a rect or a circle.").into_response(),
+            None => {
+                return (StatusCode::BAD_REQUEST, "A display is a rect or a circle.")
+                    .into_response();
+            }
         },
     };
     if let (Some(degrees), Some(shape)) = (body.rotation, shape)
         && !shape.accepts_rotation(degrees)
     {
-        return (StatusCode::BAD_REQUEST, "That rotation is not one of this display's.")
+        return (
+            StatusCode::BAD_REQUEST,
+            "That rotation is not one of this display's.",
+        )
             .into_response();
     }
     let remote = peer.ip().to_string();
@@ -258,9 +317,16 @@ async fn claim(
         .map(|pairing| pairing.matches(&code, now))
         .unwrap_or(false);
     if !matched {
-        let wait = app.pairing.lock().map(|mut pairing| pairing.miss(&remote)).unwrap_or(0);
+        let wait = app
+            .pairing
+            .lock()
+            .map(|mut pairing| pairing.miss(&remote))
+            .unwrap_or(0);
         if wait > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(u64::try_from(wait).unwrap_or(4_000))).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                u64::try_from(wait).unwrap_or(4_000),
+            ))
+            .await;
         }
         let now = now_ms();
         let matched = app
@@ -274,13 +340,24 @@ async fn claim(
     }
     let mut pairing = match app.pairing.lock() {
         Ok(pairing) => pairing,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
     };
     let mut store = match app.displays.lock() {
         Ok(store) => store,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
     };
-    match pairing.claim(&code, now_ms(), &mut store, &body.label, shape, body.rotation) {
+    match pairing.claim(
+        &code,
+        now_ms(),
+        &mut store,
+        &body.label,
+        shape,
+        body.rotation,
+    ) {
         Ok((record, token)) => Json(json!({
             "displayId": record.id,
             "token": token,
@@ -307,30 +384,46 @@ async fn code(State(app): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAd
     }
     let view = match app.pairing.lock() {
         Ok(mut pairing) => pairing.current(now_ms()),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
     };
     Json(json!({"code": view.code, "expiresAt": view.expires_at})).into_response()
 }
 
-async fn mint_code(State(app): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+async fn mint_code(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
     if let Some(refusal) = loopback_only(peer) {
         return refusal;
     }
     let view = match app.pairing.lock() {
         Ok(mut pairing) => pairing.mint(now_ms()),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
     };
     Json(json!({"code": view.code, "expiresAt": view.expires_at})).into_response()
 }
 
-async fn sessions(State(app): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+async fn sessions(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
     if let Some(refusal) = loopback_only(peer) {
         return refusal;
     }
     let displays = app
         .displays
         .lock()
-        .map(|store| store.list().to_vec())
+        .map(|store| {
+            store
+                .list()
+                .iter()
+                .map(|record| record.peer_json())
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     Json(json!({"displays": displays})).into_response()
 }
@@ -353,34 +446,267 @@ async fn new_session(
     }
     let mut store = match app.displays.lock() {
         Ok(store) => store,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
     };
     if let Some(id) = query.display_id {
         let Some(token) = store.rotate(&id) else {
             return (StatusCode::NOT_FOUND, "No such display.").into_response();
         };
-        let display = store.get(&id).cloned();
-        return (StatusCode::CREATED, Json(json!({"display": display, "token": token}))).into_response();
+        let display = store.get(&id).map(|record| record.peer_json());
+        return (
+            StatusCode::CREATED,
+            Json(json!({"display": display, "token": token})),
+        )
+            .into_response();
     }
     let label = query.label.unwrap_or_else(|| "display".to_owned());
     match store.adopt(&label, None, None) {
-        Ok((record, token)) => {
-            (StatusCode::CREATED, Json(json!({"display": record, "token": token}))).into_response()
-        }
+        Ok((record, token)) => (
+            StatusCode::CREATED,
+            Json(json!({"display": record.peer_json(), "token": token})),
+        )
+            .into_response(),
         Err(refusal) => (StatusCode::BAD_REQUEST, refusal.0).into_response(),
     }
 }
 
-async fn displays(State(app): State<Shared>, ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+#[derive(Debug, Deserialize)]
+struct NewDisplay {
+    label: String,
+    monitor: Option<Monitor>,
+    shape: Option<String>,
+    rotation: Option<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Monitor {
+    #[serde(rename = "deviceName")]
+    device_name: String,
+}
+
+fn parse_presentation(
+    shape: Option<&str>,
+    rotation: Option<u16>,
+) -> Result<Option<DisplayShape>, (StatusCode, &'static str)> {
+    let shape = match shape {
+        None => None,
+        Some(name) => Some(
+            DisplayShape::parse(name)
+                .ok_or((StatusCode::BAD_REQUEST, "A display is a rect or a circle."))?,
+        ),
+    };
+    if let (Some(degrees), Some(shape)) = (rotation, shape)
+        && !shape.accepts_rotation(degrees)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "That rotation is not one of this display's.",
+        ));
+    }
+    Ok(shape)
+}
+
+async fn add_display(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<NewDisplay>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    let shape = match parse_presentation(body.shape.as_deref(), body.rotation) {
+        Ok(shape) => shape,
+        Err((status, message)) => return (status, message).into_response(),
+    };
+    let Some(monitor) = body.monitor else {
+        return (StatusCode::BAD_REQUEST, "A local display needs a monitor.").into_response();
+    };
+    let mut store = match app.displays.lock() {
+        Ok(store) => store,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
+    };
+    let uuid = monitor.device_name;
+    if store.list().iter().any(|record| {
+        record.kind == crate::displays::DisplayKind::Local
+            && record.monitor.as_deref() == Some(uuid.as_str())
+    }) {
+        return (
+            StatusCode::CONFLICT,
+            "A local display already holds that monitor.",
+        )
+            .into_response();
+    }
+    match store.adopt_local(&body.label, Some(uuid), shape, body.rotation) {
+        Ok(record) => (
+            StatusCode::CREATED,
+            Json(json!({"display": record.peer_json()})),
+        )
+            .into_response(),
+        Err(refusal) => (StatusCode::BAD_REQUEST, refusal.0).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DisplayPatch {
+    label: Option<String>,
+    shape: Option<String>,
+    rotation: Option<u16>,
+}
+
+async fn patch_display(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<DisplayPatch>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    let shape = match parse_presentation(body.shape.as_deref(), body.rotation) {
+        Ok(shape) => shape,
+        Err((status, message)) => return (status, message).into_response(),
+    };
+    let mut store = match app.displays.lock() {
+        Ok(store) => store,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+        }
+    };
+    match store.patch(&id, body.label.as_deref(), shape, body.rotation) {
+        Ok(record) => Json(json!({"display": record.peer_json()})).into_response(),
+        Err(refusal) => (StatusCode::NOT_FOUND, refusal.0).into_response(),
+    }
+}
+
+async fn remove_display(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    if id == crate::displays::DEFAULT_DISPLAY {
+        return (StatusCode::CONFLICT, "The default is not a paired client.").into_response();
+    }
+    let removed = app
+        .displays
+        .lock()
+        .map(|mut store| store.remove(&id))
+        .unwrap_or(false);
+    if removed {
+        Json(json!({"ok": true})).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "No such display.").into_response()
+    }
+}
+
+async fn autostart_enabled(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    Json(json!({"enabled": crate::autostart::enabled()})).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct AutostartWrite {
+    enabled: bool,
+}
+
+async fn set_autostart(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<AutostartWrite>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::autostart::set(body.enabled) {
+        Ok(message) => Json(json!({"enabled": crate::autostart::enabled(), "message": message}))
+            .into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn hosting(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    let hosting = crate::hosting::Hosting::load(&app.config.settings_dir());
+    Json(json!({"lan": hosting.lan})).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct HostingWrite {
+    lan: bool,
+}
+
+async fn set_hosting(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<HostingWrite>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    let hosting = crate::hosting::Hosting { lan: body.lan };
+    hosting.save(&app.config.settings_dir());
+    Json(json!({"lan": hosting.lan, "restartRequired": true})).into_response()
+}
+
+async fn displays(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
     if let Some(refusal) = loopback_only(peer) {
         return refusal;
     }
     let displays = app
         .displays
         .lock()
-        .map(|store| store.list().to_vec())
+        .map(|store| {
+            store
+                .list()
+                .iter()
+                .map(|record| record.peer_json())
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     Json(json!({"displays": displays})).into_response()
+}
+
+async fn root(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if !is_loopback(peer.ip()) && authenticated(&app, &headers).is_none() {
+        let mut response = (StatusCode::FOUND, "").into_response();
+        response.headers_mut().insert(
+            header::LOCATION,
+            HeaderValue::from_static("/pair?reason=unpaired"),
+        );
+        return response;
+    }
+    crate::pages::player_page()
+}
+
+async fn player_script() -> Response {
+    crate::pages::player_script()
+}
+
+async fn favicon() -> Response {
+    crate::pages::favicon()
+}
+
+async fn manifest() -> Response {
+    crate::pages::manifest()
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,13 +725,22 @@ async fn ws(
     let loopback = is_loopback(peer.ip());
     let display = authenticated(&app, &headers).or_else(|| {
         if loopback {
-            Some(query.display.clone().unwrap_or_else(|| crate::displays::DEFAULT_DISPLAY.to_owned()))
+            Some(
+                query
+                    .display
+                    .clone()
+                    .unwrap_or_else(|| crate::displays::DEFAULT_DISPLAY.to_owned()),
+            )
         } else {
             None
         }
     });
     let Some(display) = display else {
-        return (StatusCode::UNAUTHORIZED, "This display is not paired with the host.").into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            "This display is not paired with the host.",
+        )
+            .into_response();
     };
     let keys: Vec<String> = query
         .keys
@@ -431,15 +766,19 @@ async fn ws(
         app: app.clone(),
         id,
     };
-    let stream = futures_util::stream::unfold((receiver, cleanup), |(mut receiver, cleanup)| async move {
-        receiver
-            .recv()
-            .await
-            .map(|text| (Ok::<_, std::convert::Infallible>(text), (receiver, cleanup)))
-    });
+    let stream =
+        futures_util::stream::unfold((receiver, cleanup), |(mut receiver, cleanup)| async move {
+            receiver
+                .recv()
+                .await
+                .map(|text| (Ok::<_, std::convert::Infallible>(text), (receiver, cleanup)))
+        });
     let mut response = Response::new(Body::from_stream(stream));
     let out = response.headers_mut();
-    out.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+    out.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
     out.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, no-transform"),
@@ -468,7 +807,11 @@ async fn sensors(
     headers: HeaderMap,
 ) -> Response {
     if !is_loopback(peer.ip()) && authenticated(&app, &headers).is_none() {
-        return (StatusCode::UNAUTHORIZED, "This display is not paired with the host.").into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            "This display is not paired with the host.",
+        )
+            .into_response();
     }
     let sensors: Vec<Value> = app
         .registry
@@ -505,15 +848,74 @@ mod tests {
     #[test]
     fn the_session_cookie_is_httponly_strict_and_secure_over_tls() {
         let plain = session_cookie("abc", false);
-        assert!(plain.starts_with("yunari_session=abc; Max-Age=34560000; HttpOnly; SameSite=Strict; Path=/"));
+        assert!(plain.starts_with(
+            "yunari_session=abc; Max-Age=34560000; HttpOnly; SameSite=Strict; Path=/"
+        ));
         assert!(!plain.contains("Secure"));
         assert!(session_cookie("abc", true).ends_with("; Secure"));
+    }
+
+    fn app(name: &str) -> Shared {
+        let app_dir = std::env::temp_dir().join(format!(
+            "yunari-http-{name}-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        crate::server::app(HostConfig::resolve(Some(app_dir), Some(0), false))
+    }
+
+    async fn ask(app: Shared, uri: &str, peer: SocketAddr) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let request = Request::builder()
+            .uri(uri)
+            .header(header::HOST, "localhost:5227")
+            .body(Body::empty())
+            .unwrap();
+        let (mut parts, body) = request.into_parts();
+        parts.extensions.insert(ConnectInfo(peer));
+        let response = router(app)
+            .oneshot(Request::from_parts(parts, body))
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn a_phone_cannot_reach_the_local_surfaces() {
+        let app = app("remote");
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        let (status, _) = ask(app.clone(), "/api/displays", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask(app.clone(), "/api/pairing/code", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = ask(app.clone(), "/api/host", phone).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("\"id\""), "{body}");
+        let (status, _) = ask(app, "/", phone).await;
+        assert_eq!(status, StatusCode::FOUND);
+    }
+
+    #[tokio::test]
+    async fn this_pc_reaches_its_own_surfaces() {
+        let app = app("local");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let (status, body) = ask(app.clone(), "/api/displays", here).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = ask(app, "/", here).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[test]
     fn a_token_is_read_from_the_cookie_before_the_header() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::COOKIE, HeaderValue::from_static("a=b; yunari_session=cookie; d=e"));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("a=b; yunari_session=cookie; d=e"),
+        );
         headers.insert(SESSION_HEADER, HeaderValue::from_static("header"));
         assert_eq!(request_token(&headers).as_deref(), Some("cookie"));
         let mut only_header = HeaderMap::new();

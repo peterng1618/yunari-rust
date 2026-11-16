@@ -37,8 +37,8 @@ use self::prompt::{Outcome, Prompt};
 use crate::arrange;
 use crate::document::{Editor, Source};
 use crate::inspector;
-use crate::palette;
 use crate::layers::{self, Move as LayerMove};
+use crate::palette;
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
 use crate::snap;
@@ -94,7 +94,10 @@ enum Overlay {
     Rename(Prompt),
     Field(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
-    Confirm { message: String, resume: Resume },
+    Confirm {
+        message: String,
+        resume: Resume,
+    },
 }
 
 /// The action a guard is holding.
@@ -336,8 +339,7 @@ impl EditorWindow {
                         self.refresh();
                     }
                     None => {
-                        self.status =
-                            Some(Status::error("Grouping needs two unlocked nodes"));
+                        self.status = Some(Status::error("Grouping needs two unlocked nodes"));
                     }
                 }
             }
@@ -396,8 +398,31 @@ impl EditorWindow {
                     None => self.status = Some(Status::error("Nothing selected to duplicate")),
                 }
             }
+            Command::OpenDisplay => self.open_display(cx),
         }
         cx.notify();
+    }
+
+    /// Opens the live window on a display, painting the document as it stands
+    /// rather than the last save. The file is a hand-off: the player reads a
+    /// theme from disk, so this writes one beside the library.
+    fn open_display(&mut self, cx: &mut Context<Self>) {
+        let path = self
+            .library
+            .root()
+            .parent()
+            .map(|dir| dir.join("live-theme.json"))
+            .unwrap_or_else(|| std::env::temp_dir().join("yunari-live-theme.json"));
+        let written = serde_json::to_vec(self.editor.document())
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| std::fs::write(&path, bytes).map_err(|error| error.to_string()));
+        match written {
+            Ok(()) => {
+                yunari_player::open_fullscreen(Some(&path), None, cx);
+                self.status = Some(Status::ok("Opened on this PC's display"));
+            }
+            Err(error) => self.status = Some(Status::error(format!("{path:?}: {error}"))),
+        }
     }
 
     /// Aligns or distributes the selection, saying why when it cannot.
@@ -411,7 +436,8 @@ impl EditorWindow {
             return;
         }
         let mut moved = false;
-        self.editor.edit(|document| moved = arrange::apply(document, &ids, action));
+        self.editor
+            .edit(|document| moved = arrange::apply(document, &ids, action));
         if moved {
             self.refresh();
         } else {
@@ -665,7 +691,10 @@ impl EditorWindow {
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
-        let local = point(event.position.x - bounds.origin.x, event.position.y - bounds.origin.y);
+        let local = point(
+            event.position.x - bounds.origin.x,
+            event.position.y - bounds.origin.y,
+        );
         let (x, y) = self.viewport.to_scene(local);
         let shift = event.modifiers.shift;
         if let Some((id, rect, rotation)) = self.primary_rect()
@@ -687,8 +716,8 @@ impl EditorWindow {
                 } else if !self.selection.contains(&id) {
                     self.selection.replace(id.clone());
                 }
-                let locked = selection::find(self.editor.document(), &id)
-                    .is_some_and(|node| node.locked);
+                let locked =
+                    selection::find(self.editor.document(), &id).is_some_and(|node| node.locked);
                 if !shift && !locked {
                     let starts = self.start_transforms();
                     if let Some(anchor) = starts
@@ -722,7 +751,10 @@ impl EditorWindow {
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
-        let local = point(event.position.x - bounds.origin.x, event.position.y - bounds.origin.y);
+        let local = point(
+            event.position.x - bounds.origin.x,
+            event.position.y - bounds.origin.y,
+        );
         let scene = self.viewport.to_scene(local);
         let Some(gesture) = self.gesture.take() else {
             return;
@@ -734,10 +766,7 @@ impl EditorWindow {
                 anchor,
                 starts,
             } => {
-                let raw = (
-                    anchor.0 + scene.0 - start.0,
-                    anchor.1 + scene.1 - start.1,
-                );
+                let raw = (anchor.0 + scene.0 - start.0, anchor.1 + scene.1 - start.1);
                 let enabled = !event.modifiers.control;
                 let moving: Vec<String> = starts.iter().map(|(id, _)| id.clone()).collect();
                 let (snapped_x, snapped_y, found) = snap::snap_move(
@@ -749,8 +778,16 @@ impl EditorWindow {
                 );
                 let (rounded_x, rounded_y) = transform::move_to(raw, raw, enabled);
                 let guided = |axis| found.iter().any(|guide| guide.axis == axis);
-                let x = if guided(snap::Axis::X) { snapped_x } else { rounded_x };
-                let y = if guided(snap::Axis::Y) { snapped_y } else { rounded_y };
+                let x = if guided(snap::Axis::X) {
+                    snapped_x
+                } else {
+                    rounded_x
+                };
+                let y = if guided(snap::Axis::Y) {
+                    snapped_y
+                } else {
+                    rounded_y
+                };
                 guides = found;
                 let (dx, dy) = (x - anchor.0, y - anchor.1);
                 starts
@@ -834,7 +871,9 @@ impl EditorWindow {
         if self.editor.rename_node(&id, value) {
             self.refresh();
         } else {
-            self.status = Some(Status::error("Names are one line and at most 120 characters"));
+            self.status = Some(Status::error(
+                "Names are one line and at most 120 characters",
+            ));
         }
     }
 
@@ -873,9 +912,10 @@ impl EditorWindow {
             };
         } else if let Some(rest) = key.strip_prefix("token.") {
             outcome = if rest == "new" {
-                self.editor.add_token(value).map(|_| ()).ok_or_else(|| {
-                    "A new type token needs a name".to_owned()
-                })
+                self.editor
+                    .add_token(value)
+                    .map(|_| ())
+                    .ok_or_else(|| "A new type token needs a name".to_owned())
             } else if let Some(entry) = rest.strip_suffix(".family") {
                 self.editor.set_token_family(entry, value)
             } else if let Some(entry) = rest.strip_suffix(".weight") {
@@ -887,20 +927,25 @@ impl EditorWindow {
             || key.starts_with("artboard.")
             || key.starts_with("background.")
         {
-            self.editor.edit(|document| outcome = inspector::apply_document(document, &key, value));
+            self.editor
+                .edit(|document| outcome = inspector::apply_document(document, &key, value));
         } else if key == "bindings.new" {
             outcome = match self.selection.first().map(str::to_owned) {
                 Some(id) => self.editor.add_binding(&id, value).map(|_| ()),
                 None => Err("Select a node to bind a reading".to_owned()),
             };
         } else if let Some(id) = self.selection.first().map(str::to_owned) {
-            self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
+            self.editor
+                .edit(|document| outcome = inspector::apply(document, &id, &key, value));
         } else {
             outcome = Err("Select a node to edit its fields".to_owned());
         }
         match outcome {
             Ok(()) => {
-                self.status = Some(Status::ok(format!("Set {}", key.rsplit('.').next().unwrap_or(&key))));
+                self.status = Some(Status::ok(format!(
+                    "Set {}",
+                    key.rsplit('.').next().unwrap_or(&key)
+                )));
                 self.refresh();
             }
             Err(message) => self.status = Some(Status::error(message)),
@@ -1058,14 +1103,24 @@ impl EditorWindow {
                 .child("Type")
                 .into_any_element(),
         );
-        for (index, (id, token)) in self.editor.document().type_tokens.clone().into_iter().enumerate()
+        for (index, (id, token)) in self
+            .editor
+            .document()
+            .type_tokens
+            .clone()
+            .into_iter()
+            .enumerate()
         {
             let family_key = format!("token.{id}.family");
             let weight_key = format!("token.{id}.weight");
             let family = token.family.clone();
-            let weight = token.weight.as_ref().map_or_else(String::new, tokens::weight_text);
+            let weight = token
+                .weight
+                .as_ref()
+                .map_or_else(String::new, tokens::weight_text);
             let id_for_family = id.clone();
-            let (family_for_edit, weight_for_edit) = (family.clone(), weight.clone());            children.push(
+            let (family_for_edit, weight_for_edit) = (family.clone(), weight.clone());
+            children.push(
                 div()
                     .id(("token", index))
                     .flex()
@@ -1143,8 +1198,7 @@ impl EditorWindow {
                     .overflow_hidden()
                     .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
                         let (_, dy) = scroll_delta(event);
-                        this.inspector_scroll =
-                            (this.inspector_scroll - dy).clamp(0.0, max_scroll);
+                        this.inspector_scroll = (this.inspector_scroll - dy).clamp(0.0, max_scroll);
                         cx.notify();
                     }))
                     .child(
@@ -1186,12 +1240,7 @@ impl EditorWindow {
             .into_iter()
             .map(|(id, mut transform)| {
                 let (x, y) = transform::nudge(
-                    (
-                        transform.x,
-                        transform.y,
-                        transform.width,
-                        transform.height,
-                    ),
+                    (transform.x, transform.y, transform.width, transform.height),
                     dx,
                     dy,
                 );
@@ -1263,12 +1312,8 @@ impl EditorWindow {
         let Some((anchor, current)) = self.marquee.take() else {
             return;
         };
-        let (x0, y0) = self
-            .viewport
-            .to_scene(point(px(anchor.0), px(anchor.1)));
-        let (x1, y1) = self
-            .viewport
-            .to_scene(point(px(current.0), px(current.1)));
+        let (x0, y0) = self.viewport.to_scene(point(px(anchor.0), px(anchor.1)));
+        let (x1, y1) = self.viewport.to_scene(point(px(current.0), px(current.1)));
         if (x1 - x0).abs() < 1.0 && (y1 - y0).abs() < 1.0 {
             cx.notify();
             return;
@@ -1539,7 +1584,11 @@ impl EditorWindow {
                     .pl(px(6.0 + row.depth as f32 * 12.0))
                     .pr_2()
                     .py_1()
-                    .bg(if row.selected { rgb(0x2b2b36) } else { rgb(PANEL) })
+                    .bg(if row.selected {
+                        rgb(0x2b2b36)
+                    } else {
+                        rgb(PANEL)
+                    })
                     .cursor_pointer()
                     .child(
                         div()
@@ -1629,9 +1678,7 @@ impl EditorWindow {
             .map(|(_, rect, rotation)| {
                 Handle::at(rect, rotation)
                     .into_iter()
-                    .filter(|(handle, _)| {
-                        *handle == Handle::Rotate || rotation.abs() < 1e-6
-                    })
+                    .filter(|(handle, _)| *handle == Handle::Rotate || rotation.abs() < 1e-6)
                     .collect()
             })
             .unwrap_or_default();
@@ -1640,9 +1687,7 @@ impl EditorWindow {
             .id("canvas")
             .flex_1()
             .bg(rgb(0x101014))
-            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
-                this.on_scroll(event, cx)
-            }))
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| this.on_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -1655,9 +1700,7 @@ impl EditorWindow {
             )
             .on_mouse_down(
                 MouseButton::Middle,
-                cx.listener(|this, event: &MouseDownEvent, _, _| {
-                    this.pan_start(event.position)
-                }),
+                cx.listener(|this, event: &MouseDownEvent, _, _| this.pan_start(event.position)),
             )
             .on_mouse_move(
                 cx.listener(|this, event: &MouseMoveEvent, _, cx| this.canvas_drag(event, cx)),
@@ -1770,7 +1813,11 @@ impl EditorWindow {
         if let Some(status) = &self.status {
             line = line.child(
                 div()
-                    .text_color(if status.error { rgb(0xf38ba8) } else { rgb(0xa6e3a1) })
+                    .text_color(if status.error {
+                        rgb(0xf38ba8)
+                    } else {
+                        rgb(0xa6e3a1)
+                    })
                     .child(status.text.clone()),
             );
         }
@@ -1793,7 +1840,12 @@ impl EditorWindow {
                     .text_color(rgb(INK))
                     .child(format!("{}▏", prompt.value)),
             )
-            .child(div().text_sm().text_color(rgb(MUTED)).child(prompt.hint.clone()))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(MUTED))
+                    .child(prompt.hint.clone()),
+            )
             .child(
                 div().flex().justify_end().child(
                     div()
@@ -1854,11 +1906,11 @@ impl EditorWindow {
                                     .text_color(rgb(0x101014))
                                     .cursor_pointer()
                                     .child("Discard")
-                                    .on_click(
-                                        cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    .on_click(cx.listener(
+                                        move |this, _: &ClickEvent, window, cx| {
                                             this.discard(discard.clone(), window, cx)
-                                        }),
-                                    ),
+                                        },
+                                    )),
                             )
                             .child(
                                 div()
@@ -1869,9 +1921,9 @@ impl EditorWindow {
                                     .cursor_pointer()
                                     .text_color(rgb(MUTED))
                                     .child("Keep editing  ·  Esc")
-                                    .on_click(cx.listener(
-                                        |this, _: &ClickEvent, _, cx| this.close_overlay(cx),
-                                    )),
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.close_overlay(cx)
+                                    })),
                             ),
                     )
                     .into_any_element()
@@ -2116,7 +2168,14 @@ fn line_node(document: &ThemeDocument) -> Node {
 }
 
 fn arc_node(document: &ThemeDocument) -> Node {
-    path_with(document, "arc", "M 200 0 A 200 200 0 0 1 0 200", 200.0, 200.0, false)
+    path_with(
+        document,
+        "arc",
+        "M 200 0 A 200 200 0 0 1 0 200",
+        200.0,
+        200.0,
+        false,
+    )
 }
 
 fn wedge_node(document: &ThemeDocument) -> Node {
@@ -2242,7 +2301,11 @@ fn surface_ref(document: &ThemeDocument) -> Option<String> {
 
 /// The ink the source editor prefers, as a `palette.<id>` reference.
 fn ink_ref(document: &ThemeDocument) -> Option<String> {
-    palette_ref(document, &["text", "ink", "foreground", "primary", "accent"]).or_else(|| {
+    palette_ref(
+        document,
+        &["text", "ink", "foreground", "primary", "accent"],
+    )
+    .or_else(|| {
         let surface = surface_ref(document);
         document
             .palette
@@ -2281,9 +2344,7 @@ fn rectangle_node(document: &ThemeDocument) -> Node {
     Node {
         id: free_id(document, "rect"),
         name: None,
-        kind: NodeKind::Rectangle {
-            corner_radius: 8.0,
-        },
+        kind: NodeKind::Rectangle { corner_radius: 8.0 },
         transform: place(document, 360.0, 200.0),
         visible: true,
         locked: false,
@@ -2337,11 +2398,17 @@ fn paint_guide(guide: &snap::Guide, view: &Viewport, bounds: Bounds<Pixels>, win
         let run = DASH.min(to - walked);
         let quad = match guide.axis {
             snap::Axis::X => Bounds {
-                origin: point(bounds.origin.x + px(view.offset.0 + at), bounds.origin.y + px(view.offset.1 + walked)),
+                origin: point(
+                    bounds.origin.x + px(view.offset.0 + at),
+                    bounds.origin.y + px(view.offset.1 + walked),
+                ),
                 size: size(px(1.0), px(run)),
             },
             snap::Axis::Y => Bounds {
-                origin: point(bounds.origin.x + px(view.offset.0 + walked), bounds.origin.y + px(view.offset.1 + at)),
+                origin: point(
+                    bounds.origin.x + px(view.offset.0 + walked),
+                    bounds.origin.y + px(view.offset.1 + at),
+                ),
                 size: size(px(run), px(1.0)),
             },
         };
@@ -2367,7 +2434,9 @@ fn paint_handle(
     window: &mut Window,
 ) {
     let (width, height) = match handle {
-        Handle::TopLeft | Handle::TopRight | Handle::BottomRight | Handle::BottomLeft => (12.0, 12.0),
+        Handle::TopLeft | Handle::TopRight | Handle::BottomRight | Handle::BottomLeft => {
+            (12.0, 12.0)
+        }
         Handle::Top | Handle::Bottom => (20.0, 8.0),
         Handle::Left | Handle::Right => (8.0, 20.0),
         Handle::Rotate => (32.0, 32.0),
@@ -2438,9 +2507,10 @@ fn slug(name: &str) -> Option<String> {
 fn export_path(root: &Path, document: &ThemeDocument) -> PathBuf {
     let name = slug(&document.metadata.name.clone().unwrap_or_default())
         .unwrap_or_else(|| document.id.clone());
-    let home = root.parent().filter(|parent| !parent.as_os_str().is_empty());
-    home.unwrap_or(root)
-        .join(format!("{name}.yunari-theme"))
+    let home = root
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    home.unwrap_or(root).join(format!("{name}.yunari-theme"))
 }
 
 fn now_ms() -> u64 {
@@ -2477,7 +2547,7 @@ mod tests {
     // Named imports, not the module glob: GPUI exports its own `test`
     // attribute, and a glob would shadow the built-in one.
     use super::{
-        INSET, STEP, Node, NodeKind, Path, StyleMap, ThemeDocument, Transform, blank, chart_node,
+        INSET, Node, NodeKind, Path, STEP, StyleMap, ThemeDocument, Transform, blank, chart_node,
         export_path, free_id, line_node, place, rectangle_node, slug, suggested_id,
     };
 
@@ -2534,9 +2604,7 @@ mod tests {
         Node {
             id: id.to_owned(),
             name: None,
-            kind: NodeKind::Rectangle {
-                corner_radius: 0.0,
-            },
+            kind: NodeKind::Rectangle { corner_radius: 0.0 },
             transform: Transform {
                 x,
                 y,

@@ -1,8 +1,6 @@
 //! Gauge: an arc, a track and the reading's progress.
 
-use crate::chart::segments::{
-    SegmentFill, segment_count, segment_divisor_of, segment_fill_of,
-};
+use crate::chart::segments::{SegmentFill, segment_count, segment_divisor_of, segment_fill_of};
 use crate::chart::{
     ChartFill, ChartRequest, boolean, chart_fill, filled, gap_of, number, position, ring,
 };
@@ -99,24 +97,46 @@ pub fn build(
                 continue;
             };
             if at <= band_start {
-                push_solid(&mut ops, ring(centre, radius, thickness, band_from, band_to, round_cap), track.for_mark(band_start, false));
+                push_solid(
+                    &mut ops,
+                    ring(centre, radius, thickness, band_from, band_to, round_cap),
+                    track.for_mark(band_start, false),
+                );
             } else if at >= band_end {
-                push_solid(&mut ops, ring(centre, radius, thickness, band_from, band_to, round_cap), progress.for_mark(midpoint, true));
+                push_solid(
+                    &mut ops,
+                    ring(centre, radius, thickness, band_from, band_to, round_cap),
+                    progress.for_mark(midpoint, true),
+                );
             } else {
                 let inside = start + at * sweep;
-                push_solid(&mut ops, ring(centre, radius, thickness, band_from, inside, round_cap), progress.for_mark(at, true));
-                push_solid(&mut ops, ring(centre, radius, thickness, inside, band_to, round_cap), track.for_mark(midpoint, false));
+                push_solid(
+                    &mut ops,
+                    ring(centre, radius, thickness, band_from, inside, round_cap),
+                    progress.for_mark(at, true),
+                );
+                push_solid(
+                    &mut ops,
+                    ring(centre, radius, thickness, inside, band_to, round_cap),
+                    track.for_mark(midpoint, false),
+                );
             }
         } else {
             let reached = drawn && band_end <= at;
             let paint = if reached {
-                progress.as_ref().map_or(track.for_mark(midpoint, false), |progress| {
-                    progress.for_mark(midpoint, true)
-                })
+                progress
+                    .as_ref()
+                    .map_or(track.for_mark(midpoint, false), |progress| {
+                        progress.for_mark(midpoint, true)
+                    })
             } else {
                 track.for_mark(midpoint, false)
             };
-            push_solid(&mut ops, ring(centre, radius, thickness, band_from, band_to, round_cap), paint);
+            push_solid(
+                &mut ops,
+                ring(centre, radius, thickness, band_from, band_to, round_cap),
+                paint,
+            );
         }
     }
     ops
@@ -131,7 +151,13 @@ fn fill_or_default(
     default: Color,
     issues: &mut Vec<PlanIssue>,
 ) -> Option<ChartFill> {
-    match chart_fill(request.document, settings.get(key), request.node_id, path, issues) {
+    match chart_fill(
+        request.document,
+        settings.get(key),
+        request.node_id,
+        path,
+        issues,
+    ) {
         Some(fill) => Some(fill.with_opacity(request.opacity)),
         None if settings.get(key).is_none() => {
             Some(ChartFill::Solid(default).with_opacity(request.opacity))
@@ -253,7 +279,10 @@ mod tests {
         let painted = points(&ops[0]);
         assert!(painted.len() > 4);
         for (x, y) in painted {
-            assert!((-1.0..=201.0).contains(&x) && (-1.0..=201.0).contains(&y), "{x},{y}");
+            assert!(
+                (-1.0..=201.0).contains(&x) && (-1.0..=201.0).contains(&y),
+                "{x},{y}"
+            );
         }
     }
 
@@ -264,7 +293,10 @@ mod tests {
         let track = points(&ops[0]).len();
         let progress = points(&ops[1]).len();
         assert!(progress < track, "progress {progress} vs track {track}");
-        assert_eq!(ops[1].fill, Some(crate::Paint::Solid(Color::rgb(0x00, 0xb8, 0xd9))));
+        assert_eq!(
+            ops[1].fill,
+            Some(crate::Paint::Solid(Color::rgb(0x00, 0xb8, 0xd9)))
+        );
     }
 
     #[test]
@@ -289,7 +321,10 @@ mod tests {
 
     #[test]
     fn the_arc_keeps_its_centre_and_thickness() {
-        let ops = ops(r#"{"thickness": 20, "startAngle": 90, "endAngle": 0}"#, None);
+        let ops = ops(
+            r#"{"thickness": 20, "startAngle": 90, "endAngle": 0}"#,
+            None,
+        );
         let painted = points(&ops[0]);
         // A quarter arc from straight up to the right: every point sits on the
         // band between radius 90 and 110 around the box centre.
@@ -297,8 +332,14 @@ mod tests {
             let distance = ((x - 100.0).powi(2) + (y - 100.0).powi(2)).sqrt();
             assert!((89.0..=111.0).contains(&distance), "{x},{y}");
         }
-        assert!(painted.iter().any(|(_, y)| *y < 1.0), "the arc starts at the top");
-        assert!(painted.iter().any(|(x, _)| *x > 209.0), "and ends at the right");
+        assert!(
+            painted.iter().any(|(_, y)| *y < 1.0),
+            "the arc starts at the top"
+        );
+        assert!(
+            painted.iter().any(|(x, _)| *x > 209.0),
+            "and ends at the right"
+        );
     }
 
     #[test]

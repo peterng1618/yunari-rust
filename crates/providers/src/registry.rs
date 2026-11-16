@@ -202,7 +202,10 @@ mod tests {
         let mut registry = Registry::new();
         registry.add(provider);
         let cycle = registry.sample(
-            &[ask("panel-a", &["cpu.load"]), ask("panel-b", &["ram.used", "cpu.load"])],
+            &[
+                ask("panel-a", &["cpu.load"]),
+                ask("panel-b", &["ram.used", "cpu.load"]),
+            ],
             1_000,
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);

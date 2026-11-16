@@ -70,7 +70,12 @@ struct ResolvedStyle {
 /// Build the frame's geometry and the reasons anything in it is missing, with
 /// no readings: every value run draws the placeholder.
 pub fn build(document: &ThemeDocument, fonts: &mut Fonts) -> (DisplayList, Vec<PlanIssue>) {
-    build_with(document, fonts, &Readings::default(), &UnitPreferences::default())
+    build_with(
+        document,
+        fonts,
+        &Readings::default(),
+        &UnitPreferences::default(),
+    )
 }
 
 /// Build the frame's geometry with the readings a poll returned and the
@@ -189,9 +194,7 @@ fn walk(
             width: box_width,
             height: box_height,
         }),
-        NodeKind::Line => Some(Shape::Line {
-            length: box_width,
-        }),
+        NodeKind::Line => Some(Shape::Line { length: box_width }),
         NodeKind::Path {
             data,
             stroke_width,
@@ -250,11 +253,10 @@ fn walk(
                 ChartFamily::Radar => crate::chart::radar::build(&request, fonts, issues),
                 ChartFamily::PolarBar => crate::chart::polar_bar::build(&request, fonts, issues),
             };
-            list.ops
-                .extend(drawn.into_iter().map(|mut op| {
-                    op.transform = transform;
-                    op
-                }));
+            list.ops.extend(drawn.into_iter().map(|mut op| {
+                op.transform = transform;
+                op
+            }));
             None
         }
         NodeKind::Image { content } => {
@@ -412,13 +414,7 @@ fn text_shape(
         runs.push(TextRunPlan {
             text,
             style: run_style(
-                document,
-                node,
-                type_token,
-                style,
-                node_style,
-                opacity,
-                issues,
+                document, node, type_token, style, node_style, opacity, issues,
             ),
         });
     }
@@ -428,7 +424,9 @@ fn text_shape(
 
     let request = TextRequest {
         runs: &runs,
-        box_: content.box_.map(|box_| (box_.width as f32, box_.height as f32)),
+        box_: content
+            .box_
+            .map(|box_| (box_.width as f32, box_.height as f32)),
         align: match content.align {
             TextAlign::Left => PlanTextAlign::Left,
             TextAlign::Center => PlanTextAlign::Center,
@@ -473,13 +471,10 @@ fn run_style(
     let token = document
         .type_tokens
         .get(type_token.strip_prefix("typeTokens.").unwrap_or(type_token));
-    let size = style
-        .get("fontSize")
-        .and_then(style_number)
-        .map_or_else(
-            || default_type_size(type_token, document.artboard.height),
-            |size| size as f32,
-        );
+    let size = style.get("fontSize").and_then(style_number).map_or_else(
+        || default_type_size(type_token, document.artboard.height),
+        |size| size as f32,
+    );
     let colour = style
         .get("fill")
         .and_then(|value| resolve_paint(document, value, Some(&node.id), &path("fill"), issues))
@@ -492,9 +487,7 @@ fn run_style(
                     node_id: Some(node.id.clone()),
                     detail: "A gradient text run paints its first stop.".into(),
                 });
-                stops
-                    .first()
-                    .map(|stop| scale_alpha(stop.color, opacity))
+                stops.first().map(|stop| scale_alpha(stop.color, opacity))
             }
         })
         .unwrap_or(Color::rgb(255, 255, 255));
@@ -588,9 +581,9 @@ fn resolve_style(
     let fill = style
         .get("fill")
         .and_then(|value| resolve_paint(document, value, Some(&node.id), &path("fill"), issues));
-    let stroke = style.get("stroke").and_then(|value| {
-        resolve_paint(document, value, Some(&node.id), &path("stroke"), issues)
-    });
+    let stroke = style
+        .get("stroke")
+        .and_then(|value| resolve_paint(document, value, Some(&node.id), &path("stroke"), issues));
     ResolvedStyle {
         fill,
         stroke,
@@ -727,9 +720,12 @@ mod tests {
 
     #[test]
     fn an_empty_document_paints_nothing() {
-        let (list, issues) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},"nodes":[]}"##,
-        ), &mut Fonts::new());
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},"nodes":[]}"##,
+            ),
+            &mut Fonts::new(),
+        );
         assert_eq!(list.width, 100.0);
         assert_eq!(list.height, 80.0);
         assert!(list.ops.is_empty());
@@ -738,11 +734,14 @@ mod tests {
 
     #[test]
     fn a_filled_rectangle_keeps_its_box_and_place() {
-        let (list, issues) = build(&one_node(
-            r##"{"type":"rectangle","cornerRadius":4}"##,
-            r##"{"fill":{"value":"#ff0000"}}"##,
-            r##"{"x":10,"y":20,"width":30,"height":40}"##,
-        ), &mut Fonts::new());
+        let (list, issues) = build(
+            &one_node(
+                r##"{"type":"rectangle","cornerRadius":4}"##,
+                r##"{"fill":{"value":"#ff0000"}}"##,
+                r##"{"x":10,"y":20,"width":30,"height":40}"##,
+            ),
+            &mut Fonts::new(),
+        );
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(list.ops.len(), 1);
         let op = &list.ops[0];
@@ -760,49 +759,61 @@ mod tests {
 
     #[test]
     fn a_group_offsets_its_children() {
-        let (list, _) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+        let (list, _) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},
                 "transform":{"x":10,"y":0,"width":10,"height":10},
                 "children":[{"id":"c","kind":{"type":"ellipse"},
                 "transform":{"x":5,"y":0,"width":2,"height":2},
                 "style":{"fill":{"value":"#00ff00"}}}]}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert_eq!(list.ops.len(), 1);
         assert_eq!(list.ops[0].transform.apply(0.0, 0.0), (15.0, 0.0));
     }
 
     #[test]
     fn a_hidden_node_paints_nothing_including_its_children() {
-        let (list, _) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+        let (list, _) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},"visible":false,
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},"style":{"fill":{"value":"#00ff00"}}}]}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert!(list.ops.is_empty());
     }
 
     #[test]
     fn a_palette_reference_is_the_paint() {
-        let (list, issues) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                 "palette":{"accent":{"name":"Accent","value":{"kind":"solid","color":"#0000ff"}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},"style":{"fill":{"ref":"palette.accent"}}}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(list.ops[0].fill, Some(Paint::Solid(Color::rgb(0, 0, 255))));
     }
 
     #[test]
     fn an_undeclared_token_is_a_reason_not_a_paint() {
-        let (list, issues) = build(&unvalidated(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+        let (list, issues) = build(
+            &unvalidated(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},
                 "style":{"fill":{"ref":"palette.missing"}}}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnresolvedGlobal);
         assert!(issues[0].detail.contains("palette.missing"));
@@ -810,11 +821,14 @@ mod tests {
 
     #[test]
     fn a_colour_it_cannot_read_is_refused_with_its_text() {
-        let (list, issues) = build(&one_node(
-            r##"{"type":"rectangle"}"##,
-            r##"{"fill":{"value":"rebeccapurple"}}"##,
-            r##"{"width":10,"height":10}"##,
-        ), &mut Fonts::new());
+        let (list, issues) = build(
+            &one_node(
+                r##"{"type":"rectangle"}"##,
+                r##"{"fill":{"value":"rebeccapurple"}}"##,
+                r##"{"width":10,"height":10}"##,
+            ),
+            &mut Fonts::new(),
+        );
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnreadablePaint);
         assert!(issues[0].detail.contains("rebeccapurple"));
@@ -822,24 +836,33 @@ mod tests {
 
     #[test]
     fn a_stroke_without_a_width_still_paints_its_fill() {
-        let (list, _) = build(&one_node(
-            r##"{"type":"rectangle"}"##,
-            r##"{"fill":{"value":"#ffffff"},"stroke":{"value":"#000000"}}"##,
-            r##"{"width":10,"height":10}"##,
-        ), &mut Fonts::new());
-        assert_eq!(list.ops[0].stroke.as_ref().map(|stroke| stroke.width), Some(0.0));
+        let (list, _) = build(
+            &one_node(
+                r##"{"type":"rectangle"}"##,
+                r##"{"fill":{"value":"#ffffff"},"stroke":{"value":"#000000"}}"##,
+                r##"{"width":10,"height":10}"##,
+            ),
+            &mut Fonts::new(),
+        );
+        assert_eq!(
+            list.ops[0].stroke.as_ref().map(|stroke| stroke.width),
+            Some(0.0)
+        );
         assert!(list.ops[0].fill.is_some());
     }
 
     #[test]
     fn opacity_multiplies_through_a_group() {
-        let (list, _) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+        let (list, _) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},"style":{"opacity":{"value":0.5}},
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},
                 "style":{"fill":{"value":"#ffffff"},"opacity":{"value":0.5}}}]}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert_eq!(
             list.ops[0].fill,
             Some(Paint::Solid(Color::rgb(255, 255, 255).with_alpha(64)))
@@ -848,19 +871,25 @@ mod tests {
 
     #[test]
     fn a_gradient_axis_spans_its_own_box() {
-        let (list, issues) = build(&document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":100},
+        let (list, issues) = build(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":100},
                 "palette":{"plate":{"name":"Plate","value":{"kind":"gradient","angle":90,
                 "stops":[{"offset":0,"color":"#000000"},{"offset":1,"color":"#ffffff"}]}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":100,"height":50},"style":{"fill":{"ref":"palette.plate"}}}]}"##,
-        ), &mut Fonts::new());
+            ),
+            &mut Fonts::new(),
+        );
         assert!(issues.is_empty(), "{issues:?}");
         let Some(Paint::Linear { from, to, stops }) = &list.ops[0].fill else {
             panic!("expected a gradient");
         };
         // 90 reads as bottom-to-top in the canvas's y-down space.
-        assert!((from.0 - 50.0).abs() < 1e-3 && (from.1 - 50.0).abs() < 1e-3, "{from:?}");
+        assert!(
+            (from.0 - 50.0).abs() < 1e-3 && (from.1 - 50.0).abs() < 1e-3,
+            "{from:?}"
+        );
         assert!((to.0 - 50.0).abs() < 1e-3 && to.1.abs() < 1e-3, "{to:?}");
         assert_eq!(stops.len(), 2);
     }
@@ -882,7 +911,10 @@ mod tests {
         };
         assert_eq!(commands.len(), 4);
         assert!(!closed);
-        assert_eq!(list.ops[0].stroke.as_ref().map(|stroke| stroke.width), Some(2.0));
+        assert_eq!(
+            list.ops[0].stroke.as_ref().map(|stroke| stroke.width),
+            Some(2.0)
+        );
     }
 
     #[test]
@@ -950,7 +982,9 @@ mod tests {
         );
         assert!(issues.is_empty(), "{issues:?}");
         assert_eq!(list.ops.len(), 3);
-        assert!(matches!(list.ops[1].shape, Shape::Glass { blur_radius, .. } if blur_radius == 12.0));
+        assert!(
+            matches!(list.ops[1].shape, Shape::Glass { blur_radius, .. } if blur_radius == 12.0)
+        );
         assert_eq!(list.ops[1].transform.apply(0.0, 0.0), (10.0, 10.0));
         assert!(list.ops[2].fill.is_some());
     }
@@ -1077,7 +1111,12 @@ mod tests {
     }
 
     fn value_run_text(document: &ThemeDocument, readings: &Readings) -> (String, Vec<PlanIssue>) {
-        let (list, issues) = build_with(document, &mut Fonts::new(), readings, &UnitPreferences::default());
+        let (list, issues) = build_with(
+            document,
+            &mut Fonts::new(),
+            readings,
+            &UnitPreferences::default(),
+        );
         let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
             panic!("expected a text op");
         };
@@ -1109,8 +1148,9 @@ mod tests {
 
     #[test]
     fn a_binding_scale_acts_once_before_the_author_s_precision() {
-        let document =
-            value_run_document(r#"{"id":"b","semanticKey":"custom.probe.value","scale":2,"precision":2}"#);
+        let document = value_run_document(
+            r#"{"id":"b","semanticKey":"custom.probe.value","scale":2,"precision":2}"#,
+        );
         let readings = Readings::new([reading("custom.probe.value", 1.5, "MB")]);
         let (text, issues) = value_run_text(&document, &readings);
         assert_eq!(text, "3.00 MB");
@@ -1130,13 +1170,9 @@ mod tests {
 
     #[test]
     fn an_instant_reads_with_the_author_s_format() {
-        let document = value_run_document(
-            r#"{"id":"b","semanticKey":"time.now","format":"HH:mm"}"#,
-        );
-        let readings = Readings::new([Reading::instant(
-            "time.now",
-            "2026-09-24T23:07:09+09:00",
-        )]);
+        let document =
+            value_run_document(r#"{"id":"b","semanticKey":"time.now","format":"HH:mm"}"#);
+        let readings = Readings::new([Reading::instant("time.now", "2026-09-24T23:07:09+09:00")]);
         let (text, issues) = value_run_text(&document, &readings);
         assert_eq!(text, "23:07");
         assert!(issues.is_empty(), "{issues:?}");

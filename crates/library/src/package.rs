@@ -21,7 +21,7 @@ use yunari_model::validate::validate_document;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::store::{Library, LibraryError, Saved, SaveRequest, sha256_hex};
+use crate::store::{Library, LibraryError, SaveRequest, Saved, sha256_hex};
 
 /// One entry's cap, and the archive's own.
 pub const MAX_ARCHIVE_BYTES: usize = 95 * 1024 * 1024;
@@ -63,11 +63,10 @@ pub fn write_package(
     thumbnail: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     if let Err(issues) = validate_document(document) {
-        return Err(issues
-            .first()
-            .map_or_else(|| "the theme is not valid".to_owned(), |issue| {
-                issue.to_string()
-            }));
+        return Err(issues.first().map_or_else(
+            || "the theme is not valid".to_owned(),
+            |issue| issue.to_string(),
+        ));
     }
     let declared: BTreeSet<&str> = document
         .assets
@@ -128,8 +127,8 @@ pub fn read_package(bytes: &[u8]) -> Result<Package, String> {
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err("the package is larger than a theme package may be.".to_owned());
     }
-    let mut archive =
-        ZipArchive::new(Cursor::new(bytes)).map_err(|_| "the file is not a zip archive.".to_owned())?;
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|_| "the file is not a zip archive.".to_owned())?;
     if archive.len() > MAX_ENTRIES {
         return Err(format!("a package carries at most {MAX_ENTRIES} files."));
     }
@@ -271,9 +270,9 @@ fn allowed_asset_path(path: &str) -> bool {
     !rest.is_empty()
         && rest.len() <= 200
         && !path.contains("..")
-        && rest.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/')
-        })
+        && rest
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
 }
 
 fn is_png(bytes: &[u8]) -> bool {
@@ -286,7 +285,9 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use yunari_model::document::{Artboard, ArtboardShape, AssetKind, AssetReference, Background, ContentFit, Metadata};
+    use yunari_model::document::{
+        Artboard, ArtboardShape, AssetKind, AssetReference, Background, ContentFit, Metadata,
+    };
 
     use super::*;
 
@@ -385,7 +386,10 @@ mod tests {
     fn a_package_over_the_entry_cap_is_refused() {
         let mut entries: Vec<(String, Vec<u8>)> = vec![
             (MANIFEST.to_owned(), manifest()),
-            (THEME.to_owned(), serde_json::to_vec(&document("alpha")).expect("a theme")),
+            (
+                THEME.to_owned(),
+                serde_json::to_vec(&document("alpha")).expect("a theme"),
+            ),
         ];
         for index in 0..MAX_ENTRIES {
             entries.push((format!("assets/{index}.png"), vec![0]));

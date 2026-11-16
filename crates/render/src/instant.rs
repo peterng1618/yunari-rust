@@ -257,17 +257,26 @@ mod tests {
     #[test]
     fn the_author_tokens_spell_what_they_say() {
         let value = "2026-09-24T14:07:09+07:00";
-        assert_eq!(format_instant(value, "HH:mm", None).as_deref(), Some("14:07"));
+        assert_eq!(
+            format_instant(value, "HH:mm", None).as_deref(),
+            Some("14:07")
+        );
         assert_eq!(
             format_instant(value, "DD MMM YYYY", None).as_deref(),
             Some("24 Sep 2026")
         );
-        assert_eq!(format_instant(value, "dddd", None).as_deref(), Some("Thursday"));
+        assert_eq!(
+            format_instant(value, "dddd", None).as_deref(),
+            Some("Thursday")
+        );
         assert_eq!(
             format_instant(value, "[Today is ]dddd", None).as_deref(),
             Some("Today is Thursday")
         );
-        assert_eq!(format_instant(value, "h:mm A", None).as_deref(), Some("2:07 PM"));
+        assert_eq!(
+            format_instant(value, "h:mm A", None).as_deref(),
+            Some("2:07 PM")
+        );
     }
 
     #[test]
@@ -281,6 +290,9 @@ mod tests {
 
     #[test]
     fn an_unknown_zone_has_no_answer_rather_than_a_guess() {
-        assert_eq!(format_instant("2026-09-24T14:07:09Z", "HH:mm", Some("Mars/Base")), None);
+        assert_eq!(
+            format_instant("2026-09-24T14:07:09Z", "HH:mm", Some("Mars/Base")),
+            None
+        );
     }
 }

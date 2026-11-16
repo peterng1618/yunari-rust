@@ -175,7 +175,10 @@ mod tests {
     fn an_inverse_lands_back_on_the_point_it_moved() {
         let affine = Affine::from_node(&node(3.0, 7.0, 20.0, 20.0, 30.0, 2.0));
         let inverse = affine.inverse().expect("a turned, scaled box inverts");
-        assert_close(inverse.apply(affine.apply(11.0, 4.0).0, affine.apply(11.0, 4.0).1), (11.0, 4.0));
+        assert_close(
+            inverse.apply(affine.apply(11.0, 4.0).0, affine.apply(11.0, 4.0).1),
+            (11.0, 4.0),
+        );
     }
 
     #[test]

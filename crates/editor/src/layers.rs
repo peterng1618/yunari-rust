@@ -40,7 +40,15 @@ pub fn rows(
     expanded: &BTreeSet<String>,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    collect(&document.nodes, 0, true, true, selection, expanded, &mut rows);
+    collect(
+        &document.nodes,
+        0,
+        true,
+        true,
+        selection,
+        expanded,
+        &mut rows,
+    );
     rows
 }
 
@@ -58,7 +66,10 @@ fn collect(
         let locked = locked || node.locked;
         rows.push(Row {
             id: node.id.clone(),
-            name: node.name.clone().unwrap_or_else(|| kind_name(node).to_owned()),
+            name: node
+                .name
+                .clone()
+                .unwrap_or_else(|| kind_name(node).to_owned()),
             depth,
             kind: kind_name(node),
             visible,
@@ -66,7 +77,15 @@ fn collect(
             selected: selection.contains(&node.id),
         });
         if !node.children.is_empty() && expanded.contains(&node.id) {
-            collect(&node.children, depth + 1, visible, locked, selection, expanded, rows);
+            collect(
+                &node.children,
+                depth + 1,
+                visible,
+                locked,
+                selection,
+                expanded,
+                rows,
+            );
         }
     }
 }
@@ -282,6 +301,9 @@ mod tests {
         let mut editor = Editor::new(document(vec![named]));
         assert!(editor.rename_node("a", "  "));
         assert_eq!(editor.document().nodes[0].name, None);
-        assert!(!editor.rename_node("a", "bad\nname"), "control characters are refused");
+        assert!(
+            !editor.rename_node("a", "bad\nname"),
+            "control characters are refused"
+        );
     }
 }

@@ -5,8 +5,8 @@
 //! pending frames instead of growing.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 
@@ -161,7 +161,8 @@ pub fn spawn(app: Shared) {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_millis(DEFAULT_SAMPLE_INTERVAL_MS));
         let mut fonts = yunari_render::Fonts::new();
-        let mut documents: BTreeMap<String, yunari_model::document::ThemeDocument> = BTreeMap::new();
+        let mut documents: BTreeMap<String, yunari_model::document::ThemeDocument> =
+            BTreeMap::new();
         loop {
             interval.tick().await;
             if app.streams.live() == 0 {
@@ -206,7 +207,10 @@ pub fn spawn(app: Shared) {
                     "frame": frame_json,
                 });
                 let data = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_owned());
-                app.streams.publish(&display, &format!("event: {SAMPLE_EVENT}\ndata: {data}\n\n"));
+                app.streams.publish(
+                    &display,
+                    &format!("event: {SAMPLE_EVENT}\ndata: {data}\n\n"),
+                );
             }
         }
     });
@@ -221,7 +225,9 @@ mod tests {
         let streams = Streams::new();
         let too_many: Vec<String> = (0..65).map(|index| format!("key.{index}")).collect();
         assert_eq!(
-            streams.register("phone".to_owned(), too_many, None).unwrap_err(),
+            streams
+                .register("phone".to_owned(), too_many, None)
+                .unwrap_err(),
             StreamRefusal::TooManyKeys
         );
         assert_eq!(
@@ -230,7 +236,11 @@ mod tests {
                 .unwrap_err(),
             StreamRefusal::KeyTooLong
         );
-        assert!(streams.register("phone".to_owned(), vec!["cpu.usage".to_owned()], None).is_ok());
+        assert!(
+            streams
+                .register("phone".to_owned(), vec!["cpu.usage".to_owned()], None)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -249,7 +259,11 @@ mod tests {
         );
         for index in 1..=(MAX_STREAM_CONNECTIONS - MAX_STREAM_CONNECTIONS_PER_DISPLAY) {
             streams
-                .register(format!("display-{index}"), vec!["cpu.usage".to_owned()], None)
+                .register(
+                    format!("display-{index}"),
+                    vec!["cpu.usage".to_owned()],
+                    None,
+                )
                 .unwrap_or_else(|_| panic!("stream {index} of the host"));
         }
         assert_eq!(
@@ -273,6 +287,60 @@ mod tests {
             frames += 1;
         }
         assert_eq!(frames, SSE_FRAME_QUEUE_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn a_tick_sends_the_assigned_theme_as_a_frame() {
+        let dir = std::env::temp_dir().join(format!(
+            "yunari-stream-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        let config = crate::config::HostConfig::resolve(Some(dir.clone()), Some(0), false);
+        std::fs::create_dir_all(config.themes_dir().join("demo")).unwrap();
+        std::fs::write(
+            config.themes_dir().join("demo").join("theme.json"),
+            include_str!("../../player/assets/fixture.json"),
+        )
+        .unwrap();
+        let app = crate::server::app(config.clone());
+        app.assignment
+            .lock()
+            .unwrap()
+            .set(crate::displays::DEFAULT_DISPLAY, Some("demo"));
+        let (_id, mut receiver) = app
+            .streams
+            .register(
+                crate::displays::DEFAULT_DISPLAY.to_owned(),
+                vec!["cpu.load".to_owned()],
+                None,
+            )
+            .unwrap();
+        spawn(app.clone());
+        let mut payload = None;
+        for _ in 0..8 {
+            let Ok(line) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv()).await
+            else {
+                break;
+            };
+            let Some(line) = line else { break };
+            if let Some(data) = line.lines().find_map(|line| line.strip_prefix("data: ")) {
+                payload = Some(data.to_owned());
+                break;
+            }
+        }
+        let payload = payload.expect("a samples frame");
+        let batch: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(batch["version"], 1);
+        assert_eq!(batch["samples"][0]["sensorId"], "host:cpu.load");
+        assert_eq!(batch["frame"]["width"], 320.0);
+        assert!(
+            batch["frame"]["ops"]
+                .as_array()
+                .is_some_and(|ops| !ops.is_empty())
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

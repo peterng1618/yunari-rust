@@ -81,6 +81,24 @@ pub struct DisplayRecord {
     pub rotation: Option<u16>,
 }
 
+impl DisplayRecord {
+    /// What a settings surface may show: the record without the credential it
+    /// proves itself with. A hash is not a token, but it is not for display
+    /// either.
+    pub fn peer_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "label": self.label,
+            "kind": self.kind,
+            "createdAt": self.created_at,
+            "lastSeenAt": self.last_seen_at,
+            "monitor": self.monitor,
+            "shape": self.shape,
+            "rotation": self.rotation,
+        })
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct File {
     displays: Vec<DisplayRecord>,
@@ -166,6 +184,61 @@ impl DisplayStore {
         Ok((record, token))
     }
 
+    /// Add a display this PC drives itself: a monitor window, with no token.
+    pub fn adopt_local(
+        &mut self,
+        label: &str,
+        monitor: Option<String>,
+        shape: Option<DisplayShape>,
+        rotation: Option<u16>,
+    ) -> Result<DisplayRecord, LabelRefusal> {
+        let label = normalize_label(label)?;
+        let id = self.free_id(&label);
+        let record = DisplayRecord {
+            id,
+            label,
+            kind: DisplayKind::Local,
+            created_at: now(),
+            last_seen_at: now(),
+            token_hash: None,
+            monitor,
+            shape,
+            rotation,
+        };
+        self.records.push(record.clone());
+        self.save();
+        Ok(record)
+    }
+
+    /// Change what a record says about itself. A missing field is left alone.
+    pub fn patch(
+        &mut self,
+        id: &str,
+        label: Option<&str>,
+        shape: Option<DisplayShape>,
+        rotation: Option<u16>,
+    ) -> Result<DisplayRecord, LabelRefusal> {
+        let label = match label {
+            Some(label) => Some(normalize_label(label)?),
+            None => None,
+        };
+        let Some(record) = self.records.iter_mut().find(|record| record.id == id) else {
+            return Err(LabelRefusal("No such display.".to_owned()));
+        };
+        if let Some(label) = label {
+            record.label = label;
+        }
+        if shape.is_some() {
+            record.shape = shape;
+        }
+        if rotation.is_some() {
+            record.rotation = rotation;
+        }
+        let patched = record.clone();
+        self.save();
+        Ok(patched)
+    }
+
     /// The display id a token proves, touching `last_seen_at` at most once per
     /// `TOUCH_INTERVAL_MS`.
     pub fn authenticate(&mut self, token: &str) -> Option<String> {
@@ -227,9 +300,14 @@ impl DisplayStore {
 
     fn free_id(&self, label: &str) -> String {
         let base = slug(label);
-        let base = if base.is_empty() { "display".to_owned() } else { base };
+        let base = if base.is_empty() {
+            "display".to_owned()
+        } else {
+            base
+        };
         let base: String = base.chars().take(MAX_ID_LENGTH - 5).collect();
-        if !self.records.iter().any(|record| record.id == base) && base != RETIRED_MACHINE_DISPLAY_ID
+        if !self.records.iter().any(|record| record.id == base)
+            && base != RETIRED_MACHINE_DISPLAY_ID
         {
             return base;
         }
@@ -312,7 +390,8 @@ mod tests {
     use super::*;
 
     fn store(name: &str) -> (PathBuf, DisplayStore) {
-        let dir = std::env::temp_dir().join(format!("yunari-displays-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("yunari-displays-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok();
         let store = DisplayStore::load(&dir);
         (dir, store)
@@ -321,10 +400,15 @@ mod tests {
     #[test]
     fn an_adopted_display_authenticates_and_stores_only_its_hash() {
         let (dir, mut store) = store("adopt");
-        let (record, token) = store.adopt("Living Room (TV)", Some(DisplayShape::Rect), Some(90)).unwrap();
+        let (record, token) = store
+            .adopt("Living Room (TV)", Some(DisplayShape::Rect), Some(90))
+            .unwrap();
         assert_eq!(record.id, "living-room-tv");
         assert_eq!(record.kind, DisplayKind::Paired);
-        assert_eq!(store.authenticate(&token).as_deref(), Some("living-room-tv"));
+        assert_eq!(
+            store.authenticate(&token).as_deref(),
+            Some("living-room-tv")
+        );
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(!text.contains(&token), "the token is never written");
         assert!(text.contains("tokenHash"));
@@ -338,7 +422,10 @@ mod tests {
         let (record, first) = store.adopt("Phone", None, None).unwrap();
         let second = store.rotate(&record.id).expect("a paired display");
         assert_eq!(store.authenticate(&first), None);
-        assert_eq!(store.authenticate(&second).as_deref(), Some(record.id.as_str()));
+        assert_eq!(
+            store.authenticate(&second).as_deref(),
+            Some(record.id.as_str())
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -360,7 +447,10 @@ mod tests {
         assert!(second.id.starts_with("phone-"));
         let long = store.adopt(&"x".repeat(64), None, None).unwrap().0;
         assert!(long.id.len() <= MAX_ID_LENGTH);
-        assert_eq!(normalize_label("   ").unwrap_err().0, "A display label must be 1 to 64 characters, not 0.");
+        assert_eq!(
+            normalize_label("   ").unwrap_err().0,
+            "A display label must be 1 to 64 characters, not 0."
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -368,9 +458,14 @@ mod tests {
     fn a_stored_record_round_trips() {
         let (dir, _) = store("round");
         let mut store = DisplayStore::load(&dir);
-        let (record, _) = store.adopt("Desk", Some(DisplayShape::Circle), Some(45)).unwrap();
+        let (record, _) = store
+            .adopt("Desk", Some(DisplayShape::Circle), Some(45))
+            .unwrap();
         let reloaded = DisplayStore::load(&dir);
-        assert_eq!(reloaded.get(&record.id).unwrap().shape, Some(DisplayShape::Circle));
+        assert_eq!(
+            reloaded.get(&record.id).unwrap().shape,
+            Some(DisplayShape::Circle)
+        );
         assert_eq!(reloaded.get(&record.id).unwrap().rotation, Some(45));
         assert_eq!(reloaded.get(&record.id).unwrap().kind, DisplayKind::Paired);
         std::fs::remove_dir_all(&dir).ok();

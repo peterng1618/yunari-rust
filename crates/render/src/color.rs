@@ -69,7 +69,10 @@ fn parse_hex(hex: &str) -> Option<Color> {
 }
 
 fn parse_rgb(body: &str, with_alpha: bool) -> Option<Color> {
-    let parts: Vec<&str> = body.split([',', '/', ' ']).filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = body
+        .split([',', '/', ' '])
+        .filter(|part| !part.is_empty())
+        .collect();
     let expected = if with_alpha { 4 } else { 3 };
     if parts.len() != expected {
         return None;
@@ -110,7 +113,10 @@ mod tests {
     fn reads_hex_in_every_length() {
         assert_eq!(parse_color("#f00"), Some(Color::rgb(255, 0, 0)));
         assert_eq!(parse_color("#ff0000"), Some(Color::rgb(255, 0, 0)));
-        assert_eq!(parse_color("#0f08"), Some(Color::rgb(0, 255, 0).with_alpha(136)));
+        assert_eq!(
+            parse_color("#0f08"),
+            Some(Color::rgb(0, 255, 0).with_alpha(136))
+        );
         assert_eq!(
             parse_color("#00ff0080"),
             Some(Color::rgb(0, 255, 0).with_alpha(128))
@@ -124,10 +130,7 @@ mod tests {
             parse_color("rgba(1, 2, 3, 0.5)"),
             Some(Color::rgb(1, 2, 3).with_alpha(128))
         );
-        assert_eq!(
-            parse_color("rgb(100% 0% 0%)"),
-            Some(Color::rgb(255, 0, 0))
-        );
+        assert_eq!(parse_color("rgb(100% 0% 0%)"), Some(Color::rgb(255, 0, 0)));
     }
 
     #[test]

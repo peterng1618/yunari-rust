@@ -85,7 +85,12 @@ fn pick(document: &ThemeDocument, ids: &[String]) -> Option<Clipboard> {
         ..Clipboard::default()
     };
     for node in clipboard.nodes.clone() {
-        collect(node, document, &mut clipboard.bindings, &mut clipboard.assets);
+        collect(
+            node,
+            document,
+            &mut clipboard.bindings,
+            &mut clipboard.assets,
+        );
     }
     Some(clipboard)
 }
@@ -278,7 +283,9 @@ mod tests {
     #[test]
     fn paste_offsets_by_ten_and_mints_fresh_ids_and_bindings() {
         let mut document = document(vec![text_node("label", "clock")]);
-        document.bindings.insert("label".to_owned(), vec![binding("clock")]);
+        document
+            .bindings
+            .insert("label".to_owned(), vec![binding("clock")]);
         let mut editor = Editor::new(document);
         assert!(editor.copy(&["label".to_owned()]));
         let pasted = editor.paste().expect("a paste");

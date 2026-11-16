@@ -6,8 +6,7 @@ use yunari_providers::sample::Reading;
 use yunari_render::{DisplayList, Fonts, Readings};
 
 /// What a display shows when no provider on this PC can read a key.
-pub const MISSING_MESSAGE: &str =
-    "no provider on this PC reports that sensor; check the device assignment or that its source is running";
+pub const MISSING_MESSAGE: &str = "no provider on this PC reports that sensor; check the device assignment or that its source is running";
 
 /// The readings a display needs: every key it asked for, with a gap that says
 /// why when nothing on this PC reads it.
@@ -65,10 +64,7 @@ mod tests {
         let cycle = Cycle::default();
         let readings = readings_for(&cycle, &["cpu.total".to_owned()]);
         let reading = readings.get("cpu.total").expect("a gap");
-        assert_eq!(
-            reading.message.as_deref(),
-            Some(MISSING_MESSAGE)
-        );
+        assert_eq!(reading.message.as_deref(), Some(MISSING_MESSAGE));
         let json = sample_json(reading);
         assert_eq!(json["sensorId"], "host:cpu.total");
         assert_eq!(json["status"], "missing");

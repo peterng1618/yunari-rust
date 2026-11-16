@@ -155,7 +155,6 @@ impl SystemProvider {
             previous: Mutex::new(BTreeMap::new()),
         }
     }
-
 }
 
 /// The keys the given devices offer.
@@ -265,16 +264,22 @@ impl Provider for SystemProvider {
             let reading = match key {
                 Key::CpuLoad => match self.snapshot.cpu_load() {
                     Some(load) => Reading::number(semantic_key.clone(), load, "%"),
-                    None => Reading::missing(semantic_key.clone(), "the CPU load could not be read"),
+                    None => {
+                        Reading::missing(semantic_key.clone(), "the CPU load could not be read")
+                    }
                 },
                 Key::RamUsed | Key::RamTotal | Key::RamPercent => match memory {
                     Some(memory) => match key {
-                        Key::RamTotal => {
-                            Reading::number(semantic_key.clone(), memory.total_bytes as f64 / GIB, "GB")
-                        }
-                        Key::RamUsed => {
-                            Reading::number(semantic_key.clone(), memory.used_bytes as f64 / GIB, "GB")
-                        }
+                        Key::RamTotal => Reading::number(
+                            semantic_key.clone(),
+                            memory.total_bytes as f64 / GIB,
+                            "GB",
+                        ),
+                        Key::RamUsed => Reading::number(
+                            semantic_key.clone(),
+                            memory.used_bytes as f64 / GIB,
+                            "GB",
+                        ),
                         _ => Reading::number(
                             semantic_key.clone(),
                             memory.used_bytes as f64 / memory.total_bytes as f64 * 100.0,
@@ -283,27 +288,28 @@ impl Provider for SystemProvider {
                     },
                     None => Reading::missing(semantic_key.clone(), "memory could not be read"),
                 },
-                Key::Disk { name, quantity } => match disks.iter().find(|disk| &disk.name == name) {
-                    Some(disk) => {
-                        let gib = match quantity.as_str() {
-                            "used" => disk.used_bytes as f64 / GIB,
-                            "total" => disk.total_bytes as f64 / GIB,
-                            _ => disk.total_bytes.saturating_sub(disk.used_bytes) as f64 / GIB,
-                        };
-                        Reading::number(semantic_key.clone(), gib, "GB")
+                Key::Disk { name, quantity } => {
+                    match disks.iter().find(|disk| &disk.name == name) {
+                        Some(disk) => {
+                            let gib = match quantity.as_str() {
+                                "used" => disk.used_bytes as f64 / GIB,
+                                "total" => disk.total_bytes as f64 / GIB,
+                                _ => disk.total_bytes.saturating_sub(disk.used_bytes) as f64 / GIB,
+                            };
+                            Reading::number(semantic_key.clone(), gib, "GB")
+                        }
+                        None => Reading::missing(
+                            semantic_key.clone(),
+                            format!("disk {name} is no longer present"),
+                        ),
                     }
-                    None => Reading::missing(
-                        semantic_key.clone(),
-                        format!("disk {name} is no longer present"),
-                    ),
-                },
+                }
                 Key::Network { name, download } => {
                     match self.rate(name, *download, &networks, now_ms) {
                         Some(mbps) => Reading::number(semantic_key.clone(), mbps, "Mb/s"),
-                        None => Reading::missing(
-                            semantic_key.clone(),
-                            "a rate needs a second sample",
-                        ),
+                        None => {
+                            Reading::missing(semantic_key.clone(), "a rate needs a second sample")
+                        }
                     }
                 }
             };
