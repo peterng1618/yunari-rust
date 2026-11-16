@@ -1,4 +1,4 @@
-//! The stored-theme picker Open shows.
+//! The stored-theme list Open shows, with the actions that manage it.
 
 use gpui_kit::*;
 use yunari_library::{Library, ThemeEntry};
@@ -17,27 +17,67 @@ impl LibraryDialog {
     }
 }
 
-/// The picker's contents: one clickable row per stored theme, or why there are
-/// none. A theme that cannot be read is already skipped by the listing.
+/// A small clickable word in a row's action strip.
+fn action(
+    id: (&'static str, usize),
+    label: &str,
+    on_click: impl Fn(&mut EditorWindow, &ClickEvent, &mut Window, &mut Context<EditorWindow>) + 'static,
+    cx: &mut Context<EditorWindow>,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_color(rgb(0x8a8a94))
+        .child(label.to_owned())
+        .on_click(cx.listener(on_click))
+}
+
+/// The list's contents: one row per stored theme, or why there are none. A
+/// theme that cannot be read is already skipped by the listing.
 pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
     let rows: Vec<_> = dialog
         .entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let id = entry.id.clone();
+            let open_id = entry.id.clone();
+            let duplicate_id = entry.id.clone();
+            let delete_id = entry.id.clone();
             div()
                 .id(("library-row", index))
                 .w_full()
+                .flex()
+                .items_center()
+                .gap_1()
                 .px_3()
                 .py_2()
                 .rounded_sm()
-                .cursor_pointer()
                 .bg(rgb(0x22222a))
-                .child(format!("{}  ·  {} nodes", entry.name, entry.node_count))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.open_entry(&id, cx);
-                }))
+                .child(
+                    div()
+                        .id(("library-open", index))
+                        .flex_1()
+                        .cursor_pointer()
+                        .child(format!("{}  ·  {} nodes", entry.name, entry.node_count))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.open_entry(&open_id, cx);
+                        })),
+                )
+                .child(action(
+                    ("library-duplicate", index),
+                    "Duplicate",
+                    move |this, _, _, cx| this.duplicate_theme(&duplicate_id, cx),
+                    cx,
+                ))
+                .child(action(
+                    ("library-delete", index),
+                    "Delete",
+                    move |this, _, _, cx| this.confirm_delete_theme(delete_id.clone(), cx),
+                    cx,
+                ))
         })
         .collect();
     let body = if rows.is_empty() {
@@ -64,7 +104,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
                 .px_3()
                 .pt_3()
                 .text_color(rgb(0xe8e8ea))
-                .child("Open a stored theme"),
+                .child("Stored themes"),
         )
         .child(body)
         .child(

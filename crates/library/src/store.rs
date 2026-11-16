@@ -5,7 +5,7 @@
 //! <library>/<theme-id>/assets/<declared path>
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -282,6 +282,30 @@ impl Library {
         })
     }
 
+    /// Copies a theme under a free id, with its assets, so a variant can be
+    /// tried without touching the original.
+    pub fn duplicate(&self, id: &str) -> Result<Saved, LibraryError> {
+        let stored = self.read(id)?;
+        let taken: BTreeSet<String> = self.list().into_iter().map(|entry| entry.id).collect();
+        let mut copy_id = format!("{id}-copy");
+        let mut number = 2;
+        while taken.contains(&copy_id) {
+            copy_id = format!("{id}-copy-{number}");
+            number += 1;
+        }
+        let mut document = stored.document;
+        document.id = copy_id.clone();
+        document.metadata.name = Some(format!("{} copy", stored.entry.name));
+        let assets = self.assets(id, &document);
+        self.save(&SaveRequest {
+            id: &copy_id,
+            document: &document,
+            assets: &assets,
+            base: None,
+            overwrite: false,
+        })
+    }
+
     /// Moves a theme out of the library into `.trash`, so a mistaken delete is
     /// recoverable by hand.
     pub fn remove(&self, id: &str) -> Result<(), LibraryError> {
@@ -514,6 +538,24 @@ mod tests {
             base,
             overwrite,
         })
+    }
+
+    #[test]
+    fn a_duplicate_gets_a_free_id_of_its_own() {
+        let temp = TempLibrary::new();
+        save(&temp.library, &document("alpha"), None, false).expect("a first save");
+        let first = temp.library.duplicate("alpha").expect("a copy");
+        assert_eq!(first.entry.id, "alpha-copy");
+        assert_eq!(first.entry.name, "Theme alpha copy");
+        assert_eq!(first.entry.node_count, 0);
+        let second = temp.library.duplicate("alpha").expect("a second copy");
+        assert_eq!(second.entry.id, "alpha-copy-2");
+        // The original is untouched.
+        assert_eq!(
+            temp.library.read("alpha").expect("the original").entry.name,
+            "Theme alpha"
+        );
+        assert!(temp.library.duplicate("missing").is_err());
     }
 
     #[test]

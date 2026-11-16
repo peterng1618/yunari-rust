@@ -694,8 +694,8 @@ recorded product decision.
 | 40 | Player at `/`, display-only, installable | Met | The browser player paints the host's DisplayList over SSE; the planned WASM bundle was not needed, so the page stays small. Installing it is the browser's own prompt |
 | 41 | Editor at `/editor`, `/settings` forwarded to it | Dropped | The native editor replaces both served surfaces (this spec) |
 | 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
-| 43 | Editor Themes/Settings modes, Publish, asset finder/import | Deferred | The editor has one document surface today; store account, sensor-provider and display settings panels are not ported |
-| 44 | Tray menu, live LAN toggle, monitor enumeration API | Deferred | Phase 4 note; autostart entry and helper cleanup are met |
+| 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones and autostart. Publish, the store account, sensor-provider and display settings panels, and the asset finder are not ported |
+| 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Autostart is in Settings. There is no tray menu and no monitor enumeration API |
 | 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the stdio launcher and skill installer are deferred |
 | 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |
 | 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |

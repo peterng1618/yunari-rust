@@ -114,6 +114,8 @@ enum Resume {
     New,
     Library,
     Import(String),
+    /// A stored theme the author asked to delete, waiting for an answer.
+    DeleteTheme(String),
     /// The window close the guard is holding.
     Quit,
 }
@@ -528,6 +530,45 @@ impl EditorWindow {
         }
     }
 
+    /// Copies a stored theme under a fresh id, so a variant can be tried
+    /// without touching the original.
+    fn duplicate_theme(&mut self, id: &str, cx: &mut Context<Self>) {
+        match self.library.duplicate(id) {
+            Ok(saved) => self.status = Some(Status::ok(format!("Copied to {}", saved.entry.id))),
+            Err(error) => self.status = Some(Status::error(error.to_string())),
+        }
+        self.refresh_library();
+        cx.notify();
+    }
+
+    /// Deletes only after the author says so: the folder is recoverable, but
+    /// a list that removes things on one click is not a list anyone trusts.
+    fn confirm_delete_theme(&mut self, id: String, cx: &mut Context<Self>) {
+        self.overlay = Some(Overlay::Confirm {
+            message: format!(
+                "Delete the theme {id}? Its folder moves to the library's .trash, so it can be brought back by hand."
+            ),
+            resume: Resume::DeleteTheme(id),
+        });
+        cx.notify();
+    }
+
+    fn delete_theme(&mut self, id: &str) {
+        match self.library.remove(id) {
+            Ok(()) => self.status = Some(Status::ok(format!("Deleted {id}"))),
+            Err(error) => self.status = Some(Status::error(error.to_string())),
+        }
+        // Back to the list, now one row shorter.
+        self.overlay = Some(Overlay::Library(LibraryDialog::new(&self.library)));
+    }
+
+    /// Reloads the list Open is showing after a theme was added or removed.
+    fn refresh_library(&mut self) {
+        if let Some(Overlay::Library(dialog)) = &mut self.overlay {
+            dialog.entries = self.library.list();
+        }
+    }
+
     fn export(&mut self) {
         let path = export_path(self.library.root(), self.editor.document());
         if let Some(parent) = path.parent() {
@@ -698,6 +739,9 @@ impl EditorWindow {
             Resume::Import(path) => {
                 self.overlay = None;
                 self.import(&path, cx);
+            }
+            Resume::DeleteTheme(id) => {
+                self.delete_theme(&id);
             }
             Resume::Quit => {}
         }
