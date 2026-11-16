@@ -35,6 +35,7 @@ use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use crate::document::{Editor, Source};
 use crate::persistence::import_package;
+use crate::selection::{self, Selection};
 use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 
 /// How often the window looks at the sampler; the sampler decides when a poll
@@ -101,7 +102,9 @@ pub struct EditorWindow {
     sampler: Sampler,
     list: DisplayList,
     issues: Vec<PlanIssue>,
-    selection: Option<String>,
+    selection: Selection,
+    /// Canvas-local pixels the selection marquee started at and has reached.
+    marquee: Option<((f32, f32), (f32, f32))>,
     overlay: Option<Overlay>,
     status: Option<Status>,
     focus: FocusHandle,
@@ -143,7 +146,8 @@ impl EditorWindow {
             sampler,
             list,
             issues,
-            selection: None,
+            selection: Selection::new(),
+            marquee: None,
             overlay: None,
             status: None,
             focus: cx.focus_handle(),
@@ -161,6 +165,7 @@ impl EditorWindow {
 
     /// Rebuilds the frame and asks for exactly the keys this document names.
     fn refresh(&mut self) {
+        self.selection.retain_existing(self.editor.document());
         let (list, issues) = yunari_render::build_with(
             self.editor.document(),
             &mut self.fonts,
@@ -233,8 +238,10 @@ impl EditorWindow {
             Command::AddRectangle => self.add(rectangle_node),
             Command::AddText => self.add(text_node),
             Command::DeleteSelected => {
-                if let Some(id) = self.selection.take() {
-                    self.editor.remove_nodes(&[id]);
+                let ids = self.selection.ids().to_vec();
+                if !ids.is_empty() {
+                    self.editor.remove_nodes(&ids);
+                    self.selection.clear();
                     self.refresh();
                 }
             }
@@ -244,7 +251,7 @@ impl EditorWindow {
 
     fn add(&mut self, make: fn(&ThemeDocument) -> Node) {
         let node = make(self.editor.document());
-        self.selection = Some(node.id.clone());
+        self.selection.set(vec![node.id.clone()]);
         if self.editor.add_node(node) {
             self.refresh();
         }
@@ -330,7 +337,7 @@ impl EditorWindow {
     fn open_entry(&mut self, id: &str, cx: &mut Context<Self>) {
         match self.editor.open_stored(&self.library, id) {
             Ok(()) => {
-                self.selection = None;
+                self.selection.clear();
                 self.overlay = None;
                 self.camera_touched = false;
                 self.status = Some(Status::ok(format!("Opened {id}")));
@@ -362,7 +369,7 @@ impl EditorWindow {
         match resume {
             Resume::New => {
                 self.editor = Editor::new(blank());
-                self.selection = None;
+                self.selection.clear();
                 self.overlay = None;
                 self.camera_touched = false;
                 self.status = None;
@@ -386,17 +393,33 @@ impl EditorWindow {
         cx.notify();
     }
 
-    /// The selection's box in artboard units, for the outline.
-    fn selection_rect(&self) -> Option<(f64, f64, f64, f64)> {
-        let id = self.selection.as_deref()?;
-        let node = find_node(&self.editor.document().nodes, id)?;
-        let transform = node.transform;
-        Some((
-            transform.x,
-            transform.y,
-            transform.width * transform.scale_x,
-            transform.height * transform.scale_y,
-        ))
+    /// One box per selected node, in artboard units, for the outlines.
+    fn selection_rects(&self) -> Vec<(f64, f64, f64, f64)> {
+        let document = self.editor.document();
+        self.selection
+            .ids()
+            .iter()
+            .filter_map(|id| {
+                let transform = selection::find(document, id)?.transform;
+                Some((
+                    transform.x,
+                    transform.y,
+                    transform.width * transform.scale_x,
+                    transform.height * transform.scale_y,
+                ))
+            })
+            .collect()
+    }
+
+    fn select_all(&mut self) {
+        let ids = self
+            .editor
+            .document()
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect();
+        self.selection.set(ids);
     }
 
     fn artboard(&self) -> (f64, f64) {
@@ -406,22 +429,85 @@ impl EditorWindow {
         )
     }
 
-    /// A window pixel as an artboard point, if the canvas has been painted.
-    fn scene_at(&self, position: Point<Pixels>) -> Option<(f64, f64)> {
-        let bounds = self.canvas_bounds.get()?;
-        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
-        Some(self.viewport.to_scene(local))
-    }
-
-    fn select_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some((x, y)) = self.scene_at(position) else {
+    /// A press on the canvas: a node under the pointer joins or replaces the
+    /// selection, and empty canvas starts a marquee.
+    fn canvas_down(&mut self, position: Point<Pixels>, shift: bool, cx: &mut Context<Self>) {
+        let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
-        let hit = node_at(self.editor.document(), x, y);
-        if hit != self.selection {
-            self.selection = hit;
-            cx.notify();
+        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
+        let (x, y) = self.viewport.to_scene(local);
+        match selection::hit(self.editor.document(), x, y) {
+            Some(id) => {
+                self.marquee = None;
+                if shift {
+                    self.selection.toggle(&id);
+                } else {
+                    self.selection.replace(id);
+                }
+            }
+            None => {
+                if !shift {
+                    self.selection.clear();
+                }
+                let anchor = (f32::from(local.x), f32::from(local.y));
+                self.marquee = Some((anchor, anchor));
+            }
         }
+        cx.notify();
+    }
+
+    fn canvas_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.panning.is_some() {
+            self.pan_drag(event, cx);
+            return;
+        }
+        let Some((anchor, _)) = self.marquee else {
+            return;
+        };
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        self.marquee = Some((
+            anchor,
+            (
+                f32::from(event.position.x - bounds.origin.x),
+                f32::from(event.position.y - bounds.origin.y),
+            ),
+        ));
+        cx.notify();
+    }
+
+    /// Releasing the marquee takes every node wholly inside it.
+    fn canvas_up(&mut self, shift: bool, cx: &mut Context<Self>) {
+        self.panning = None;
+        let Some((anchor, current)) = self.marquee.take() else {
+            return;
+        };
+        let (x0, y0) = self
+            .viewport
+            .to_scene(point(px(anchor.0), px(anchor.1)));
+        let (x1, y1) = self
+            .viewport
+            .to_scene(point(px(current.0), px(current.1)));
+        if (x1 - x0).abs() < 1.0 && (y1 - y0).abs() < 1.0 {
+            cx.notify();
+            return;
+        }
+        let ids = selection::marquee(
+            self.editor.document(),
+            (x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs()),
+        );
+        if shift {
+            for id in ids {
+                if !self.selection.contains(&id) {
+                    self.selection.toggle(&id);
+                }
+            }
+        } else {
+            self.selection.set(ids);
+        }
+        cx.notify();
     }
 
     /// Middle-drag or Space+drag pans the camera.
@@ -502,6 +588,16 @@ impl EditorWindow {
         let Some(overlay) = self.overlay.take() else {
             if keystroke.key == "space" {
                 self.space_held = true;
+                return;
+            }
+            if keystroke.modifiers.control && keystroke.key == "a" {
+                self.select_all();
+                cx.notify();
+                return;
+            }
+            if keystroke.key == "escape" && !self.selection.is_empty() {
+                self.selection.clear();
+                cx.notify();
                 return;
             }
             if self.zoom_key(&keystroke.key, keystroke.modifiers.shift) {
@@ -610,7 +706,8 @@ impl EditorWindow {
         let list = self.list.clone();
         let images = self.images.clone();
         let bounds_cell = self.canvas_bounds.clone();
-        let selection = self.selection_rect();
+        let selections = self.selection_rects();
+        let marquee = self.marquee;
         let view = self.viewport;
         div()
             .id("canvas")
@@ -626,7 +723,7 @@ impl EditorWindow {
                     if this.space_held {
                         this.pan_start(event.position);
                     } else {
-                        this.select_at(event.position, cx);
+                        this.canvas_down(event.position, event.modifiers.shift, cx);
                     }
                 }),
             )
@@ -637,11 +734,13 @@ impl EditorWindow {
                 }),
             )
             .on_mouse_move(
-                cx.listener(|this, event: &MouseMoveEvent, _, cx| this.pan_drag(event, cx)),
+                cx.listener(|this, event: &MouseMoveEvent, _, cx| this.canvas_drag(event, cx)),
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| this.panning = None),
+                cx.listener(|this, event: &MouseUpEvent, _, cx| {
+                    this.canvas_up(event.modifiers.shift, cx)
+                }),
             )
             .on_mouse_up(
                 MouseButton::Middle,
@@ -663,15 +762,34 @@ impl EditorWindow {
                         };
                         let mut store = images.borrow_mut();
                         yunari_render_gpui::paint_fitted(&list, fit, window, cx, &mut store);
-                        let Some((x, y, width, height)) = selection else {
+                        for (x, y, width, height) in &selections {
+                            window.paint_quad(PaintQuad {
+                                bounds: Bounds {
+                                    origin: fit.point(*x as f32, *y as f32),
+                                    size: size(
+                                        px(*width as f32 * fit.scale),
+                                        px(*height as f32 * fit.scale),
+                                    ),
+                                },
+                                corner_radii: Corners::default(),
+                                background: transparent_black().into(),
+                                border_widths: Edges::all(px(1.0)),
+                                border_color: rgb(ACCENT).into(),
+                                border_style: BorderStyle::Solid,
+                            });
+                        }
+                        let Some((anchor, current)) = marquee else {
                             return;
                         };
                         window.paint_quad(PaintQuad {
                             bounds: Bounds {
-                                origin: fit.point(x as f32, y as f32),
+                                origin: point(
+                                    bounds.origin.x + px(anchor.0.min(current.0)),
+                                    bounds.origin.y + px(anchor.1.min(current.1)),
+                                ),
                                 size: size(
-                                    px(width as f32 * fit.scale),
-                                    px(height as f32 * fit.scale),
+                                    px((current.0 - anchor.0).abs()),
+                                    px((current.1 - anchor.1).abs()),
                                 ),
                             },
                             corner_radii: Corners::default(),
@@ -714,6 +832,9 @@ impl EditorWindow {
             });
         let zoom = format!("{:.0}%", self.viewport.scale * 100.0);
         line = line.child(zoom);
+        if !self.selection.is_empty() {
+            line = line.child(format!("{} selected", self.selection.len()));
+        }
         if let Some(status) = &self.status {
             line = line.child(
                 div()
@@ -1032,27 +1153,6 @@ fn text_node(document: &ThemeDocument) -> Node {
     }
 }
 
-/// The topmost visible, unlocked node under an artboard point. Turned nodes are
-/// hit by their box, which is what the outline shows.
-fn node_at(document: &ThemeDocument, x: f64, y: f64) -> Option<String> {
-    document
-        .nodes
-        .iter()
-        .rev()
-        .find(|node| {
-            let transform = node.transform;
-            let width = transform.width * transform.scale_x;
-            let height = transform.height * transform.scale_y;
-            node.visible
-                && !node.locked
-                && x >= transform.x
-                && x <= transform.x + width
-                && y >= transform.y
-                && y <= transform.y + height
-        })
-        .map(|node| node.id.clone())
-}
-
 fn find_node<'a>(nodes: &'a [Node], id: &str) -> Option<&'a Node> {
     for node in nodes {
         if node.id == id {
@@ -1142,7 +1242,7 @@ mod tests {
     // attribute, and a glob would shadow the built-in one.
     use super::{
         INSET, STEP, Node, NodeKind, Path, StyleMap, ThemeDocument, Transform, blank, export_path,
-        free_id, node_at, place, rectangle_node, slug, suggested_id,
+        free_id, place, rectangle_node, slug, suggested_id,
     };
 
     fn document_with(nodes: Vec<Node>) -> ThemeDocument {
@@ -1221,27 +1321,6 @@ mod tests {
             .expect("an imported theme");
         assert_eq!(imported.document().nodes.len(), 1);
         let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn a_click_selects_the_topmost_node_under_it() {
-        let document = document_with(vec![
-            rect("under", 0.0, 0.0, 100.0, 100.0),
-            rect("over", 50.0, 50.0, 100.0, 100.0),
-        ]);
-        assert_eq!(node_at(&document, 60.0, 60.0).as_deref(), Some("over"));
-        assert_eq!(node_at(&document, 10.0, 10.0).as_deref(), Some("under"));
-        assert_eq!(node_at(&document, 500.0, 500.0), None);
-    }
-
-    #[test]
-    fn a_locked_or_hidden_node_is_never_selected() {
-        let mut locked = rect("locked", 0.0, 0.0, 100.0, 100.0);
-        locked.locked = true;
-        let mut hidden = rect("hidden", 0.0, 0.0, 100.0, 100.0);
-        hidden.visible = false;
-        let document = document_with(vec![locked, hidden]);
-        assert_eq!(node_at(&document, 10.0, 10.0), None);
     }
 
     #[test]
