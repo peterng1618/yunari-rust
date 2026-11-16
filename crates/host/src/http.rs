@@ -117,6 +117,7 @@ pub fn router(app: Shared) -> axum::Router {
             post(crate::store_routes::sign_out),
         )
         .route("/api/store/session", get(crate::store_routes::session))
+        .route("/api/store/install", post(crate::store_install::route))
         .route("/api/store/mine", get(crate::store_routes::mine))
         .route(
             "/api/store/items/{id}/{action}",
@@ -1122,6 +1123,25 @@ mod tests {
             body.contains("https://store.example/auth/start?provider=github&host=http%3A%2F%2Flocalhost%3A5227"),
             "{body}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_store_install_is_loopback_only_and_needs_the_stores_facts() {
+        let app = app("store-install");
+        let local = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50_000));
+        let (status, _) = request(
+            app.clone(),
+            axum::http::Method::POST,
+            "/api/store/install",
+            phone,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) =
+            request(app, axum::http::Method::POST, "/api/store/install", local).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body, crate::store_install::NOT_JSON_MESSAGE);
     }
 
     #[tokio::test]
