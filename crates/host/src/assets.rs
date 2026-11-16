@@ -818,8 +818,8 @@ mod tests {
             icons,
         };
         let page = fontawesome_page(&catalogue, "home", 1);
-        assert_eq!(page.results.len(), 2, "{:?}", page.results);
-        assert_eq!(page.results[0]["id"], "regular:house");
+        assert_eq!(page.results.len(), 3, "{:?}", page.results);
+        assert_eq!(page.results[0]["id"], "brands:house");
         assert_eq!(page.results[0]["licence"], "CC-BY-4.0");
         assert!(
             fontawesome_page(&catalogue, "nothing", 1)
