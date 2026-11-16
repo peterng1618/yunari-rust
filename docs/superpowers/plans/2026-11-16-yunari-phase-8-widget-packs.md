@@ -72,3 +72,20 @@
 - [x] Implement insertion, the dialog and the command (`Ctrl+Shift+W`).
 - [x] Run the workspace gates.
 - [x] Commit.
+
+### Task 4: One committed pack so a fresh install has something to insert
+
+**Files:**
+- Create: `crates/packs/assets/starter-card.yunari-widget-package`
+- Modify: `crates/packs/src/lib.rs`, `crates/host/src/server.rs`, `crates/host/src/http.rs`
+
+**Interfaces:**
+- Produces: `packs::STARTER: &[u8]`; the host installs it on start when `<settings>/widget-packs` is empty.
+
+- [x] Test: the committed package reads as one pack named "Starter cards" with a "CPU card" unit, one root of four children, and a value run bound to `reading`.
+- [x] Test: a host on a fresh settings folder lists the committed pack without an install; a phone still gets 403.
+- [x] Implement the install-on-empty-folder and the committed package.
+- [x] Run the workspace gates.
+- [x] Commit.
+
+This is product item 10's widget-pack half. Its theme half — a committed starter theme behind a "New from template" command — is not built; the editor still opens an empty artboard.

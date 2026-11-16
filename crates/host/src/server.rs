@@ -77,6 +77,12 @@ pub fn app(config: HostConfig) -> Shared {
     let settings = config.settings_dir();
     std::fs::create_dir_all(&settings).ok();
     let authority = crate::tls::Authority::load(&settings).ok();
+    // A fresh install starts with one card pack; a folder the user has filled
+    // is left alone.
+    let packs = yunari_packs::directory(&settings);
+    if yunari_packs::installed(&packs).is_empty() {
+        yunari_packs::install(&packs, yunari_packs::STARTER).ok();
+    }
     let library = yunari_library::Library::new(config.themes_dir());
     let registry = Arc::new(providers(
         &config.lhm_url,

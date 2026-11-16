@@ -1233,6 +1233,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_fresh_host_starts_with_the_committed_card_pack() {
+        let app = app("starter-pack");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let (status, listing) = ask(app, "/api/widget-packs", here).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(listing.contains("Starter cards"), "{listing}");
+        assert!(listing.contains("CPU card"), "{listing}");
+    }
+
+    #[tokio::test]
     async fn a_package_the_reader_refuses_is_a_400_with_its_sentence() {
         let app = app("widget-packs-bad");
         let here = SocketAddr::from(([127, 0, 0, 1], 50000));
