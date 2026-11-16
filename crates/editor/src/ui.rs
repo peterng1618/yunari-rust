@@ -1130,7 +1130,8 @@ impl EditorWindow {
             return;
         };
         let email = host.account.sessions.read().map(|session| session.email);
-        self.overlay = Some(Overlay::Store(StoreDialog::new(email)));
+        let origin = host.store.origin().map(str::to_owned);
+        self.overlay = Some(Overlay::Store(StoreDialog::new(email, origin)));
         cx.notify();
         self.load_store(&host, window, cx);
     }

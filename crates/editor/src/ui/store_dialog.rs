@@ -21,6 +21,9 @@ pub struct Row {
     pub sha256: Option<String>,
     pub bytes: Option<u64>,
     pub status: Option<String>,
+    /// The catalogue's stored thumbnail path, joined with the store origin
+    /// when a row draws it.
+    pub thumbnail: Option<String>,
 }
 
 /// The rows a catalogue answer carries, in the store's own order. An entry
@@ -47,6 +50,7 @@ pub fn rows_of(catalogue: &Value) -> Vec<Row> {
                 sha256: text("sha256"),
                 bytes: entry.get("bytes").and_then(Value::as_u64),
                 status: text("status"),
+                thumbnail: text("thumbnail"),
             })
         })
         .collect()
@@ -68,19 +72,31 @@ pub struct StoreDialog {
     pub email: Option<String>,
     pub message: Option<String>,
     pub loading: bool,
+    /// The configured store origin, which a stored thumbnail path is joined
+    /// with before it is drawn.
+    pub origin: Option<String>,
 }
 
 impl StoreDialog {
     /// A dialog that is still reading; `email` is the held account, when there
     /// is one.
-    pub fn new(email: Option<String>) -> Self {
+    pub fn new(email: Option<String>, origin: Option<String>) -> Self {
         Self {
             rows: Vec::new(),
             mine: Vec::new(),
             email,
             message: None,
             loading: true,
+            origin,
         }
+    }
+
+    /// The absolute address of a row's thumbnail, when the listing stored one
+    /// and this host has a store origin to join it with.
+    pub fn thumbnail_url(&self, row: &Row) -> Option<String> {
+        let origin = self.origin.as_deref()?.trim_end_matches('/');
+        let path = row.thumbnail.as_deref()?;
+        Some(format!("{origin}/{}", path.trim_start_matches('/')))
     }
 
     /// The catalogue row with this id, so an action uses the facts the listing
@@ -93,6 +109,22 @@ impl StoreDialog {
         self.message = Some(message.into());
         self.loading = false;
     }
+}
+
+/// The listing's picture, drawn at a fixed size so a tall or wide thumbnail
+/// cannot reflow the row. A row without one draws no box.
+fn thumbnail_of(dialog: &StoreDialog, row: &Row) -> Option<AnyElement> {
+    let url = dialog.thumbnail_url(row)?;
+    Some(
+        div()
+            .flex_none()
+            .w(px(64.0))
+            .h(px(48.0))
+            .rounded_sm()
+            .overflow_hidden()
+            .child(img(url).w_full().h_full().object_fit(ObjectFit::Cover))
+            .into_any_element(),
+    )
 }
 
 /// A small clickable word in a row's action strip.
@@ -152,6 +184,7 @@ pub fn view(dialog: &StoreDialog, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .py_2()
                 .rounded_sm()
                 .bg(rgb(0x22222a))
+                .children(thumbnail_of(dialog, row))
                 .child(line)
                 .child(action(
                     ("store-install", index),
@@ -334,7 +367,7 @@ mod tests {
 
     #[test]
     fn a_row_is_found_by_its_catalogue_id() {
-        let mut dialog = StoreDialog::new(None);
+        let mut dialog = StoreDialog::new(None, None);
         dialog.rows = rows_of(&serde_json::json!({
             "entries": [{"id": "abc", "name": "Aurora"}]
         }));
@@ -343,5 +376,25 @@ mod tests {
             Some("Aurora")
         );
         assert!(dialog.row("missing").is_none());
+    }
+
+    #[test]
+    fn a_stored_thumbnail_is_joined_with_the_store_origin() {
+        let mut dialog = StoreDialog::new(None, Some("https://store.example/".to_owned()));
+        dialog.rows = rows_of(&serde_json::json!({
+            "entries": [{
+                "id": "abc",
+                "name": "Aurora",
+                "thumbnail": "/catalogue/abc/thumbnail.png"
+            }]
+        }));
+        assert_eq!(
+            dialog.thumbnail_url(&dialog.rows[0]).as_deref(),
+            Some("https://store.example/catalogue/abc/thumbnail.png")
+        );
+
+        let mut no_origin = StoreDialog::new(None, None);
+        no_origin.rows = dialog.rows.clone();
+        assert!(no_origin.thumbnail_url(&no_origin.rows[0]).is_none());
     }
 }
