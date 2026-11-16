@@ -5,6 +5,7 @@
 //! so undo, the dirty dot and what a save writes cannot disagree.
 
 pub mod asset_finder;
+pub mod binding_keys;
 pub mod library_dialog;
 pub mod mcp_dialog;
 pub mod menus;
@@ -118,6 +119,11 @@ enum Overlay {
     Store(StoreDialog),
     Rename(Prompt),
     Field(Prompt),
+    /// A binding's key chosen from the host's measured catalogue.
+    BindingKey {
+        field: String,
+        rows: Vec<binding_keys::KeyRow>,
+    },
     /// A weather place typed as `label|latitude|longitude`, with the settings
     /// dialog it was opened from.
     WeatherPlace {
@@ -1850,12 +1856,38 @@ impl EditorWindow {
     }
 
     fn begin_field(&mut self, key: &str, label: &str, value: &str, cx: &mut Context<Self>) {
+        // A binding's key is chosen from what this host measures, so a typo
+        // cannot become a permanently missing reading.
+        if key.ends_with(".key")
+            && let Some(rows) = self
+                .host
+                .as_ref()
+                .map(|host| binding_keys::rows(Some(host), &self.readings))
+            && !rows.is_empty()
+        {
+            self.overlay = Some(Overlay::BindingKey {
+                field: key.to_owned(),
+                rows,
+            });
+            cx.notify();
+            return;
+        }
         self.editing = Some(key.to_owned());
         self.overlay = Some(Overlay::Field(Prompt::new(
             format!("Edit {label}"),
             "Enter applies, Esc cancels",
             value,
         )));
+        cx.notify();
+    }
+
+    /// Writes a measured key into the binding field the picker was opened for.
+    fn choose_binding_key(&mut self, semantic_key: &str, cx: &mut Context<Self>) {
+        let Some(Overlay::BindingKey { field, .. }) = self.overlay.take() else {
+            return;
+        };
+        self.editing = Some(field);
+        self.apply_field(semantic_key);
         cx.notify();
     }
 
@@ -2455,6 +2487,7 @@ impl EditorWindow {
                 }
             }
             Overlay::Widgets(_)
+            | Overlay::BindingKey { .. }
             | Overlay::PathPresets(_)
             | Overlay::Typography(_)
             | Overlay::Mcp(_)
@@ -2933,6 +2966,9 @@ impl EditorWindow {
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::AssetFinder(dialog)) => asset_finder::view(dialog, cx).into_any_element(),
+            Some(Overlay::BindingKey { rows, .. }) => {
+                binding_keys::view(rows, cx).into_any_element()
+            }
             Some(Overlay::PathPresets(dialog)) => {
                 path_preset_dialog::view(dialog, cx).into_any_element()
             }
