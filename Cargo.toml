@@ -16,6 +16,7 @@ members = [
     "crates/app",
     "crates/host",
     "crates/panels",
+    "crates/nvml",
     "crates/rtss",
     "crates/tray",
 ]
@@ -50,5 +51,6 @@ yunari-render-gpui = { path = "crates/render-gpui" }
 yunari-render-raster = { path = "crates/raster" }
 yunari-host = { path = "crates/host" }
 yunari-panels = { path = "crates/panels" }
+yunari-nvml = { path = "crates/nvml" }
 yunari-rtss = { path = "crates/rtss" }
 yunari-tray = { path = "crates/tray" }

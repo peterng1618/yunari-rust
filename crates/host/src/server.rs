@@ -144,6 +144,9 @@ fn providers(
     registry.add(yunari_providers::clock::ClockProvider::new());
     registry
         .add(yunari_providers::system::SystemProvider::new().with_devices(Arc::clone(&devices)));
+    // The driver's own counter first, so a card it can measure does not need
+    // LHM running; an absent NVIDIA driver answers nothing and LHM fills in.
+    registry.add(yunari_nvml::NvmlProvider::new().with_devices(Arc::clone(&devices)));
     // LHM is an external program: absent, every key it owns is a gap with the
     // reason rather than a poll failure.
     registry.add(yunari_providers::lhm::LhmProvider::new(lhm_url).with_devices(devices));

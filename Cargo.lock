@@ -8904,6 +8904,7 @@ dependencies = [
  "uuid",
  "yunari-library",
  "yunari-model",
+ "yunari-nvml",
  "yunari-packs",
  "yunari-panels",
  "yunari-providers",
@@ -8934,6 +8935,14 @@ dependencies = [
  "serde_ignored",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "yunari-nvml"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
+ "yunari-providers",
 ]
 
 [[package]]
