@@ -8907,6 +8907,7 @@ dependencies = [
  "yunari-providers",
  "yunari-render",
  "yunari-render-raster",
+ "yunari-store",
  "zip",
 ]
 
@@ -9021,6 +9022,17 @@ dependencies = [
 name = "yunari-rtss"
 version = "0.1.0"
 dependencies = [
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "yunari-store"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "jiff",
+ "serde_json",
+ "ureq",
  "windows-sys 0.61.2",
 ]
 

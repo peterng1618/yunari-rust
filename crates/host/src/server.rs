@@ -99,8 +99,15 @@ pub fn app(config: HostConfig) -> Shared {
             eprintln!("Panel {display}: {message}");
         }),
     );
+    let store = crate::store::Store::load(&settings);
+    let account = crate::store_routes::Account::new(
+        &settings,
+        store.origin().map(str::to_owned),
+        Arc::new(yunari_store::send),
+    );
     Arc::new(App {
-        store: crate::store::Store::load(&settings),
+        store,
+        account,
         identity: crate::identity::HostIdentity::load_or_mint(&settings),
         displays: std::sync::Mutex::new(crate::displays::DisplayStore::load(&settings)),
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),

@@ -41,6 +41,8 @@ pub struct App {
     pub manager: Arc<yunari_panels::manager::Manager>,
     pub panel_frames: Arc<PanelFrames>,
     pub store: crate::store::Store,
+    /// The store account this host holds, and the sign-ins it started.
+    pub account: crate::store_routes::Account,
 }
 
 pub type Shared = Arc<App>;
@@ -108,6 +110,18 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/game/artwork/{app_id}", get(game_artwork))
         // The store catalogue is read here, so no page talks to a third origin.
         .route("/api/store/themes", get(store_themes))
+        .route("/api/store/auth/start", post(crate::store_routes::start))
+        .route("/api/store/auth/return", get(crate::store_routes::complete))
+        .route(
+            "/api/store/auth/sign-out",
+            post(crate::store_routes::sign_out),
+        )
+        .route("/api/store/session", get(crate::store_routes::session))
+        .route("/api/store/mine", get(crate::store_routes::mine))
+        .route(
+            "/api/store/items/{id}/{action}",
+            post(crate::store_routes::transition),
+        )
         .route("/api/mcp", post(crate::mcp::post))
         .route(
             "/api/widget-packs",
@@ -1019,8 +1033,18 @@ mod tests {
     }
 
     async fn ask(app: Shared, uri: &str, peer: SocketAddr) -> (StatusCode, String) {
+        request(app, axum::http::Method::GET, uri, peer).await
+    }
+
+    async fn request(
+        app: Shared,
+        method: axum::http::Method,
+        uri: &str,
+        peer: SocketAddr,
+    ) -> (StatusCode, String) {
         use tower::ServiceExt;
         let request = Request::builder()
+            .method(method)
             .uri(uri)
             .header(header::HOST, "localhost:5227")
             .body(Body::empty())
@@ -1036,6 +1060,82 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn the_store_session_and_the_authors_items_answer_signed_out_and_local_only() {
+        let app = app("store-session");
+        let local = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let (status, body) = ask(app.clone(), "/api/store/session", local).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, r#"{"signedIn":false}"#);
+
+        let (status, body) = ask(app.clone(), "/api/store/mine", local).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(body.contains(crate::store_routes::SIGNED_OUT_MESSAGE));
+
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50_000));
+        let (status, body) = ask(app, "/api/store/session", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body, crate::store_routes::NOT_LOOPBACK_MESSAGE);
+    }
+
+    fn app_with_store(name: &str) -> Shared {
+        let app_dir = std::env::temp_dir().join(format!(
+            "yunari-http-{name}-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        let settings = app_dir.join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(
+            settings.join("store.json"),
+            r#"{"origin":"https://store.example"}"#,
+        )
+        .unwrap();
+        crate::server::app(HostConfig::resolve(Some(app_dir), Some(0), false))
+    }
+
+    #[tokio::test]
+    async fn a_sign_in_starts_at_the_configured_worker_for_a_loopback_return() {
+        let local = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        // No store.json: nothing to sign in to.
+        let (status, body) = request(
+            app("store-start"),
+            axum::http::Method::POST,
+            "/api/store/auth/start",
+            local,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, crate::store_routes::NO_STORE_MESSAGE);
+
+        let (status, body) = request(
+            app_with_store("store-start-origin"),
+            axum::http::Method::POST,
+            "/api/store/auth/start",
+            local,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body.contains("https://store.example/auth/start?provider=github&host=http%3A%2F%2Flocalhost%3A5227"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sign_in_return_that_was_not_started_here_is_refused() {
+        let app = app_with_store("store-return");
+        let local = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let (status, body) = ask(
+            app,
+            "/api/store/auth/return?state=made-up&token=one-time",
+            local,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("This sign-in has expired, or was not started here."));
     }
 
     #[tokio::test]

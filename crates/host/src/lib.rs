@@ -18,6 +18,7 @@ pub mod panels;
 pub mod panels_routes;
 pub mod server;
 pub mod store;
+pub mod store_routes;
 pub mod stream;
 pub mod themes_routes;
 pub mod tls;

@@ -48,6 +48,11 @@ impl Store {
         }
     }
 
+    /// The Worker's origin, when the user pointed this host at one.
+    pub fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
+    }
+
     /// The catalogue, from the cache while it is fresh.
     pub fn themes(&self, now_ms: i64) -> Result<Value, String> {
         if let Some(cached) = self.cached.lock().expect("the store cache").as_ref()
