@@ -1,6 +1,7 @@
 //! The authoring state: one document, its history and its saved baseline.
 
 pub mod arrange;
+pub mod bindings;
 pub mod clipboard;
 pub mod document;
 #[cfg(test)]

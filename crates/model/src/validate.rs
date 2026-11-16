@@ -707,11 +707,8 @@ fn validate_binding<'a>(
     if !seen.insert(binding.id.as_str()) {
         issues.push(issue(format!("{path}/id"), "A binding id is used twice."));
     }
-    if !is_semantic_key(&binding.semantic_key) {
-        issues.push(issue(
-            format!("{path}/semanticKey"),
-            "A semantic key is family.quantity[.qualifier] in lower case.",
-        ));
+    if let Some(refusal) = semantic_key_refusal(&binding.semantic_key) {
+        issues.push(issue(format!("{path}/semanticKey"), refusal));
     }
     if let Some(precision) = binding.precision
         && precision > 6
@@ -733,6 +730,16 @@ fn validate_binding<'a>(
     }
     if binding.unit.as_ref().is_some_and(String::is_empty) {
         issues.push(issue(format!("{path}/unit"), "A unit is not empty."));
+    }
+}
+
+/// Why a semantic key is not this format's, or `None` when it is. The editor
+/// asks before it writes, so a refused key never reaches a save.
+pub fn semantic_key_refusal(value: &str) -> Option<&'static str> {
+    if is_semantic_key(value) {
+        None
+    } else {
+        Some("A semantic key is family.quantity[.qualifier] in lower case.")
     }
 }
 

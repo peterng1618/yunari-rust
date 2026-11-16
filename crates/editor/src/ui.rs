@@ -869,6 +869,11 @@ impl EditorWindow {
             || key.starts_with("background.")
         {
             self.editor.edit(|document| outcome = inspector::apply_document(document, &key, value));
+        } else if key == "bindings.new" {
+            outcome = match self.selection.first().map(str::to_owned) {
+                Some(id) => self.editor.add_binding(&id, value).map(|_| ()),
+                None => Err("Select a node to bind a reading".to_owned()),
+            };
         } else if let Some(id) = self.selection.first().map(str::to_owned) {
             self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
         } else {
@@ -941,6 +946,22 @@ impl EditorWindow {
                         .into_any_element(),
                 );
             }
+        }
+        if self.selection.first().is_some() {
+            children.push(
+                div()
+                    .id("binding-add")
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .child("+ Add binding")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.begin_field("bindings.new", "semantic key", "", cx)
+                    }))
+                    .into_any_element(),
+            );
         }
         children.push(
             div()

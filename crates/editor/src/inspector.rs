@@ -111,20 +111,24 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         }),
         NodeKind::Image { content } => sections.push(Section {
             title: "Image",
-            rows: vec![Field {
-                key: "kind.content.fit".to_owned(),
-                label: "Fit",
-                kind: FieldKind::Choice(vec!["cover", "contain", "stretch"]),
-                value: match content.fit {
-                    ImageFit::Cover => "cover".to_owned(),
-                    ImageFit::Contain => "contain".to_owned(),
-                    ImageFit::Stretch => "stretch".to_owned(),
+            rows: vec![
+                text_field("kind.content.assetId", "Asset", Some(content.asset_id.as_str())),
+                Field {
+                    key: "kind.content.fit".to_owned(),
+                    label: "Fit",
+                    kind: FieldKind::Choice(vec!["cover", "contain", "stretch"]),
+                    value: match content.fit {
+                        ImageFit::Cover => "cover".to_owned(),
+                        ImageFit::Contain => "contain".to_owned(),
+                        ImageFit::Stretch => "stretch".to_owned(),
+                    },
                 },
-            }],
+            ],
         }),
         NodeKind::Video { content } => sections.push(Section {
             title: "Video",
             rows: vec![
+                text_field("kind.content.assetId", "Asset", Some(content.asset_id.as_str())),
                 toggle("kind.content.loop", "Loop", content.loop_),
                 toggle("kind.content.muted", "Muted", content.muted),
             ],
@@ -134,6 +138,37 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
             rows: text_rows(content),
         }),
         _ => {}
+    }
+    if let Some(held) = document.bindings.get(id) {
+        let mut rows = Vec::new();
+        for binding in held {
+            rows.push(Field {
+                key: format!("bindings.{}.key", binding.id),
+                label: "Key",
+                kind: FieldKind::Text,
+                value: binding.semantic_key.clone(),
+            });
+            rows.push(Field {
+                key: format!("bindings.{}.unit", binding.id),
+                label: "Unit",
+                kind: FieldKind::Text,
+                value: binding.unit.clone().unwrap_or_default(),
+            });
+            rows.push(Field {
+                key: format!("bindings.{}.precision", binding.id),
+                label: "Precision",
+                kind: FieldKind::Number {
+                    min: 0.0,
+                    max: 6.0,
+                    step: 1.0,
+                },
+                value: binding.precision.map_or_else(String::new, |p| p.to_string()),
+            });
+        }
+        sections.push(Section {
+            title: "Bindings",
+            rows,
+        });
     }
     sections
 }
@@ -429,14 +464,100 @@ pub fn format_number(value: f64) -> String {
 
 /// Writes one field. A refused value leaves the document untouched.
 pub fn apply(document: &mut ThemeDocument, id: &str, key: &str, value: &str) -> Result<(), String> {
+    if let Some(rest) = key.strip_prefix("bindings.") {
+        let Some((binding_id, field)) = rest.rsplit_once('.') else {
+            return Err("A binding field is bindings.<id>.<field>".to_owned());
+        };
+        return apply_binding(document, id, binding_id, field, value);
+    }
     if key.ends_with(".typeToken") {
         let token = token_id(value);
         if !document.type_tokens.contains_key(token) {
             return Err(format!("No type token named {token}"));
         }
     }
+    if key.ends_with(".assetId") {
+        check_asset(document, id, value)?;
+    }
     let node = find_mut(&mut document.nodes, id).ok_or_else(|| "No node with that id".to_owned())?;
     apply_to_node(node, key, value)
+}
+
+/// A node may only name a declared asset of the kind it can draw: a picture
+/// node takes an image, SVG or GIF, and a video node a video.
+fn check_asset(document: &ThemeDocument, node_id: &str, value: &str) -> Result<(), String> {
+    let asset_id = value.trim();
+    let asset = document
+        .assets
+        .iter()
+        .find(|asset| asset.id == asset_id)
+        .ok_or_else(|| format!("No asset named {asset_id}"))?;
+    let node = crate::selection::find(document, node_id)
+        .ok_or_else(|| "No node with that id".to_owned())?;
+    let fits = match &node.kind {
+        NodeKind::Image { .. } => matches!(
+            asset.kind,
+            yunari_model::document::AssetKind::Image
+                | yunari_model::document::AssetKind::Svg
+                | yunari_model::document::AssetKind::Gif
+        ),
+        NodeKind::Video { .. } => asset.kind == yunari_model::document::AssetKind::Video,
+        _ => false,
+    };
+    if !fits {
+        return Err(format!("{asset_id} is not the kind of asset this node draws"));
+    }
+    Ok(())
+}
+
+/// Writes one binding field on a node. A refused value changes nothing.
+pub fn apply_binding(
+    document: &mut ThemeDocument,
+    node_id: &str,
+    binding_id: &str,
+    field: &str,
+    value: &str,
+) -> Result<(), String> {
+    let held = document
+        .bindings
+        .get_mut(node_id)
+        .ok_or_else(|| "This node has no bindings".to_owned())?;
+    let binding = held
+        .iter_mut()
+        .find(|binding| binding.id == binding_id)
+        .ok_or_else(|| "No binding with that id".to_owned())?;
+    match field {
+        "key" => {
+            let key = value.trim();
+            if let Some(refusal) = yunari_model::validate::semantic_key_refusal(key) {
+                return Err(refusal.to_owned());
+            }
+            binding.semantic_key = key.to_owned();
+        }
+        "unit" => {
+            let unit = value.trim();
+            if unit.chars().any(char::is_control) {
+                return Err("A unit is one line".to_owned());
+            }
+            binding.unit = (!unit.is_empty()).then(|| unit.to_owned());
+        }
+        "precision" => {
+            let text = value.trim();
+            if text.is_empty() {
+                binding.precision = None;
+            } else {
+                let precision: u8 = text
+                    .parse()
+                    .map_err(|_| "Precision is a whole number".to_owned())?;
+                if precision > 6 {
+                    return Err("Precision runs from 0 to 6".to_owned());
+                }
+                binding.precision = Some(precision);
+            }
+        }
+        _ => return Err(format!("{} is not a binding field", friendly(field))),
+    }
+    Ok(())
 }
 
 /// The id a run's token field writes: `body` and `typeTokens.body` are the same
@@ -578,6 +699,11 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
         "kind.cornerRadius" => match &mut node.kind {
             NodeKind::Rectangle { corner_radius } => *corner_radius = number()?,
             _ => return Err("Only a rectangle has a corner radius".to_owned()),
+        },
+        "kind.content.assetId" => match &mut node.kind {
+            NodeKind::Image { content } => content.asset_id = value.trim().to_owned(),
+            NodeKind::Video { content } => content.asset_id = value.trim().to_owned(),
+            _ => return Err("Only an image or video names an asset".to_owned()),
         },
         "kind.content.fit" => match &mut node.kind {
             NodeKind::Image { content } => {
@@ -843,6 +969,87 @@ mod tests {
         assert!(apply_document(&mut document, "background.color", "navy").is_err());
         assert!(apply_document(&mut document, "background.mode", "advanced").is_ok());
         assert_eq!(document.background.mode, BackgroundMode::Advanced);
+    }
+
+    fn image_node(id: &str, asset: &str) -> Node {
+        let mut node = rect(id, 0.0, 0.0, 100.0, 100.0);
+        node.kind = NodeKind::Image {
+            content: yunari_model::document::ImageContent {
+                asset_id: asset.to_owned(),
+                fit: ImageFit::Cover,
+                monochrome: None,
+            },
+        };
+        node
+    }
+
+    fn asset(id: &str, kind: yunari_model::document::AssetKind) -> yunari_model::document::AssetReference {
+        yunari_model::document::AssetReference {
+            id: id.to_owned(),
+            kind,
+            path: format!("assets/{id}.png"),
+            sha256: None,
+            source_url: None,
+            license: None,
+            family: None,
+            weight: None,
+            style: None,
+            format: None,
+            subset: None,
+        }
+    }
+
+    #[test]
+    fn an_image_names_a_declared_asset_of_its_kind() {
+        use yunari_model::document::AssetKind;
+        let mut document = document(vec![image_node("photo", "pic")]);
+        document.assets.push(asset("pic", AssetKind::Image));
+        document.assets.push(asset("clip", AssetKind::Video));
+        let sections = sections(&document, "photo");
+        let image = sections
+            .iter()
+            .find(|section| section.title == "Image")
+            .expect("an image section");
+        assert_eq!(image.rows[0].key, "kind.content.assetId");
+        assert_eq!(image.rows[0].value, "pic");
+        assert!(apply(&mut document, "photo", "kind.content.assetId", "missing").is_err());
+        assert!(apply(&mut document, "photo", "kind.content.assetId", "clip").is_err());
+        assert!(apply(&mut document, "photo", "kind.content.assetId", "pic").is_ok());
+    }
+
+    #[test]
+    fn bindings_show_and_edit_through_the_node_section() {
+        let mut document = document(vec![rect("a", 0.0, 0.0, 10.0, 10.0)]);
+        document.bindings.insert(
+            "a".to_owned(),
+            vec![yunari_model::document::Binding {
+                id: "binding-1".to_owned(),
+                semantic_key: "cpu.load".to_owned(),
+                precision: None,
+                unit_display: None,
+                scale: None,
+                offset: None,
+                unit: None,
+                auto_scale: None,
+                format: None,
+                time_zone: None,
+            }],
+        );
+        let sections = sections(&document, "a");
+        let bindings = sections
+            .iter()
+            .find(|section| section.title == "Bindings")
+            .expect("a bindings section");
+        assert_eq!(bindings.rows[0].key, "bindings.binding-1.key");
+        assert_eq!(bindings.rows[0].value, "cpu.load");
+        assert!(apply(&mut document, "a", "bindings.binding-1.key", "gpu.load").is_ok());
+        assert!(apply(&mut document, "a", "bindings.binding-1.unit", "%").is_ok());
+        assert!(apply(&mut document, "a", "bindings.binding-1.precision", "2").is_ok());
+        let held = &document.bindings["a"][0];
+        assert_eq!(held.semantic_key, "gpu.load");
+        assert_eq!(held.unit.as_deref(), Some("%"));
+        assert_eq!(held.precision, Some(2));
+        assert!(apply(&mut document, "a", "bindings.nope.key", "cpu.load").is_err());
     }
 
     #[test]
