@@ -25,27 +25,27 @@ const MAX_REQUEST_BYTES: usize = 64 * 1024;
 fn tools() -> Value {
     let mut list = json!([
         {
-            "name": "themes_list",
+            "name": "list_themes",
             "description": "List the themes in this host's library.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         },
         {
-            "name": "themes_get",
+            "name": "get_theme",
             "description": "Read one theme's document by id.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"id": {"type": "string"}},
+                "properties": {"themeId": {"type": "string"}},
                 "required": ["id"],
                 "additionalProperties": false
             }
         },
         {
-            "name": "sensors_list",
+            "name": "list_sensors",
             "description": "List every semantic key this host can read, with its unit.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         },
         {
-            "name": "displays_list",
+            "name": "list_displays",
             "description": "List the displays this host serves, without their credentials.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         },
@@ -122,12 +122,15 @@ fn call(app: &Shared, params: &Value) -> Result<Value, (i64, &'static str)> {
     let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
     if let Some(result) = crate::mcp_compose::call(app, name, &arguments) {
         return Ok(match result {
+            // A tool that answers content (a picture preview) keeps its own
+            // shape; everything else is one text block.
+            Ok(value) if value.get("content").is_some() => value,
             Ok(value) => text(&value.to_string(), false),
             Err(message) => text(&message, true),
         });
     }
     let answer = match name {
-        "themes_list" => {
+        "list_themes" => {
             let themes: Vec<Value> = app
                 .library
                 .list()
@@ -144,8 +147,12 @@ fn call(app: &Shared, params: &Value) -> Result<Value, (i64, &'static str)> {
                 .collect();
             Ok(json!({"themes": themes}))
         }
-        "themes_get" => {
-            let Some(id) = arguments.get("id").and_then(Value::as_str) else {
+        "get_theme" => {
+            let Some(id) = arguments
+                .get("themeId")
+                .or_else(|| arguments.get("id"))
+                .and_then(Value::as_str)
+            else {
                 return Ok(text("A theme id is required.", true));
             };
             match app.library.read(id) {
@@ -154,18 +161,61 @@ fn call(app: &Shared, params: &Value) -> Result<Value, (i64, &'static str)> {
                 Err(_) => Ok(text("Theme not found.", true)),
             }
         }
-        "sensors_list" => {
-            let sensors: Vec<Value> = app
-                .registry
-                .describe()
-                .into_iter()
+        "list_sensors" => {
+            // The catalogue is what providers promise; a measured pass adds
+            // which promises this PC answers right now.
+            let measured = arguments
+                .get("measured")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let descriptors = app.registry.describe();
+            let keys: Vec<String> = descriptors
+                .iter()
+                .map(|descriptor| descriptor.semantic_key.clone())
+                .collect();
+            let cycle = measured.then(|| {
+                app.registry.sample(
+                    &[yunari_providers::registry::Ask::new("mcp", keys.clone())],
+                    u64::try_from(crate::http::now_ms()).unwrap_or_default(),
+                )
+            });
+            let mut families: std::collections::BTreeMap<&str, (usize, usize)> =
+                std::collections::BTreeMap::new();
+            let sensors: Vec<Value> = descriptors
+                .iter()
                 .map(|descriptor| {
-                    json!({"semanticKey": descriptor.semantic_key, "unit": descriptor.unit})
+                    let described = yunari_providers::vocabulary::describe(&descriptor.semantic_key);
+                    let answers = cycle
+                        .as_ref()
+                        .and_then(|cycle| cycle.reading(&descriptor.semantic_key))
+                        .is_some_and(|reading| {
+                            reading.status == yunari_providers::sample::Status::Ok
+                        });
+                    if let Some(described) = &described {
+                        let held = families.entry(described.family).or_insert((0, 0));
+                        held.0 += 1;
+                        held.1 += usize::from(answers);
+                    }
+                    json!({
+                        "key": descriptor.semantic_key,
+                        "family": described.as_ref().map(|described| described.family),
+                        "label": described
+                            .as_ref()
+                            .map_or_else(|| descriptor.semantic_key.clone(), |described| described.label.clone()),
+                        "unit": descriptor.unit,
+                        "measured": answers,
+                    })
                 })
                 .collect();
-            Ok(json!({"sensors": sensors}))
+            let families: Vec<Value> = families
+                .into_iter()
+                .map(|(family, (keys, answering))| {
+                    json!({"family": family, "keys": keys, "measured": answering})
+                })
+                .collect();
+            Ok(json!({"sensors": sensors, "families": families, "measured": measured}))
         }
-        "displays_list" => {
+        "list_displays" => {
             let displays: Vec<Value> = app
                 .displays
                 .lock()
@@ -241,10 +291,10 @@ mod tests {
     fn every_surface_this_host_owns_is_a_declared_tool() {
         let declared = tools().to_string();
         for name in [
-            "themes_list",
-            "themes_get",
-            "sensors_list",
-            "displays_list",
+            "list_themes",
+            "get_theme",
+            "list_sensors",
+            "list_displays",
             "monitors_list",
             "path_presets_list",
             "providers_list",

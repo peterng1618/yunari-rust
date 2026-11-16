@@ -456,6 +456,48 @@ pub fn tools() -> Value {
                 },
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "list_asset_sources",
+            "description": "List the asset sources this host can search, with each source's label, category and credential requirement.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "search_assets",
+            "description": "Search the host's asset finder. Each row carries an opaque assetRef for import_asset.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1},
+                    "sourceIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    "page": {"type": "number", "minimum": 1}
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "preview_asset",
+            "description": "Fetch one finder result through the host and return it as image content.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"assetRef": {"type": "string", "minLength": 1}},
+                "required": ["assetRef"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "remove_asset",
+            "description": "Remove a declared asset the draft no longer uses, with its bytes. Refuses an asset an object, the background or a font face still references.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "assetId": {"type": "string", "minLength": 1},
+                    "themeId": theme_id()
+                },
+                "required": ["assetId"],
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -476,6 +518,10 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "add_shape" => add_shape(app, args),
         "add_icon" => add_icon(app, args),
         "import_asset" => import_asset(app, args),
+        "list_asset_sources" => list_asset_sources(),
+        "search_assets" => search_assets(args),
+        "preview_asset" => preview_asset(args),
+        "remove_asset" => remove_asset(app, args),
         "add_image" => add_image(app, args),
         "add_chart" => add_chart(app, args),
         "add_binding" => add_binding(app, args),
@@ -1132,20 +1178,322 @@ fn asset_stem(name: &str) -> String {
     }
 }
 
+/// The sources this host can search. Each row is a settled local source: no
+/// remote catalogue and no credential is configured here.
+fn list_asset_sources() -> Result<Value, String> {
+    Ok(json!({"sources": [
+        {
+            "id": "pictures",
+            "label": "This PC's Pictures",
+            "category": "image",
+            "body": "grid",
+            "requires": null,
+            "configurable": false
+        },
+        {
+            "id": "wallpaper-engine",
+            "label": "Wallpaper Engine",
+            "category": "image",
+            "body": "wallpaper-engine",
+            "requires": null,
+            "configurable": false
+        }
+    ]}))
+}
+
+/// An opaque, hand-carryable reference to one finder row: base64 JSON, as the
+/// source's own pointer, never a file path a caller can forge past the source
+/// it names.
+fn asset_reference(source: &str, id: &str, name: &str, kind: &str, licence: &str) -> String {
+    use base64::Engine;
+    let reference = json!({
+        "source": source,
+        "id": id,
+        "name": name,
+        "kind": kind,
+        "licence": licence,
+    });
+    base64::engine::general_purpose::STANDARD.encode(reference.to_string())
+}
+
+fn decode_asset_ref(value: &str) -> Result<Value, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|_| "That assetRef is not base64 JSON.".to_owned())?;
+    let parsed: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "That assetRef is not an asset reference.".to_owned())?;
+    let field = |key: &str| parsed.get(key).and_then(Value::as_str);
+    if field("source").is_none() || field("id").is_none() {
+        return Err("That assetRef has no source or id.".to_owned());
+    }
+    Ok(parsed)
+}
+
+/// The Pictures folder, folded, so a ref can only name a file below it.
+fn pictures_root() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    std::fs::canonicalize(std::path::PathBuf::from(home).join("Pictures")).ok()
+}
+
+fn pictures() -> Vec<(String, std::path::PathBuf)> {
+    let Some(root) = pictures_root() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    let mut rows: Vec<(String, std::path::PathBuf)> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        matches!(
+                            extension.to_ascii_lowercase().as_str(),
+                            "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "svg"
+                        )
+                    })
+        })
+        .take(200)
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (name, path)
+        })
+        .collect();
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    rows
+}
+
+/// The bytes a finder reference stands for, and a file name to declare them
+/// under. A forged or moved reference is a sentence, never a read.
+fn reference_bytes(reference: &Value) -> Result<(String, Vec<u8>), String> {
+    let source = reference
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let id = reference
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match source {
+        "pictures" => {
+            let root = pictures_root().ok_or("This PC has no Pictures folder.")?;
+            let path = std::fs::canonicalize(id).map_err(|_| NOT_A_PICTURE.to_owned())?;
+            if !path.starts_with(&root) || !path.is_file() {
+                return Err("That file is not in this PC's Pictures folder.".to_owned());
+            }
+            let meta = std::fs::metadata(&path).map_err(|_| NOT_A_PICTURE.to_owned())?;
+            if meta.len() > MAX_ASSET_BYTES {
+                return Err("That file is too large to import.".to_owned());
+            }
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "picture".to_owned());
+            let bytes = std::fs::read(&path).map_err(|_| NOT_A_PICTURE.to_owned())?;
+            Ok((name, bytes))
+        }
+        "wallpaper-engine" => {
+            let (bytes, _) = crate::wallpaper_engine::bytes(id, true)
+                .ok_or("That wallpaper has no preview to import.")?;
+            Ok((format!("wallpaper-{id}.jpg"), bytes))
+        }
+        _ => Err("That assetRef names a source this host does not serve.".to_owned()),
+    }
+}
+
+fn search_assets(args: &Value) -> Result<Value, String> {
+    let query = text(args, "query")
+        .ok_or_else(|| "search_assets needs a query.".to_owned())?
+        .to_ascii_lowercase();
+    let enabled: Vec<String> = args
+        .get("sourceIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["pictures".to_owned(), "wallpaper-engine".to_owned()]);
+    let matches = |name: &str| name.to_ascii_lowercase().contains(&query);
+
+    let mut pages = Vec::new();
+    if enabled.iter().any(|id| id == "pictures") {
+        let results: Vec<Value> = pictures()
+            .into_iter()
+            .filter(|(name, _)| matches(name))
+            .map(|(name, path)| {
+                let id = path.display().to_string();
+                json!({
+                    "id": format!("pictures:{id}"),
+                    "source": "pictures",
+                    "name": name,
+                    "kind": "image",
+                    "subtitle": "Pictures folder",
+                    "assetRef": asset_reference("pictures", &id, &name, "image", "Own work"),
+                })
+            })
+            .collect();
+        pages.push(json!({"source": "pictures", "results": results, "totalPages": 1}));
+    }
+    if enabled.iter().any(|id| id == "wallpaper-engine") {
+        let mut results = Vec::new();
+        if let Some(install) = crate::wallpaper_engine::locate() {
+            for item in crate::wallpaper_engine::scan(&install).items {
+                if !matches(&item.title) {
+                    continue;
+                }
+                results.push(json!({
+                    "id": format!("wallpaper-engine:{}", item.workshop_id),
+                    "source": "wallpaper-engine",
+                    "name": item.title,
+                    "kind": item.kind.as_str(),
+                    "subtitle": "Steam Workshop",
+                    "previewUrl": format!(
+                        "/api/wallpaper-engine/item/{}/preview",
+                        item.workshop_id
+                    ),
+                    "assetRef": asset_reference(
+                        "wallpaper-engine",
+                        &item.workshop_id,
+                        &item.title,
+                        item.kind.as_str(),
+                        "Steam Workshop",
+                    ),
+                }));
+            }
+        }
+        pages.push(json!({
+            "source": "wallpaper-engine",
+            "results": results,
+            "totalPages": 1,
+        }));
+    }
+    Ok(json!({"pages": pages}))
+}
+
+/// One finder row's picture as MCP image content. A format no image content
+/// type carries is a sentence rather than a wrong label.
+fn preview_asset(args: &Value) -> Result<Value, String> {
+    use base64::Engine;
+    let encoded =
+        text(args, "assetRef").ok_or_else(|| "preview_asset needs an assetRef.".to_owned())?;
+    let reference = decode_asset_ref(&encoded)?;
+    let (name, bytes) = reference_bytes(&reference)?;
+    let (extension, _) = picture_kind(&name, &bytes).ok_or(NOT_A_PICTURE)?;
+    let mime = match extension {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return Err("That picture has no preview this surface can carry.".to_owned()),
+    };
+    Ok(json!({
+        "content": [{
+            "type": "image",
+            "data": base64::engine::general_purpose::STANDARD.encode(&bytes),
+            "mimeType": mime,
+        }],
+        "isError": false,
+    }))
+}
+
+/// The object that still names an asset, or nothing.
+fn asset_owner(document: &ThemeDocument, asset_id: &str) -> Option<String> {
+    if document
+        .background
+        .media
+        .as_ref()
+        .is_some_and(|media| media.asset_id == asset_id)
+    {
+        return Some("the background".to_owned());
+    }
+    if let Some((name, _)) = document.type_tokens.iter().find(|(_, token)| {
+        token
+            .face
+            .as_ref()
+            .is_some_and(|face| face.asset_id == asset_id)
+    }) {
+        return Some(format!("type token {name}"));
+    }
+    fn walk(nodes: &[Node], asset_id: &str) -> Option<String> {
+        for node in nodes {
+            match &node.kind {
+                NodeKind::Image { content } if content.asset_id == asset_id => {
+                    return Some(format!("object {}", node.id));
+                }
+                NodeKind::Video { content } if content.asset_id == asset_id => {
+                    return Some(format!("object {}", node.id));
+                }
+                _ => {}
+            }
+            if let Some(owner) = walk(&node.children, asset_id) {
+                return Some(owner);
+            }
+        }
+        None
+    }
+    walk(&document.nodes, asset_id)
+}
+
+fn remove_asset(app: &Shared, args: &Value) -> Result<Value, String> {
+    let asset_id = text(args, "assetId").ok_or("remove_asset needs an assetId.")?;
+    with_draft(app, args, |draft| {
+        let Some(asset) = draft
+            .document
+            .assets
+            .iter()
+            .find(|asset| asset.id == asset_id)
+            .cloned()
+        else {
+            return Err(format!("There is no asset {asset_id} in this theme."));
+        };
+        if let Some(owner) = asset_owner(&draft.document, &asset_id) {
+            return Err(format!(
+                "{asset_id} is still used by {owner}; remove that reference first."
+            ));
+        }
+        draft.document.assets.retain(|held| held.id != asset_id);
+        draft.assets.remove(&asset.path);
+        Ok(json!({
+            "themeId": draft.document.id,
+            "removed": asset_id,
+            "path": asset.path,
+        }))
+    })
+}
+
 fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
     use yunari_model::document::{AssetKind, AssetReference};
 
-    let path = text(args, "path").ok_or("import_asset needs a path.")?;
-    let meta = std::fs::metadata(&path).map_err(|error| format!("{path}: {error}"))?;
-    if meta.len() > MAX_ASSET_BYTES {
-        return Err("That file is too large to import.".to_owned());
-    }
-    let bytes = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
-    let name = std::path::Path::new(&path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&path);
-    let Some((extension, kind)) = picture_kind(name, &bytes) else {
+    let (name, bytes) = match (text(args, "assetRef"), text(args, "path")) {
+        (Some(reference), _) => {
+            let decoded = decode_asset_ref(&reference)?;
+            reference_bytes(&decoded)?
+        }
+        (None, Some(path)) => {
+            let meta = std::fs::metadata(&path).map_err(|error| format!("{path}: {error}"))?;
+            if meta.len() > MAX_ASSET_BYTES {
+                return Err("That file is too large to import.".to_owned());
+            }
+            let bytes = std::fs::read(&path).map_err(|error| format!("{path}: {error}"))?;
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_owned());
+            (name, bytes)
+        }
+        (None, None) => return Err("import_asset needs an assetRef or a path.".to_owned()),
+    };
+    let Some((extension, kind)) = picture_kind(&name, &bytes) else {
         return Err(NOT_A_PICTURE.to_owned());
     };
     if kind == "svg" {
@@ -1163,7 +1511,7 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
         _ => AssetKind::Image,
     };
     with_draft(app, args, |draft| {
-        let stem = asset_stem(name);
+        let stem = asset_stem(&name);
         let mut id = stem.clone();
         let mut n = 2;
         while draft.document.assets.iter().any(|asset| asset.id == id) {
@@ -1732,6 +2080,9 @@ fn yunari_status(app: &Shared) -> Result<Value, String> {
         "version": env!("CARGO_PKG_VERSION"),
         "port": app.bound_port.load(std::sync::atomic::Ordering::Relaxed),
         "themes": app.library.list().len(),
+        "displays": app.displays.lock().map(|store| store.list().len()).unwrap_or_default(),
+        "sensors": app.registry.describe().len(),
+        "assetSources": ["pictures", "wallpaper-engine"],
         "drafts": drafts.ids(),
         "providers": app.registry.status().into_iter().map(|(id, label, health)| {
             json!({"id": id, "label": label, "reason": health.reason()})
@@ -2021,6 +2372,73 @@ mod tests {
             .expect("the shape");
         assert_eq!(shape["kind"]["closed"], false);
         assert!(shape["style"]["stroke"].is_object());
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn an_asset_reference_is_opaque_and_cannot_name_a_file_outside_its_source() {
+        let reference = asset_reference(
+            "pictures",
+            "C:/Windows/win.ini",
+            "win.ini",
+            "image",
+            "Own work",
+        );
+        let decoded = decode_asset_ref(&reference).expect("a reference");
+        assert_eq!(decoded["source"], "pictures");
+        assert!(reference_bytes(&decoded).is_err());
+        assert!(decode_asset_ref("not base64").is_err());
+        assert!(decode_asset_ref("aGVsbG8=").is_err());
+    }
+
+    #[test]
+    fn an_asset_in_use_is_kept_and_a_free_one_is_removed() {
+        let app = app();
+        let theme_id = draft_id(&app);
+        let source = app.config.settings_dir().join("dot.png");
+        std::fs::write(&source, [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0]).unwrap();
+        let imported = call(
+            &app,
+            "import_asset",
+            &json!({"themeId": theme_id, "path": source.display().to_string()}),
+        )
+        .expect("a tool")
+        .expect("an asset");
+        let asset_id = imported["assetId"].as_str().expect("an id").to_owned();
+        let image = call(
+            &app,
+            "add_image",
+            &json!({
+                "themeId": theme_id,
+                "assetId": asset_id,
+                "box": {"left": 0, "top": 0, "width": 10, "height": 10},
+            }),
+        )
+        .expect("a tool")
+        .expect("an image");
+        let refused = call(
+            &app,
+            "remove_asset",
+            &json!({"themeId": theme_id, "assetId": asset_id}),
+        )
+        .expect("a tool")
+        .unwrap_err();
+        assert!(refused.contains("still used"), "{refused}");
+        call(
+            &app,
+            "remove_object",
+            &json!({"themeId": theme_id, "objectId": image["objectId"]}),
+        )
+        .expect("a tool")
+        .expect("a removal");
+        let removed = call(
+            &app,
+            "remove_asset",
+            &json!({"themeId": theme_id, "assetId": asset_id}),
+        )
+        .expect("a tool")
+        .expect("a freed asset");
+        assert_eq!(removed["removed"], asset_id);
         std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 }
