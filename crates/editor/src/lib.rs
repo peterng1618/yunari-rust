@@ -4,6 +4,7 @@ pub mod document;
 pub mod history;
 pub mod persistence;
 pub mod selection;
+pub mod snap;
 pub mod ui;
 pub mod viewport;
 

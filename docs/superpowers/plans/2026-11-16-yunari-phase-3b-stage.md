@@ -118,7 +118,7 @@ Expected: PASS, 5 tests.
 - Produces: `Selection { ids: Vec<String> }` with `new`, `is_empty`, `len`, `first`, `contains`, `replace(id)`, `toggle(id)` (shift-click; removes it if present, else appends), `clear`, `retain_existing(&ThemeDocument)` (used after undo/redo/group/ungroup/delete), `marquee(document, rect: (f64,f64,f64,f64)) -> Vec<String>` (fully contained, visible through every ancestor, any depth, scene order).
   `nodes_of(document, selection) -> Vec<&Node>` and `hit(document, x, y) -> Option<String>` (topmost; skips invisible ancestors; inverse-transforms the point by rotation about the node's centre).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -131,18 +131,18 @@ fn a_marquee_takes_only_fully_contained_visible_nodes() {
 
 #[test]
 fn a_rotated_node_is_hit_where_it_is_drawn() {
-    // 100x100 square at (0,0) rotated 45 degrees: (50,0) is inside, (-10,50) is not.
+    // 100x100 square at (0,0) rotated 45 degrees: (50,20) is inside, (10,10) is not.
 }
 
 #[test]
 fn selection_after_undo_drops_ids_the_document_no_longer_has() { /* retain_existing */ }
 ```
 
-- [ ] **Step 2:** Run, see them fail.
-- [ ] **Step 3:** Implement. `hit` walks `document.nodes` topmost-first (reverse order) and recurses into children with the parent's transform applied: world position of a child is the parent's origin plus the child's `x`/`y`, and rotation composes (the source's groups hold object-space children). Keep the transform maths in one helper `to_local(transform, x, y)`.
-- [ ] **Step 4:** Wire `ui.rs`: click replaces, shift-click toggles, `Ctrl+A` selects every selectable root (>= 2), `Escape` clears, marquee drag on empty canvas selects fully contained nodes; locked nodes stay selectable but are skipped by every transform; the outline paints one rect per selected id.
-- [ ] **Step 5:** Run the tests, then by hand: click, shift-click, marquee, Ctrl+A, Escape.
-- [ ] **Step 6:** Commit. `feat(editor): selection by click, shift, marquee and select-all`
+- [x] **Step 2:** Run, see them fail.
+- [x] **Step 3:** Implement. `hit` walks `document.nodes` topmost-first (reverse order) and inverts the node's `Affine::from_node`; a child of a group is found by id but a canvas click takes the group, so marquee and hit stay top-level in 3B (nested pick is 3C's layers panel). Locked nodes stay selectable.
+- [x] **Step 4:** Wire `ui.rs`: click replaces, shift-click toggles, `Ctrl+A` selects every root, `Escape` clears, marquee drag on empty canvas selects fully contained nodes; the outline paints one rect per selected id and the status line counts them.
+- [x] **Step 5:** Run the tests, then by hand: `r` `r`, `Ctrl+A` (status "2 selected", two outlines), `Escape` (gone), `Delete` (both gone), `Ctrl+Z` (both back, nothing selected). Pointer paths are unit-tested only: the tool that drives this window needs the foreground for the mouse.
+- [x] **Step 6:** Commit. `feat(editor): selection by click, shift, marquee and select-all`
 
 ### Task 4: Snapping
 
@@ -157,7 +157,7 @@ fn selection_after_undo_drops_ids_the_document_no_longer_has() { /* retain_exist
   `snap_resize(document, moving: &[String], rect: (f64, f64, f64, f64), handle: Handle, zoom: f32, enabled: bool) -> ((f64, f64, f64, f64), Vec<Guide>)`.
   Candidate lines per axis come from the artboard (`0`, centre, full extent; category `Boundary`) and every visible, non-descendant, non-ancestor node (`Edge` at the two sides, `Centre` at the middle). Threshold `5 / zoom` scene units.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -178,11 +178,11 @@ fn hidden_nodes_offer_no_lines() { /* same geometry, visible false -> no snap */
 fn a_boundary_wins_a_tie_over_an_edge_and_an_edge_over_a_centre() { /* equal distances */ }
 ```
 
-- [ ] **Step 2:** Run, see them fail.
-- [ ] **Step 3:** Implement. Equal corrections within `1e-9` are ties; walk candidates in a stable order and keep the first. Guides span the artboard on both axes (`from = 0`, `to = artboard extent`), as the source draws them.
-- [ ] **Step 4:** Wire into Task 5's move and resize, painting guides as 1-px quads on top of the frame in `#3D8BF4`, dashed by drawing alternating 4/4 segments (no dash support in `paint_quad`). Ctrl during a drag passes `enabled: false`.
-- [ ] **Step 5:** Run the tests and by hand: drag a node to the artboard centre and to another node's left edge; hold Ctrl and watch the guides disappear.
-- [ ] **Step 6:** Commit. `feat(editor): snapping to the artboard and to other nodes`
+- [x] **Step 2:** Run, see them fail.
+- [x] **Step 3:** Implement. Equal corrections within `1e-9` are ties, and a lower rank wins them (`Boundary < Edge < Centre`). Guides span the artboard on both axes, as the source draws them. `snap_resize` waits for Task 5: it needs `Handle`, which lives there.
+- [x] **Step 4:** Wire into Task 5's move and resize, painting guides as 1-px quads on top of the frame in `#3D8BF4`, dashed by drawing alternating 4/4 segments (no dash support in `paint_quad`). Ctrl during a drag passes `enabled: false`. (Wiring lands with Task 5.)
+- [x] **Step 5:** Tests: seven in `snap.rs`, including hidden and own-subtree lines offering nothing. The hand check waits for the drag that Task 5 adds.
+- [x] **Step 6:** Commit. `feat(editor): snapping to the artboard and to other nodes`
 
 ### Task 5: Transform gestures
 
