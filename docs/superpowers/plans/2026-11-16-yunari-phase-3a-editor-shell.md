@@ -181,6 +181,6 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 
 ### Task 7: Phase 3A exit check
 
-- [ ] **Step 1:** Run the manual flow above against the real library root and capture: the editor window before and after save, the library listing, and the exported package's file list (`unzip -l`).
-- [ ] **Step 2:** Record the exit in the spec's Phase status: what was authored, saved, reloaded, exported, re-imported, plus the undo/redo verification (Ctrl+Z after a move returns the rectangle; Ctrl+Shift+Z restores it) and the deviation (full-document history versus the source's scene-only history).
-- [ ] **Step 3: Commit.** `docs: record phase 3A's exit`
+- [x] **Step 1:** Run the manual flow above against the real library root and capture: the editor window before and after save, the library listing, and the exported package's file list (`unzip -l`).
+- [x] **Step 2:** Record the exit in the spec's Phase status: what was authored, saved, reloaded, exported, re-imported, plus the undo/redo verification (Ctrl+Z after a move returns the rectangle; Ctrl+Shift+Z restores it) and the deviation (full-document history versus the source's scene-only history).
+- [x] **Step 3: Commit.** `docs: record phase 3A's exit`

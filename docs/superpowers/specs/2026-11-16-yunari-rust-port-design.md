@@ -333,3 +333,40 @@ Recorded as each phase's exit is met, with the evidence that met it.
   `crates/render/src/instant.rs`, comment marks the upgrade path).
 - Deferred: chart bindings still draw from authored data; charts read readings
   when the chart plan takes a series source (phase 3 editor work).
+
+**Phase 3A — met (2026-11-16).** Plan:
+`docs/superpowers/plans/2026-11-16-yunari-phase-3a-editor-shell.md`.
+
+- A theme can be authored, saved and reopened: the editor window (`crates/editor`
+  `ui`) paints the open document through `render-gpui`, adds rectangles and text,
+  selects by click, deletes the selection, and saves to the library. Proven
+  against the real library root by driving the window: Add Rectangle → Ctrl+S →
+  `themes/first/theme.json` holds the node — then Export wrote
+  `untitled.yunari-theme` (manifest.json + theme.json), Import of that package
+  stored `first-2` and opened it, and the status line read `first-2 · saved`.
+- Undo/redo: Ctrl+Z after an add returns the theme to its saved state and Ctrl+Y
+  (also Ctrl+Shift+Z) restores the edit; identity adopted by Save As is not
+  undoable, because a rename is not an edit.
+- Unsaved work is never dropped silently: New, Open and Import ask before
+  discarding, and closing the window over a dirty document refuses the close and
+  shows the same guard — verified by closing the window (process stayed alive,
+  toolbar dimmed) and pressing Enter to discard (process exited).
+- The live-display window moved to `crates/player`, so the app is either a player
+  (given a theme path) or the editor (given none).
+- Deviation: undo holds whole-document snapshots (100 entries), where the source
+  undid the scene only — a background colour or a binding change is now undoable.
+- Deviation: opening a theme loads the asset bytes its document declares. A save
+  writes a fresh directory, so without this an edit-and-save would delete the
+  author's files. Covered by `reopening_a_theme_keeps_the_assets_a_save_never_read`.
+- Deviation: the shell's dialogs are native GPUI elements it owns (a typed-id
+  prompt, a clickable row list, a confirm) rather than gpui-component widgets;
+  GPUI exposes no interactive accessibility nodes for these, so they are reached
+  by keyboard.
+- Deviation: an export is named from the theme's display name
+  (`untitled.yunari-theme`), not its id, and lands beside the library root rather
+  than inside it.
+- Not exercised: clicking a row in the Open dialog (needs the mouse; the window's
+  custom elements expose no accessibility invocation). The listing itself is
+  `Library::list`, covered by library tests.
+- Deferred to 3B/3C: dragging, snapping, zoom/pan, layers, grouping, the inspector,
+  palette and type-token editing, asset import, charts.
