@@ -9,13 +9,64 @@ use yunari_model::document::{Paint, ThemeDocument};
 
 use crate::document::Editor;
 
-/// A token's paint as the inspector shows it: a solid is its colour, a gradient
-/// says how many stops it has because a field cannot edit a stop list.
+/// A token's paint as the inspector shows it. Both kinds are written as the
+/// text a later edit reads back, so a token round-trips through one field.
 pub fn paint_text(paint: &Paint) -> String {
     match paint {
         Paint::Solid { color } => color.clone(),
-        Paint::Gradient { stops, .. } => format!("gradient ({} stops)", stops.len()),
+        Paint::Gradient { angle, stops } => {
+            let stops: Vec<String> = stops
+                .iter()
+                .map(|stop| format!("{} {:.0}%", stop.color, stop.offset * 100.0))
+                .collect();
+            format!("gradient({angle:.0}deg, {})", stops.join(", "))
+        }
     }
+}
+
+/// A typed paint: a hex colour, or `gradient(<angle>deg, <colour> <pct>%, …)`
+/// with two to eight stops. Anything else is refused before it can reach the
+/// document.
+pub fn parse_paint(text: &str) -> Result<Paint, String> {
+    let text = text.trim();
+    let Some(rest) = text.strip_prefix("gradient(") else {
+        return solid(text);
+    };
+    let Some(body) = rest.strip_suffix(')') else {
+        return Err("A gradient is gradient(<angle>deg, <colour> <percent>%, …)".to_owned());
+    };
+    let mut parts = body.split(',');
+    let angle = parts
+        .next()
+        .and_then(|part| part.trim().strip_suffix("deg"))
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|angle| angle.is_finite() && (0.0..=360.0).contains(angle))
+        .ok_or_else(|| "A gradient angle is 0 to 360 degrees".to_owned())?;
+    let mut stops = Vec::new();
+    for part in parts {
+        let mut words = part.split_whitespace();
+        let color = words
+            .next()
+            .ok_or_else(|| "A gradient stop is a colour and a percent".to_owned())?;
+        solid(color)?;
+        let percent = words
+            .next()
+            .and_then(|word| word.strip_suffix('%'))
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            .filter(|percent| (0.0..=100.0).contains(percent))
+            .ok_or_else(|| "A gradient stop offset is 0 to 100%".to_owned())?;
+        if words.next().is_some() {
+            return Err("A gradient stop is a colour and a percent".to_owned());
+        }
+        stops.push(yunari_model::document::GradientStop {
+            offset: percent / 100.0,
+            color: color.to_owned(),
+        });
+    }
+    if !(2..=8).contains(&stops.len()) {
+        return Err("A gradient has two to eight stops".to_owned());
+    }
+    Ok(Paint::Gradient { angle, stops })
 }
 
 /// A typed colour as a solid paint.
@@ -115,7 +166,7 @@ impl Editor {
         if id == "none" {
             return Err("The none token is reserved".to_owned());
         }
-        let paint = solid(colour)?;
+        let paint = parse_paint(colour)?;
         let id = id.to_owned();
         let mut found = false;
         self.edit(|document| {
@@ -217,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_gradient_token_reads_its_stop_count_and_refuses_a_solid_edit() {
+    fn a_gradient_round_trips_through_the_one_field() {
         let paint = Paint::Gradient {
             angle: 90.0,
             stops: vec![
@@ -231,8 +282,36 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(paint_text(&paint), "gradient (2 stops)");
-        assert!(solid("gradient (2 stops)").is_err());
-        assert!(solid("#fff").is_ok());
+        assert_eq!(
+            paint_text(&paint),
+            "gradient(90deg, #000000 0%, #ffffff 100%)"
+        );
+        assert_eq!(parse_paint(&paint_text(&paint)), Ok(paint));
+        assert!(parse_paint("gradient(90deg, #000000 0%)").is_err());
+        assert!(parse_paint("gradient(90deg, #000000 0%, #fff 100%, #eee 50%)").is_ok());
+        assert!(parse_paint("gradient(400deg, #000000 0%, #fff 100%)").is_err());
+        assert!(parse_paint("gradient(90deg, nope 0%, #fff 100%)").is_err());
     }
+
+    #[test]
+    fn a_gradient_token_is_written_to_the_document() {
+        let mut editor = Editor::new(document(vec![]));
+        editor.add_palette("Sky", "#000000");
+        editor
+            .set_palette_colour("sky", "gradient(45deg, #000000 0%, #ffffff 100%)")
+            .unwrap();
+        match &editor.document().palette["sky"].value {
+            Paint::Gradient { angle, stops } => {
+                assert_eq!(*angle, 45.0);
+                assert_eq!(stops.len(), 2);
+            }
+            other => panic!("expected a gradient, got {other:?}"),
+        }
+        assert!(editor.undo());
+        assert!(matches!(
+            editor.document().palette["sky"].value,
+            Paint::Solid { .. }
+        ));
+    }
+
 }
