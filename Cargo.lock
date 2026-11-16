@@ -8954,7 +8954,9 @@ name = "yunari-providers"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "serde_json",
  "sysinfo 0.40.3",
+ "yunari-rtss",
 ]
 
 [[package]]
@@ -8989,6 +8991,13 @@ dependencies = [
  "yunari-golden",
  "yunari-model",
  "yunari-render",
+]
+
+[[package]]
+name = "yunari-rtss"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

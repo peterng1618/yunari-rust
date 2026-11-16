@@ -19,6 +19,8 @@ pub struct HostConfig {
     pub lan: bool,
     /// Where LibreHardwareMonitor's web server answers.
     pub lhm_url: String,
+    /// PresentMon's console program, the frame source after RTSS.
+    pub presentmon_path: PathBuf,
 }
 
 impl HostConfig {
@@ -33,6 +35,7 @@ impl HostConfig {
             port: port.unwrap_or(DEFAULT_PORT),
             lan,
             lhm_url: lhm_url(&std::env::args().collect::<Vec<_>>()),
+            presentmon_path: presentmon_path(),
         }
     }
 
@@ -61,6 +64,19 @@ fn lhm_url(args: &[String]) -> String {
             || yunari_providers::lhm::DEFAULT_URL.to_owned(),
             |url| url.trim_end_matches('/').to_owned(),
         )
+}
+
+/// `YUNARI_PRESENTMON`, else `PresentMon.exe` beside the app. The file may be
+/// absent: the frame provider then reports that it is not installed.
+fn presentmon_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("YUNARI_PRESENTMON") {
+        return PathBuf::from(path);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        .unwrap_or_default()
+        .join("PresentMon.exe")
 }
 
 /// `%USERPROFILE%\.yunari`, or `$HOME`'s equivalent.
@@ -128,6 +144,16 @@ mod tests {
         // A flag with no value is the default, not an empty address.
         let dangling = vec!["yunari-host".to_owned(), "--lhm-url".to_owned()];
         assert_eq!(lhm_url(&dangling), "http://127.0.0.1:8085");
+    }
+
+    #[test]
+    fn presentmon_is_looked_for_beside_the_app() {
+        // The environment may point it elsewhere on a test machine, which is
+        // exactly what the override is for.
+        let path = presentmon_path();
+        if std::env::var_os("YUNARI_PRESENTMON").is_none() {
+            assert!(path.ends_with("PresentMon.exe"));
+        }
     }
 
     #[test]

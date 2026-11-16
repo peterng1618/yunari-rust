@@ -9,3 +9,4 @@ license.workspace = true
 jiff.workspace = true
 serde_json.workspace = true
 sysinfo.workspace = true
+yunari-rtss.workspace = true

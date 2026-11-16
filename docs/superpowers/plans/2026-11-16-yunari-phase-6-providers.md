@@ -60,15 +60,15 @@
 ### Task 3: Frame timing (RTSS shared memory, PresentMon fallback)
 
 **Files:**
-- Create: `crates/providers/src/frame/{mod.rs,rtss.rs,presentmon.rs,rolling.rs}`
+- Create: `crates/providers/src/frame/{mod.rs,rtss.rs,presentmon.rs,rolling.rs}`, `crates/rtss/{Cargo.toml,src/lib.rs,src/windows.rs}`
 - Test: same files
 
 **Interfaces:**
-- Produces: `FrameProvider` answering `fps.frame`, `frametime.frame`, `fps.frame.1percent`, `frametime.frame.1percent`, `game.name` when a foreground title is known; `Rolling` window of the last N frames.
+- Produces: `FrameProvider` answering `fps.current`, `frametime.current`, `fps.low1`, `frame.app`; `FrameWindow` over the last 60 s; `FrameSource`/`FrameEvent` in `crates/providers/src/frame/mod.rs`; `yunari-rtss::{decode, frames_since, newest_index}` and the one `unsafe` Win32 mapping read.
 
-- [ ] Test: the rolling window reports the 99th-percentile frame time from a scripted series.
-- [ ] Test: no RTSS mapping (RTSS not running) is `missing` with the reason, not zero.
-- [ ] Commit.
+- [x] Test: the rolling window reports the 99th-percentile frame time from a scripted series.
+- [x] Test: no RTSS mapping (RTSS not running) is `missing` with the reason, not zero.
+- [x] Commit.
 
 ### Task 4: Weather
 
