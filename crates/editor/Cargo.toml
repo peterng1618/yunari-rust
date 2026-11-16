@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 gpui-kit = "0.9.1"
 serde_json.workspace = true
+yunari-host.workspace = true
 yunari-library.workspace = true
 yunari-model.workspace = true
 yunari-packs.workspace = true

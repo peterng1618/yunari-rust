@@ -10,6 +10,7 @@ pub enum Command {
     Import,
     ImportAsset,
     Widgets,
+    Settings,
     Undo,
     Redo,
     AddRectangle,
@@ -46,7 +47,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 42] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -55,6 +56,7 @@ impl Command {
         Self::Import,
         Self::ImportAsset,
         Self::Widgets,
+        Self::Settings,
         Self::Undo,
         Self::Redo,
         Self::AddRectangle,
@@ -100,6 +102,7 @@ impl Command {
             Self::Import => "Import…",
             Self::ImportAsset => "Import asset…",
             Self::Widgets => "Widgets…",
+            Self::Settings => "Settings…",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::AddRectangle => "Rectangle",
@@ -146,6 +149,7 @@ impl Command {
             Self::Import => "Ctrl+I",
             Self::ImportAsset => "Ctrl+Shift+I",
             Self::Widgets => "Ctrl+Shift+W",
+            Self::Settings => "Ctrl+,",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Shift+Z",
             Self::AddRectangle => "R",
@@ -197,6 +201,7 @@ impl Command {
             (true, false, "i") => Some(Self::Import),
             (true, true, "i") => Some(Self::ImportAsset),
             (true, true, "w") => Some(Self::Widgets),
+            (true, false, ",") => Some(Self::Settings),
             (true, false, "z") => Some(Self::Undo),
             (true, true, "z") => Some(Self::Redo),
             // Windows' own redo chord, alongside the one every editor shares.

@@ -7,6 +7,7 @@
 pub mod library_dialog;
 pub mod menus;
 pub mod prompt;
+pub mod settings_dialog;
 pub mod widget_dialog;
 
 use std::cell::{Cell, RefCell};
@@ -35,6 +36,7 @@ use yunari_render_raster::Images;
 use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
+use self::settings_dialog::SettingsDialog;
 use self::widget_dialog::WidgetDialog;
 use crate::arrange;
 use crate::assets;
@@ -96,6 +98,7 @@ enum Overlay {
     ImportAsset(Prompt),
     Library(LibraryDialog),
     Widgets(WidgetDialog),
+    Settings(SettingsDialog),
     Rename(Prompt),
     Field(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
@@ -297,6 +300,9 @@ impl EditorWindow {
                     "Path to a .yunari-theme file",
                     "",
                 )));
+            }
+            Command::Settings => {
+                self.overlay = Some(Overlay::Settings(SettingsDialog::new(self.settings_dir())));
             }
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
@@ -554,6 +560,42 @@ impl EditorWindow {
     }
 
     /// Where the host keeps the widget packs this PC has installed.
+    /// Where this PC's host keeps its settings, which the app shares.
+    fn settings_dir(&self) -> PathBuf {
+        yunari_host::config::HostConfig::resolve(None, None, false).settings_dir()
+    }
+
+    /// Flips one switch and keeps the dialog showing what the file now says.
+    fn flip_setting(&mut self, id: &str, cx: &mut Context<Self>) {
+        let settings = self.settings_dir();
+        let Some(Overlay::Settings(dialog)) = &mut self.overlay else {
+            return;
+        };
+        let message = match id {
+            "settings-lan" => {
+                dialog.lan = settings_dialog::set_lan(&settings, !dialog.lan);
+                if dialog.lan {
+                    "Phones can pair from this network within a second.".to_owned()
+                } else {
+                    "This PC only; a phone already paired loses access.".to_owned()
+                }
+            }
+            "settings-autostart" => match settings_dialog::set_autostart(!dialog.autostart) {
+                Ok(on) => {
+                    dialog.autostart = on;
+                    format!(
+                        "Start with Windows is now {}.",
+                        if on { "on" } else { "off" }
+                    )
+                }
+                Err(error) => error,
+            },
+            _ => return,
+        };
+        dialog.message = Some(message);
+        cx.notify();
+    }
+
     fn packs_directory(&self) -> PathBuf {
         self.library
             .root()
@@ -1547,7 +1589,7 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
-            Overlay::Widgets(_) => {
+            Overlay::Widgets(_) | Overlay::Settings(_) => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
                 }
@@ -1980,6 +2022,7 @@ impl EditorWindow {
             }
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
                 div()

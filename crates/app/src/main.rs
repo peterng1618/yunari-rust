@@ -1,17 +1,22 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui_kit::*;
 use yunari_host::config::HostConfig;
 use yunari_host::lock::HostLock;
 
+/// How often the host looks for a changed phone setting. A flip rebinds the
+/// listener, so the switch takes effect without restarting the app.
+const SETTING_CHECK: Duration = Duration::from_secs(1);
+
 /// The host runs on its own thread for as long as the app does. A second app
 /// over the same folder keeps its editor and prints why its host did not start.
 fn start_host() {
-    let mut config = HostConfig::resolve(None, None, false);
-    config.lan = yunari_host::hosting::Hosting::load(&config.settings_dir()).lan;
-    let lock = match HostLock::acquire(&config.settings_dir(), config.port) {
+    let config = HostConfig::resolve(None, None, false);
+    let settings = config.settings_dir();
+    let lock = match HostLock::acquire(&settings, config.port) {
         Ok(lock) => lock,
         Err(held) => {
             eprintln!("{}", held.message());
@@ -31,17 +36,36 @@ fn start_host() {
             }
         };
         runtime.block_on(async move {
-            let lan = config.lan;
-            let app = yunari_host::server::app(config);
-            match yunari_host::server::start(app, lan).await {
-                Ok(server) => {
-                    println!(
-                        "Yunari host at {} (pairing code on /api/pairing/code)",
-                        server.local_url
-                    );
-                    server.wait().await;
+            let mut lan = yunari_host::hosting::Hosting::load(&settings).lan;
+            loop {
+                let mut config = config.clone();
+                config.lan = lan;
+                let app = yunari_host::server::app(config);
+                let server = match yunari_host::server::start(app, lan).await {
+                    Ok(server) => server,
+                    Err(error) => {
+                        eprintln!("{error}");
+                        return;
+                    }
+                };
+                println!(
+                    "Yunari host at {} ({})",
+                    server.local_url,
+                    if lan {
+                        "phones on this network may pair"
+                    } else {
+                        "this PC only"
+                    }
+                );
+                loop {
+                    tokio::time::sleep(SETTING_CHECK).await;
+                    let wanted = yunari_host::hosting::Hosting::load(&settings).lan;
+                    if wanted != lan {
+                        lan = wanted;
+                        server.stop().await;
+                        break;
+                    }
                 }
-                Err(error) => eprintln!("{error}"),
             }
         });
     });

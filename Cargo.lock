@@ -8857,6 +8857,7 @@ dependencies = [
  "gpui-kit",
  "image",
  "serde_json",
+ "yunari-host",
  "yunari-library",
  "yunari-model",
  "yunari-packs",
