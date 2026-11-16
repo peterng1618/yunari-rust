@@ -6,6 +6,7 @@
 
 pub mod library_dialog;
 pub mod menus;
+pub mod path_preset_dialog;
 pub mod prompt;
 pub mod settings_dialog;
 pub mod store_dialog;
@@ -37,6 +38,7 @@ use yunari_render_raster::Images;
 
 use self::library_dialog::LibraryDialog;
 use self::menus::Command;
+use self::path_preset_dialog::PathPresetDialog;
 use self::prompt::{Outcome, Prompt};
 use self::settings_dialog::SettingsDialog;
 use self::store_dialog::StoreDialog;
@@ -101,6 +103,7 @@ enum Overlay {
     ImportAsset(Prompt),
     Library(LibraryDialog),
     Widgets(WidgetDialog),
+    PathPresets(PathPresetDialog),
     Settings(Box<SettingsDialog>),
     Store(StoreDialog),
     Rename(Prompt),
@@ -356,6 +359,11 @@ impl EditorWindow {
             }
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
+            }
+            Command::AddPathPreset => {
+                self.overlay = Some(Overlay::PathPresets(PathPresetDialog::new(
+                    &self.settings_dir(),
+                )));
             }
             Command::Store => self.open_store(window, cx),
             Command::ImportAsset => {
@@ -963,6 +971,35 @@ impl EditorWindow {
             }
             Err(message) => self.status = Some(Status::error(message)),
         }
+        cx.notify();
+    }
+
+    /// Inserts one stored path preset with the geometry its data measures.
+    fn insert_path_preset(
+        &mut self,
+        preset: yunari_host::path_presets::Preset,
+        cx: &mut Context<Self>,
+    ) {
+        self.overlay = None;
+        let Some((width, height, paint)) = yunari_host::path_presets::measure(&preset.data) else {
+            self.status = Some(Status::error("That preset draws nothing."));
+            cx.notify();
+            return;
+        };
+        let label = preset.label.clone();
+        self.add(move |document| {
+            let mut node = path_with(
+                document,
+                "path",
+                &preset.data,
+                width.max(1.0),
+                height.max(1.0),
+                paint == yunari_host::path_presets::Paint::Fill,
+            );
+            node.name = Some(label);
+            node
+        });
+        self.status = Some(Status::ok("Inserted a shape preset"));
         cx.notify();
     }
 
@@ -2209,7 +2246,10 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
-            Overlay::Widgets(_) | Overlay::Settings(_) | Overlay::Store(_) => {
+            Overlay::Widgets(_)
+            | Overlay::PathPresets(_)
+            | Overlay::Settings(_)
+            | Overlay::Store(_) => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
                 }
@@ -2669,6 +2709,9 @@ impl EditorWindow {
             }
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::PathPresets(dialog)) => {
+                path_preset_dialog::view(dialog, cx).into_any_element()
+            }
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {

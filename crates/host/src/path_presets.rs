@@ -481,11 +481,22 @@ fn geometry(data: &str) -> Result<Paint, String> {
     if path.width <= 0.0 && path.height <= 0.0 {
         return Err("That path data draws nothing.".to_owned());
     }
-    Ok(if path.all_closed {
+    Ok(paint_of(&path))
+}
+
+/// The path's own size and the paint its geometry earns, for a caller that
+/// inserts the shape rather than stores the preset.
+pub fn measure(data: &str) -> Option<(f64, f64, Paint)> {
+    let path = parse_path(data)?;
+    (path.width > 0.0 || path.height > 0.0).then(|| (path.width, path.height, paint_of(&path)))
+}
+
+fn paint_of(path: &Measured) -> Paint {
+    if path.all_closed {
         Paint::Fill
     } else {
         Paint::Stroke
-    })
+    }
 }
 
 struct Measured {
@@ -688,6 +699,19 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn a_preset_can_be_measured_for_insertion() {
+        assert_eq!(
+            measure("M 0 100 L 360 100"),
+            Some((360.0, 0.0, Paint::Stroke))
+        );
+        assert_eq!(
+            measure("M 0 0 L 10 0 L 10 10 L 0 10 Z"),
+            Some((10.0, 10.0, Paint::Fill))
+        );
+        assert_eq!(measure("M 0 0"), None);
     }
 
     #[test]
