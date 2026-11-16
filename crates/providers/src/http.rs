@@ -124,6 +124,50 @@ fn bytes_with(request: &Get, limit: u64) -> Result<Vec<u8>, String> {
         })
 }
 
+/// One form POST, as its body text. The same deadline, body cap and refusal
+/// to follow a redirect as a GET; a form value is percent-encoded so it cannot
+/// add a field of its own.
+pub fn post_form(url: &str, timeout_ms: u64, fields: &[(&str, String)]) -> Result<String, String> {
+    if let Some(refusal) = refusal(url) {
+        return Err(refusal);
+    }
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .max_redirects(0)
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let body = fields
+        .iter()
+        .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let mut response = agent
+        .post(url)
+        .header(
+            "content-type",
+            "application/x-www-form-urlencoded; charset=UTF-8",
+        )
+        .send(body)
+        .map_err(|error| error.to_string())?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(format!("the server answered {status}"));
+    }
+    let bytes = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_BODY_BYTES)
+        .read_to_vec()
+        .map_err(|error| match error {
+            ureq::Error::BodyExceedsLimit(_) => {
+                "the server answered more than it should.".to_owned()
+            }
+            other => other.to_string(),
+        })?;
+    String::from_utf8(bytes).map_err(|_| "the answer is not UTF-8 text.".to_owned())
+}
+
 /// A URL's host and port, enough to look its addresses up.
 fn host_and_port(url: &str) -> Option<(String, u16)> {
     let rest = url.split_once("://")?.1;

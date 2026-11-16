@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 //! The display host: TLS, pairing, samples and displays.
 
+pub mod assets;
 pub mod assignment;
 pub mod autostart;
 pub mod config;
