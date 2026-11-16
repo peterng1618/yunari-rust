@@ -43,7 +43,7 @@
 - Produces: `Viewport { scale: f32, offset: (f32, f32) }` — `offset` is where the artboard's top-left lands, in canvas pixels, matching Fabric's `[scale,0,0,scale,tx,ty]`.
   `Viewport::{contain(artboard: (f64, f64), bounds: Bounds<Pixels>) -> Self, reset(bounds, artboard), to_scene(&self, point: Point<Pixels>) -> (f64, f64), to_screen(&self, x: f64, y: f64) -> Point<Pixels>, zoom_by(&mut self, factor: f32, bounds, artboard), zoom_at(&mut self, factor: f32, cursor: Point<Pixels>, bounds, artboard), pan_by(&mut self, dx: f32, dy: f32, bounds, artboard), fit(&mut self, bounds, artboard)}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 fn canvas(width: f32, height: f32) -> Bounds<Pixels> {
@@ -73,21 +73,21 @@ fn zooming_at_a_cursor_keeps_the_scene_point_under_it() {
 
 Add: `the_scale_is_clamped_to_the_source_limits` (zooming in 200 times stops at 64, out stops at 0.02), `panning_stops_at_the_overscroll_margin` (offset never leaves `48 - scaled` .. `bounds - 48`), `a_wheel_zoom_is_exponential` (`exp(-delta / 1000)` mapping for delta ±100), `reset_centres_the_artboard_at_100_percent`.
 
-- [ ] **Step 2: Run the tests, see them fail for the missing type**
+- [x] **Step 2: Run the tests, see them fail for the missing type**
 
 Run: `cargo test -p yunari-editor viewport`
 Expected: FAIL — `cannot find type Viewport`.
 
-- [ ] **Step 3: Implement `Viewport`**
+- [x] **Step 3: Implement `Viewport`**
 
 `zoom_at` follows Fabric's maths: clamp the factor to `[MIN_ZOOM, MAX_ZOOM]`, keep the scene point under the cursor fixed, then clamp the panned offset. `pan_by` adds to the offset and clamps. `contain` uses `min(bounds.w / width, bounds.h / height)` clamped to the zoom limits, no 10 px inset (that is a lens concern we do not have). Keep `to_scene`/`to_screen` as the only conversions the rest of the crate uses.
 
-- [ ] **Step 4: Run the tests, see them pass**
+- [x] **Step 4: Run the tests, see them pass**
 
 Run: `cargo test -p yunari-editor viewport`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 5: Commit.** `feat(editor): a viewport that fits, zooms at the cursor and pans`
+- [x] **Step 5: Commit.** `feat(editor): a viewport that fits, zooms at the cursor and pans`
 
 ### Task 2: A stage painted through the viewport
 
