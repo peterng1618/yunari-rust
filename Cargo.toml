@@ -17,6 +17,7 @@ members = [
     "crates/host",
     "crates/panels",
     "crates/rtss",
+    "crates/tray",
 ]
 
 [workspace.package]
@@ -50,3 +51,4 @@ yunari-render-raster = { path = "crates/raster" }
 yunari-host = { path = "crates/host" }
 yunari-panels = { path = "crates/panels" }
 yunari-rtss = { path = "crates/rtss" }
+yunari-tray = { path = "crates/tray" }

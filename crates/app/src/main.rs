@@ -9,6 +9,7 @@ use yunari_host::http::Shared;
 use yunari_host::lock::HostLock;
 
 mod displays;
+mod tray;
 
 /// How often the host looks for a changed phone setting. A flip rebinds the
 /// listener, so the switch takes effect without restarting the app.
@@ -87,9 +88,15 @@ fn main() {
             if let Some(app) = &host {
                 displays::supervise(app.clone(), cx);
             }
-            match path.as_deref() {
-                Some(path) => yunari_player::open(Some(path), cx),
-                None => yunari_editor::open_with(host, cx),
+            let editor = match path.as_deref() {
+                Some(path) => {
+                    yunari_player::open(Some(path), cx);
+                    None
+                }
+                None => Some(yunari_editor::open_with(host.clone(), cx)),
+            };
+            if let Some(app) = &host {
+                tray::run(app.clone(), editor, cx);
             }
         });
 }

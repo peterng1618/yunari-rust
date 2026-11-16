@@ -3414,12 +3414,13 @@ fn now_ms() -> u64 {
 
 /// Opens the editor window on this PC's theme library.
 pub fn open(cx: &mut App) {
-    open_with(None, cx);
+    let _ = open_with(None, cx);
 }
 
 /// The editor attached to a running host, so its settings and display records
-/// are the ones the host serves.
-pub fn open_with(host: Option<Shared>, cx: &mut App) {
+/// are the ones the host serves. The handle is returned so the app can bring the
+/// window back rather than open a second one.
+pub fn open_with(host: Option<Shared>, cx: &mut App) -> AnyWindowHandle {
     let library = Library::new(default_root());
     open_window(
         WindowOptions {
@@ -3437,7 +3438,8 @@ pub fn open_with(host: Option<Shared>, cx: &mut App) {
         cx,
         move |_, cx| cx.new(|cx| EditorWindow::new(library, host, cx)),
     )
-    .expect("failed to open the editor window");
+    .expect("failed to open the editor window")
+    .0
 }
 
 #[cfg(test)]
