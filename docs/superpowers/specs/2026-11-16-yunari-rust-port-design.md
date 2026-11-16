@@ -425,3 +425,58 @@ Recorded as each phase's exit is met, with the evidence that met it.
 - Deferred to 3C: the inspector (per-kind fields), add/create beyond rectangle
   and text, palette and type-token editing, asset import, chart binding sources,
   presets.
+
+**Phase 3C — met (2026-11-16).** The inspector is the second column of the
+editor window and every field the Rust model declares for a node or a document
+has a row unless listed below.
+
+- With no selection the panel shows Theme (name, author, description, version,
+  language, tags), Artboard (width, height, content fit, shape) and Background
+  (mode, colour, media). Artboard edges are whole numbers 1–16384, refused
+  rather than clamped. The blank theme now matches the source: 1920 x 1080, the
+  eight seeded paint tokens including the reserved `none`, the three role type
+  tokens, and a `palette.chartTrack` background.
+- A selected node shows Transform, Appearance, then its kind's section: corner
+  radius; image asset and fit; video asset, loop and muted; text runs (text,
+  token, size, colour), align/overflow/vertical align/vertical and line height;
+  chart family and the scalar, flag and paint settings each renderer reads; and
+  a bindings section (key, unit, precision, unit display, format).
+- `palette.rs`, `tokens.rs` and `bindings.rs` own their invariants: free ids
+  minted from names, the reserved `none` token and the role tokens refused as
+  targets of rename/recolour/removal, references scanned before a token or
+  binding is removed, semantic keys validated with the model's own predicate,
+  and every write recorded as one history entry.
+- Background media takes a declared image/SVG/video asset, bounds, scale,
+  offsets, both flips, a video fallback frame, and advanced anchor/size/fade
+  with the model's ranges; the colour slot moves to the media when media is
+  present, and background colours are palette references only, as in the source.
+- The add menu now creates text, vertical text, rectangle, ellipse, the arrow
+  path, the horizontal-line/arc/wedge path presets and all six chart families,
+  at the source's default sizes and with palette-derived paints when the tokens
+  exist. Open paths paint ink as a 2 px stroke; closed ones take the surface
+  fill.
+- Driven: the app launched on the blank theme with the correct artboard, `E`
+  added a 360 x 360 ellipse whose inspector read X 40, Y 40, W 360, H 360 and
+  `palette.panel`, `T` added "New text" which rendered once the camera zoomed to
+  44 %, and the status line tracked "1 selected", "unsaved changes" and zoom.
+  The first run exposed a layout bug — the canvas used `size_full()` inside an
+  unbounded row, so the artboard sat below the window and the status line was
+  clipped; the shell row is now bounded and the artboard is fitted (25 % of
+  1920 x 1080). The inspector scrolls by keeping its own offset and clipping,
+  because gpui-kit 0.9.1 exposes neither a scroll container nor
+  `overflow_y_scroll`.
+- Deliberate deviations: sections are Transform/Appearance/kind rather than the
+  source's Content/Position/Layer/Paint; style paints accept a hex literal or a
+  `palette.<id>` reference (only the background is reference-only); semantic
+  keys are typed into a prompt instead of chosen from the ~140-entry vocabulary;
+  chart paint arrays and most advanced settings are not offered.
+- Not exercised: pointer input — clicking a field, a toolbar button or a layer
+  row, and mouse-wheel scrolling of the inspector — because the driver refuses
+  pointer input unless the window is foreground, which would take over the
+  user's screen. All 108 editor tests and the workspace suite pass, clippy is
+  clean with `-D warnings`, and every write path above has a unit test.
+- Deferred: gradient token editing and delete-with-reassign; font faces and
+  family/weight pickers; asset import (limits, image downscale, video trim, font
+  metadata, SVG sanitising); the eight-card bundled widget pack (needs its
+  packaged icons); shadow, border-width and frosted-glass shape fields; polygon
+  and triangle kinds, which the Rust model does not carry yet.
