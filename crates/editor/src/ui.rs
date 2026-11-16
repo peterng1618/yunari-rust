@@ -41,6 +41,7 @@ use crate::layers::{self, Move as LayerMove};
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
 use crate::snap;
+use crate::tokens;
 use crate::transform::{self, Handle};
 use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 
@@ -854,6 +855,18 @@ impl EditorWindow {
             } else {
                 self.editor.set_palette_colour(rest, value)
             };
+        } else if let Some(rest) = key.strip_prefix("token.") {
+            outcome = if rest == "new" {
+                self.editor.add_token(value).map(|_| ()).ok_or_else(|| {
+                    "A new type token needs a name".to_owned()
+                })
+            } else if let Some(entry) = rest.strip_suffix(".family") {
+                self.editor.set_token_family(entry, value)
+            } else if let Some(entry) = rest.strip_suffix(".weight") {
+                self.editor.set_token_weight(entry, value)
+            } else {
+                Err("No such type token field".to_owned())
+            };
         } else {
             self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
         }
@@ -990,6 +1003,72 @@ impl EditorWindow {
                 .child("+ Add colour")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.begin_field("palette.new", "new colour", "", cx)
+                }))
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .px_2()
+                .pt_3()
+                .text_xs()
+                .text_color(rgb(MUTED))
+                .child("Type")
+                .into_any_element(),
+        );
+        for (index, (id, token)) in self.editor.document().type_tokens.clone().into_iter().enumerate()
+        {
+            let family_key = format!("token.{id}.family");
+            let weight_key = format!("token.{id}.weight");
+            let family = token.family.clone();
+            let weight = token.weight.as_ref().map_or_else(String::new, tokens::weight_text);
+            let id_for_family = id.clone();
+            let (family_for_edit, weight_for_edit) = (family.clone(), weight.clone());            children.push(
+                div()
+                    .id(("token", index))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .child(div().text_color(rgb(MUTED)).child(id_for_family))
+                    .child(
+                        div()
+                            .id(("token-family", index))
+                            .px_1()
+                            .text_color(rgb(INK))
+                            .cursor_pointer()
+                            .child(family)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.begin_field(&family_key, "font family", &family_for_edit, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(("token-weight", index))
+                            .px_1()
+                            .text_color(rgb(INK))
+                            .cursor_pointer()
+                            .child(weight)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.begin_field(&weight_key, "weight", &weight_for_edit, cx)
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
+        children.push(
+            div()
+                .id("token-add")
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(MUTED))
+                .cursor_pointer()
+                .child("+ Add type token")
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.begin_field("token.new", "new type token", "", cx)
                 }))
                 .into_any_element(),
         );

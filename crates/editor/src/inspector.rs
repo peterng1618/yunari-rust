@@ -5,7 +5,8 @@
 //! same way and a refused value changes nothing.
 
 use yunari_model::document::{
-    ImageFit, Node, NodeKind, StyleLiteral, StyleMap, StyleRef, StyleValue, ThemeDocument,
+    ImageFit, Node, NodeKind, StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign, TextContent,
+    TextOverflow, TextRun, ThemeDocument, VerticalAlign,
 };
 
 use crate::selection::find_mut;
@@ -127,9 +128,85 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                 toggle("kind.content.muted", "Muted", content.muted),
             ],
         }),
+        NodeKind::Text { content } => sections.push(Section {
+            title: "Text",
+            rows: text_rows(content),
+        }),
         _ => {}
     }
     sections
+}
+
+fn text_rows(content: &TextContent) -> Vec<Field> {
+    let mut rows = Vec::new();
+    for (index, run) in content.runs.iter().enumerate() {
+        let token = match run {
+            TextRun::Literal {
+                text, type_token, ..
+            } => {
+                rows.push(Field {
+                    key: format!("kind.content.runs.{index}.text"),
+                    label: "Text",
+                    kind: FieldKind::Text,
+                    value: text.clone(),
+                });
+                type_token
+            }
+            TextRun::Value { type_token, .. } => type_token,
+        };
+        rows.push(Field {
+            key: format!("kind.content.runs.{index}.typeToken"),
+            label: "Token",
+            kind: FieldKind::Text,
+            value: token.clone(),
+        });
+    }
+    rows.extend([
+        choice("kind.content.align", "Align", align_name(content.align)),
+        choice("kind.content.overflow", "Overflow", overflow_name(content.overflow)),
+        choice(
+            "kind.content.verticalAlign",
+            "Vertical align",
+            vertical_name(content.vertical_align),
+        ),
+        toggle("kind.content.vertical", "Vertical", content.vertical),
+    ]);
+    rows
+}
+
+/// A choice row: the value list is read from the enum at render time, so the
+/// row carries the current option's name.
+fn choice(key: &'static str, label: &'static str, value: &str) -> Field {
+    Field {
+        key: key.to_owned(),
+        label,
+        kind: FieldKind::Choice(Vec::new()),
+        value: value.to_owned(),
+    }
+}
+
+fn align_name(value: TextAlign) -> &'static str {
+    match value {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    }
+}
+
+fn overflow_name(value: TextOverflow) -> &'static str {
+    match value {
+        TextOverflow::Visible => "visible",
+        TextOverflow::Clip => "clip",
+        TextOverflow::Ellipsis => "ellipsis",
+    }
+}
+
+fn vertical_name(value: VerticalAlign) -> &'static str {
+    match value {
+        VerticalAlign::Top => "top",
+        VerticalAlign::Middle => "middle",
+        VerticalAlign::Bottom => "bottom",
+    }
 }
 
 fn colour(key: &'static str, label: &'static str, value: Option<&StyleValue>) -> Field {
@@ -197,8 +274,21 @@ pub fn format_number(value: f64) -> String {
 
 /// Writes one field. A refused value leaves the document untouched.
 pub fn apply(document: &mut ThemeDocument, id: &str, key: &str, value: &str) -> Result<(), String> {
+    if key.ends_with(".typeToken") {
+        let token = token_id(value);
+        if !document.type_tokens.contains_key(token) {
+            return Err(format!("No type token named {token}"));
+        }
+    }
     let node = find_mut(&mut document.nodes, id).ok_or_else(|| "No node with that id".to_owned())?;
     apply_to_node(node, key, value)
+}
+
+/// The id a run's token field writes: `body` and `typeTokens.body` are the same
+/// token, and the document stores the bare id.
+fn token_id(value: &str) -> &str {
+    let value = value.trim();
+    value.strip_prefix("typeTokens.").unwrap_or(value)
 }
 
 fn apply_to_node(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
@@ -299,6 +389,36 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
         }
         Ok(parsed)
     };
+    if let Some(rest) = key.strip_prefix("kind.content.runs.") {
+        let Some((index, field)) = rest.split_once('.') else {
+            return Err("A run field is kind.content.runs.<i>.<field>".to_owned());
+        };
+        let index: usize = index
+            .parse()
+            .map_err(|_| "A run index is a whole number".to_owned())?;
+        let NodeKind::Text { content } = &mut node.kind else {
+            return Err("Only text has runs".to_owned());
+        };
+        let run = content
+            .runs
+            .get_mut(index)
+            .ok_or_else(|| format!("This node has no run {index}"))?;
+        return match (field, run) {
+            ("text", TextRun::Literal { text, .. }) => {
+                *text = value.to_owned();
+                Ok(())
+            }
+            ("text", TextRun::Value { .. }) => {
+                Err("A bound run takes its text from its binding".to_owned())
+            }
+            ("typeToken", TextRun::Literal { type_token, .. })
+            | ("typeToken", TextRun::Value { type_token, .. }) => {
+                *type_token = token_id(value).to_owned();
+                Ok(())
+            }
+            _ => Err(format!("{} is not editable yet", friendly(key))),
+        };
+    }
     match key {
         "kind.cornerRadius" => match &mut node.kind {
             NodeKind::Rectangle { corner_radius } => *corner_radius = number()?,
@@ -330,6 +450,33 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
             }
             _ => return Err("Only a video has playback flags".to_owned()),
         },
+        "kind.content.align" | "kind.content.overflow" | "kind.content.verticalAlign"
+        | "kind.content.vertical" => match &mut node.kind {
+            NodeKind::Text { content } => match (key, value.trim()) {
+                ("kind.content.align", "left") => content.align = TextAlign::Left,
+                ("kind.content.align", "center") => content.align = TextAlign::Center,
+                ("kind.content.align", "right") => content.align = TextAlign::Right,
+                ("kind.content.overflow", "visible") => content.overflow = TextOverflow::Visible,
+                ("kind.content.overflow", "clip") => content.overflow = TextOverflow::Clip,
+                ("kind.content.overflow", "ellipsis") => content.overflow = TextOverflow::Ellipsis,
+                ("kind.content.verticalAlign", "top") => {
+                    content.vertical_align = VerticalAlign::Top;
+                }
+                ("kind.content.verticalAlign", "middle") => {
+                    content.vertical_align = VerticalAlign::Middle;
+                }
+                ("kind.content.verticalAlign", "bottom") => {
+                    content.vertical_align = VerticalAlign::Bottom;
+                }
+                ("kind.content.vertical", flag) => {
+                    content.vertical = flag
+                        .parse::<bool>()
+                        .map_err(|_| "Vertical is true or false".to_owned())?;
+                }
+                (_, other) => return Err(format!("{other} is not a {} value", friendly(key))),
+            },
+            _ => return Err("Only text has layout fields".to_owned()),
+        },
         _ => return Err(format!("{} is not editable yet", friendly(key))),
     }
     Ok(())
@@ -359,9 +506,134 @@ fn friendly(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use yunari_model::document::TypeToken;
+
     use crate::fixtures::{document, rect};
 
     use super::*;
+
+    fn text_node() -> Node {
+        let mut node = rect("label", 0.0, 0.0, 200.0, 40.0);
+        node.kind = NodeKind::Text {
+            content: TextContent {
+                runs: vec![TextRun::Literal {
+                    text: "Hello".to_owned(),
+                    type_token: "body".to_owned(),
+                    style: BTreeMap::new(),
+                }],
+                box_: None,
+                overflow: TextOverflow::Visible,
+                align: TextAlign::Left,
+                vertical_align: VerticalAlign::Top,
+                vertical: false,
+            },
+        };
+        node
+    }
+
+    fn with_token(mut document: ThemeDocument) -> ThemeDocument {
+        document.type_tokens.insert("body".to_owned(), TypeToken {
+            family: "Inter".to_owned(),
+            weight: None,
+            face: None,
+        });
+        document
+    }
+
+    #[test]
+    fn a_text_run_shows_its_text_token_and_layout() {
+        let document = document(vec![text_node()]);
+        let section = sections(&document, "label")
+            .into_iter()
+            .find(|section| section.title == "Text")
+            .expect("a text section");
+        let keys: Vec<&str> = section.rows.iter().map(|row| row.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "kind.content.runs.0.text",
+                "kind.content.runs.0.typeToken",
+                "kind.content.align",
+                "kind.content.overflow",
+                "kind.content.verticalAlign",
+                "kind.content.vertical",
+            ]
+        );
+        assert_eq!(section.rows[0].value, "Hello");
+        assert_eq!(section.rows[2].value, "left");
+    }
+
+    #[test]
+    fn run_text_and_a_known_token_are_written() {
+        let mut document = with_token(document(vec![text_node()]));
+        assert!(apply(&mut document, "label", "kind.content.runs.0.text", "Hi there").is_ok());
+        assert!(
+            apply(&mut document, "label", "kind.content.runs.0.typeToken", "typeTokens.body")
+                .is_ok()
+        );
+        let NodeKind::Text { content } = &document.nodes[0].kind else {
+            panic!("still text");
+        };
+        let TextRun::Literal {
+            text, type_token, ..
+        } = &content.runs[0]
+        else {
+            panic!("still literal");
+        };
+        assert_eq!(text, "Hi there");
+        assert_eq!(type_token, "body");
+    }
+
+    #[test]
+    fn an_unknown_token_or_run_is_refused() {
+        let mut document = with_token(document(vec![text_node()]));
+        assert!(apply(&mut document, "label", "kind.content.runs.0.typeToken", "title").is_err());
+        assert!(apply(&mut document, "label", "kind.content.runs.7.text", "x").is_err());
+        assert!(apply(&mut document, "label", "kind.content.runs.zero.text", "x").is_err());
+    }
+
+    #[test]
+    fn alignment_and_overflow_take_their_named_values() {
+        let mut document = with_token(document(vec![text_node()]));
+        assert!(apply(&mut document, "label", "kind.content.align", "center").is_ok());
+        assert!(apply(&mut document, "label", "kind.content.overflow", "ellipsis").is_ok());
+        assert!(
+            apply(&mut document, "label", "kind.content.verticalAlign", "middle").is_ok()
+        );
+        let NodeKind::Text { content } = &document.nodes[0].kind else {
+            panic!("still text");
+        };
+        assert_eq!(content.align, TextAlign::Center);
+        assert_eq!(content.overflow, TextOverflow::Ellipsis);
+        assert_eq!(content.vertical_align, VerticalAlign::Middle);
+        assert!(apply(&mut document, "label", "kind.content.align", "justify").is_err());
+        assert!(apply(&mut document, "label", "kind.content.vertical", "maybe").is_err());
+    }
+
+    #[test]
+    fn a_bound_run_refuses_typed_text() {
+        let mut node = text_node();
+        node.kind = NodeKind::Text {
+            content: TextContent {
+                runs: vec![TextRun::Value {
+                    binding_id: "b".to_owned(),
+                    precision: None,
+                    unit_display: None,
+                    type_token: "body".to_owned(),
+                    style: BTreeMap::new(),
+                }],
+                box_: None,
+                overflow: TextOverflow::Visible,
+                align: TextAlign::Left,
+                vertical_align: VerticalAlign::Top,
+                vertical: false,
+            },
+        };
+        let mut document = with_token(document(vec![node]));
+        assert!(apply(&mut document, "label", "kind.content.runs.0.text", "x").is_err());
+    }
 
     #[test]
     fn the_transform_section_leads_for_a_selected_node() {
