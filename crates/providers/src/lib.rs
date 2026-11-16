@@ -7,6 +7,8 @@
 //! presented.
 
 pub mod clock;
+pub mod http;
+pub mod lhm;
 pub mod provider;
 pub mod registry;
 pub mod sample;
