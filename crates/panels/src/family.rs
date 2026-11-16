@@ -218,6 +218,9 @@ static FAMILIES: [PanelFamily; 4] = [
 pub enum StillFormat {
     Jpeg,
     Png,
+    /// Straight RGBA of the panel's own geometry, for a device that reorders
+    /// pixels itself.
+    Rgba,
 }
 
 /// One panel, open or not. Every driver is generic over its transport so a test

@@ -789,7 +789,7 @@ pub fn fit_into(
     };
     pixmap.fill(SkiaColor::TRANSPARENT);
 
-    let angle = (f32::from(rotation) * std::f32::consts::PI / 180.0);
+    let angle = f32::from(rotation) * std::f32::consts::PI / 180.0;
     let (sin, cos) = angle.sin_cos();
     let (source_width, source_height) = (pixels.width as f32, pixels.height as f32);
     // The box the turned picture needs, so the fit contains the turn rather
