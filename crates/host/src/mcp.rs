@@ -43,6 +43,26 @@ fn tools() -> Value {
             "name": "sensors_list",
             "description": "List every semantic key this host can read, with its unit.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "displays_list",
+            "description": "List the displays this host serves, without their credentials.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "monitors_list",
+            "description": "List this PC's monitors with the uuid a local display holds.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "path_presets_list",
+            "description": "List the path presets the Add pane offers, built-ins first.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
+            "name": "providers_list",
+            "description": "List the sensor providers and why any of them is unavailable.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         }
     ])
 }
@@ -134,6 +154,45 @@ fn call(app: &Shared, params: &Value) -> Result<Value, (i64, &'static str)> {
                 .collect();
             Ok(json!({"sensors": sensors}))
         }
+        "displays_list" => {
+            let displays: Vec<Value> = app
+                .displays
+                .lock()
+                .map(|store| {
+                    store
+                        .list()
+                        .iter()
+                        .map(|record| record.peer_json())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(json!({"displays": displays}))
+        }
+        "monitors_list" => match crate::monitors::list() {
+            Ok(monitors) => Ok(json!({
+                "monitors": monitors.iter().map(crate::monitors::Monitor::json).collect::<Vec<_>>(),
+            })),
+            Err(reason) => Ok(text(&reason, true)),
+        },
+        "path_presets_list" => Ok(crate::path_presets::Store::at(app.config.settings_dir())
+            .read()
+            .json()),
+        "providers_list" => {
+            let providers: Vec<Value> = app
+                .registry
+                .status()
+                .into_iter()
+                .map(|(id, label, health)| {
+                    let mut row = json!({"id": id, "label": label});
+                    match health.reason() {
+                        Some(reason) => row["reason"] = json!(reason),
+                        None => row["ready"] = json!(true),
+                    }
+                    row
+                })
+                .collect();
+            Ok(json!({"providers": providers}))
+        }
         _ => Ok(text("No such tool.", true)),
     };
     answer.map(|value| {
@@ -161,4 +220,25 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Response {
         "error": {"code": code, "message": message},
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_surface_this_host_owns_is_a_declared_tool() {
+        let declared = tools().to_string();
+        for name in [
+            "themes_list",
+            "themes_get",
+            "sensors_list",
+            "displays_list",
+            "monitors_list",
+            "path_presets_list",
+            "providers_list",
+        ] {
+            assert!(declared.contains(name), "{name} is not declared");
+        }
+    }
 }
