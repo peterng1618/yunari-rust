@@ -4,6 +4,7 @@
 //! The window owns the authoring state; every mutation goes through [`Editor`],
 //! so undo, the dirty dot and what a save writes cannot disagree.
 
+pub mod asset_finder;
 pub mod library_dialog;
 pub mod menus;
 pub mod path_preset_dialog;
@@ -36,6 +37,7 @@ use yunari_render::plan::PlanIssue;
 use yunari_render::{DisplayList, Fonts, Readings};
 use yunari_render_raster::Images;
 
+use self::asset_finder::AssetFinder;
 use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::path_preset_dialog::PathPresetDialog;
@@ -103,6 +105,7 @@ enum Overlay {
     ImportAsset(Prompt),
     Library(LibraryDialog),
     Widgets(WidgetDialog),
+    AssetFinder(AssetFinder),
     PathPresets(PathPresetDialog),
     Settings(Box<SettingsDialog>),
     Store(StoreDialog),
@@ -364,6 +367,9 @@ impl EditorWindow {
                 self.overlay = Some(Overlay::PathPresets(PathPresetDialog::new(
                     &self.settings_dir(),
                 )));
+            }
+            Command::AssetFinder => {
+                self.overlay = Some(Overlay::AssetFinder(AssetFinder::new()));
             }
             Command::Store => self.open_store(window, cx),
             Command::ImportAsset => {
@@ -1030,6 +1036,24 @@ impl EditorWindow {
             }
             Err(message) => self.status = Some(Status::error(message)),
         }
+    }
+
+    /// Places the picture an asset-finder row names, through the editor's own
+    /// import so the same sniffing and SVG refusal apply.
+    fn place_asset(&mut self, choice: &asset_finder::Choice, cx: &mut Context<Self>) {
+        self.overlay = None;
+        match asset_finder::bytes_of(&choice.pick) {
+            Ok((name, bytes)) => match self.editor.import_asset(&name, bytes) {
+                Ok(id) => {
+                    self.point_images();
+                    self.status = Some(Status::ok(format!("Imported {id}")));
+                    self.refresh();
+                }
+                Err(message) => self.status = Some(Status::error(message)),
+            },
+            Err(message) => self.status = Some(Status::error(message)),
+        }
+        cx.notify();
     }
 
     /// Opens a stored theme, its pictures and all, replacing the open one.
@@ -2247,6 +2271,7 @@ impl EditorWindow {
                 }
             }
             Overlay::Widgets(_)
+            | Overlay::AssetFinder(_)
             | Overlay::PathPresets(_)
             | Overlay::Settings(_)
             | Overlay::Store(_) => {
@@ -2709,6 +2734,7 @@ impl EditorWindow {
             }
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::AssetFinder(dialog)) => asset_finder::view(dialog, cx).into_any_element(),
             Some(Overlay::PathPresets(dialog)) => {
                 path_preset_dialog::view(dialog, cx).into_any_element()
             }

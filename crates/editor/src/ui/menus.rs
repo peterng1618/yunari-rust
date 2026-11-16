@@ -11,6 +11,7 @@ pub enum Command {
     Import,
     ImportAsset,
     Widgets,
+    AssetFinder,
     Settings,
     Undo,
     Redo,
@@ -50,7 +51,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -60,6 +61,7 @@ impl Command {
         Self::Import,
         Self::ImportAsset,
         Self::Widgets,
+        Self::AssetFinder,
         Self::Settings,
         Self::Undo,
         Self::Redo,
@@ -109,6 +111,7 @@ impl Command {
             Self::Import => "Import…",
             Self::ImportAsset => "Import asset…",
             Self::Widgets => "Widgets…",
+            Self::AssetFinder => "Asset finder…",
             Self::Settings => "Settings…",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -159,6 +162,7 @@ impl Command {
             Self::Import => "Ctrl+I",
             Self::ImportAsset => "Ctrl+Shift+I",
             Self::Widgets => "Ctrl+Shift+W",
+            Self::AssetFinder => "Ctrl+Shift+A",
             Self::Settings => "Ctrl+,",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Shift+Z",
@@ -214,6 +218,7 @@ impl Command {
             (true, false, "i") => Some(Self::Import),
             (true, true, "i") => Some(Self::ImportAsset),
             (true, true, "w") => Some(Self::Widgets),
+            (true, true, "a") => Some(Self::AssetFinder),
             (true, false, ",") => Some(Self::Settings),
             (true, false, "z") => Some(Self::Undo),
             (true, true, "z") => Some(Self::Redo),
