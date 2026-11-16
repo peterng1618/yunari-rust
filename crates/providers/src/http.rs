@@ -80,11 +80,22 @@ pub fn get_bytes(url: &str, timeout_ms: u64, limit: u64) -> Result<Vec<u8>, Stri
 
 /// One GET, with the source's own headers.
 pub fn get_with(request: &Get) -> Result<String, String> {
-    let bytes = bytes_with(request, MAX_BODY_BYTES)?;
+    let (bytes, _) = read(request, MAX_BODY_BYTES)?;
     String::from_utf8(bytes).map_err(|_| "the answer is not UTF-8 text.".to_owned())
 }
 
+/// One GET whose answer's headers matter too, as lower-cased name/value pairs.
+pub fn get_with_headers(request: &Get) -> Result<(String, Vec<(String, String)>), String> {
+    let (bytes, headers) = read(request, MAX_BODY_BYTES)?;
+    let text = String::from_utf8(bytes).map_err(|_| "the answer is not UTF-8 text.".to_owned())?;
+    Ok((text, headers))
+}
+
 fn bytes_with(request: &Get, limit: u64) -> Result<Vec<u8>, String> {
+    read(request, limit).map(|(bytes, _)| bytes)
+}
+
+fn read(request: &Get, limit: u64) -> Result<Answer, String> {
     let url = request.url.as_str();
     if let Some(refusal) = refusal(url) {
         return Err(refusal);
@@ -111,7 +122,17 @@ fn bytes_with(request: &Get, limit: u64) -> Result<Vec<u8>, String> {
     if !(200..300).contains(&status) {
         return Err(format!("the server answered {status}"));
     }
-    response
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_ascii_lowercase(),
+                value.to_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let bytes = response
         .body_mut()
         .with_config()
         .limit(limit)
@@ -121,8 +142,12 @@ fn bytes_with(request: &Get, limit: u64) -> Result<Vec<u8>, String> {
                 "the server answered more than it should.".to_owned()
             }
             other => other.to_string(),
-        })
+        })?;
+    Ok((bytes, headers))
 }
+
+/// One answer's body and its lower-cased headers.
+pub type Answer = (Vec<u8>, Vec<(String, String)>);
 
 /// One form POST, as its body text. The same deadline, body cap and refusal
 /// to follow a redirect as a GET; a form value is percent-encoded so it cannot

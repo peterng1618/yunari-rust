@@ -71,6 +71,13 @@ pub const STOCKS: &[Stock] = &[
         requires: None,
     },
     Stock {
+        id: "unsplash",
+        label: "Unsplash",
+        category: "image",
+        preset: None,
+        requires: Some("unsplash"),
+    },
+    Stock {
         id: "colorhunt",
         label: "Color Hunt",
         category: "colour",
@@ -682,8 +689,236 @@ fn fontawesome_bytes(result: &str) -> Option<AssetBytes> {
     )
 }
 
+const UNSPLASH_API: &str = "https://api.unsplash.com/";
+/// The API's documented `per_page` ceiling; a larger ask is a 400.
+const UNSPLASH_PER_PAGE: usize = 30;
+const UNSPLASH_LICENCE: &str = "Unsplash License";
+
+fn unsplash_url(path: &str, query: &[(&str, String)]) -> String {
+    let mut url = format!("{UNSPLASH_API}{path}");
+    let mut separator = '?';
+    for (name, value) in query {
+        url.push(separator);
+        separator = '&';
+        url.push_str(name);
+        url.push('=');
+        url.push_str(&yunari_providers::http::encode(value));
+    }
+    url
+}
+
+fn unsplash_text(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+}
+
+fn unsplash_host(url: Option<&Value>) -> String {
+    url.and_then(Value::as_str)
+        .and_then(|url| url.split_once("://"))
+        .and_then(|(_, rest)| rest.split('/').next())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default()
+}
+
+/// Unsplash+ carries one of three signs; any one drops it, so every row that
+/// reaches the grid is under the Unsplash License.
+fn unsplash_free(photo: &Value) -> bool {
+    if photo.get("premium") == Some(&Value::Bool(true))
+        || photo.get("plus") == Some(&Value::Bool(true))
+    {
+        return false;
+    }
+    let small = unsplash_host(photo.get("urls").and_then(|urls| urls.get("small")));
+    let regular = unsplash_host(photo.get("urls").and_then(|urls| urls.get("regular")));
+    small != "plus.unsplash.com" && regular != "plus.unsplash.com"
+}
+
+fn unsplash_result(photo: &Value) -> Option<Value> {
+    let id = unsplash_text(photo.get("id"))?;
+    let small = unsplash_text(photo.get("urls").and_then(|urls| urls.get("small")))?;
+    let page = unsplash_text(photo.get("links").and_then(|links| links.get("html")))?;
+    let name = unsplash_text(photo.get("alt_description"))
+        .or_else(|| unsplash_text(photo.get("description")))
+        .unwrap_or("Untitled");
+    Some(json!({
+        "id": id,
+        "name": name,
+        "kind": "image",
+        "preview": small,
+        "subtitle": unsplash_text(photo.get("user").and_then(|user| user.get("name"))),
+        "licence": UNSPLASH_LICENCE,
+        "sourceUrl": page,
+    }))
+}
+
+/// The last page the Editorial feed's `Link` header names, or one more than
+/// this page when it has a `next`, or the page itself when a short one ended
+/// the feed.
+fn unsplash_feed_pages(link: &str, page: u32, served: usize) -> u32 {
+    let mut more = false;
+    for entry in link.split(',') {
+        let page_in = || -> Option<u32> {
+            entry
+                .split_once("page=")
+                .and_then(|(_, rest)| rest.split(|letter: char| !letter.is_ascii_digit()).next())
+                .and_then(|number| number.parse().ok())
+        };
+        if entry.contains("rel=\"last\"")
+            && let Some(last) = page_in()
+        {
+            return last;
+        }
+        if entry.contains("rel=\"next\"") {
+            more = true;
+        }
+    }
+    if more || served >= UNSPLASH_PER_PAGE {
+        page.saturating_add(1)
+    } else {
+        page
+    }
+}
+
+fn unsplash_search(query: &str, page: u32, key: &str) -> Result<Page, String> {
+    use yunari_providers::http::{Get, get_with_headers};
+    let page = page.max(1);
+    let request = |url: String| Get {
+        url,
+        headers: vec![("Authorization".to_owned(), format!("Client-ID {key}"))],
+        timeout_ms: TIMEOUT_MS,
+        public_only: false,
+    };
+    if query.trim().is_empty() {
+        let url = unsplash_url(
+            "photos",
+            &[
+                ("page", page.to_string()),
+                ("per_page", UNSPLASH_PER_PAGE.to_string()),
+            ],
+        );
+        let (body, headers) = get_with_headers(&request(url))?;
+        let served: Vec<Value> = serde_json::from_str(&body).unwrap_or_default();
+        let results: Vec<Value> = served
+            .iter()
+            .filter(|photo| unsplash_free(photo))
+            .filter_map(unsplash_result)
+            .collect();
+        let link = headers
+            .iter()
+            .find(|(name, _)| name == "link")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_default();
+        return Ok(Page {
+            results,
+            // A filtered page can be shorter than the one Unsplash served; the
+            // page's own length, not the free results', proves another.
+            total_pages: unsplash_feed_pages(link, page, served.len()),
+        });
+    }
+    let url = unsplash_url(
+        "search/photos",
+        &[
+            ("query", query.to_owned()),
+            ("page", page.to_string()),
+            ("per_page", UNSPLASH_PER_PAGE.to_string()),
+        ],
+    );
+    let (body, _) = get_with_headers(&request(url))?;
+    let answer: Value = serde_json::from_str(&body)
+        .map_err(|_| "Unsplash's search answer is not JSON.".to_owned())?;
+    let results: Vec<Value> = answer
+        .get("results")
+        .and_then(Value::as_array)
+        .map(|photos| {
+            photos
+                .iter()
+                .filter(|photo| unsplash_free(photo))
+                .filter_map(unsplash_result)
+                .collect()
+        })
+        .unwrap_or_default();
+    let total_pages = answer
+        .get("total_pages")
+        .and_then(Value::as_u64)
+        .and_then(|pages| u32::try_from(pages).ok())
+        .unwrap_or(page);
+    Ok(Page {
+        results,
+        total_pages,
+    })
+}
+
+fn unsplash_bytes(result: &str, key: &str) -> Option<AssetBytes> {
+    use yunari_providers::http::{Get, get_with};
+    if result.is_empty()
+        || !result
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return None;
+    }
+    let auth = || vec![("Authorization".to_owned(), format!("Client-ID {key}"))];
+    let fetch = |url: &str| {
+        get_with(&Get {
+            url: url.to_owned(),
+            headers: auth(),
+            timeout_ms: TIMEOUT_MS,
+            public_only: false,
+        })
+    };
+    let details = fetch(&format!("{UNSPLASH_API}photos/{result}")).ok()?;
+    let details: Value = serde_json::from_str(&details).ok()?;
+    let trigger = details
+        .get("links")
+        .and_then(|links| links.get("download_location"))
+        .and_then(Value::as_str)?;
+    let full = details
+        .get("urls")
+        .and_then(|urls| urls.get("full"))
+        .and_then(Value::as_str)?;
+    let name = details
+        .get("slug")
+        .and_then(Value::as_str)
+        .filter(|slug| {
+            !slug.is_empty()
+                && slug
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+        .unwrap_or(result);
+    // The API guideline's download trigger, before the image itself.
+    if fetch(trigger).is_err() {
+        return Some(Err("Unsplash did not register the download.".to_owned()));
+    }
+    Some(
+        yunari_providers::http::get_bytes(full, TIMEOUT_MS, 64 * 1024 * 1024)
+            .map(|bytes| (bytes, "image/jpeg", format!("{name}.jpg"))),
+    )
+}
+
 /// Searches one stock source with the host's own HTTP client.
 pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
+    search_with(id, query, page, None)
+}
+
+/// Searches one stock source with the credential it names, when it names one.
+pub fn search_with(
+    id: &str,
+    query: &str,
+    page: u32,
+    credential: Option<&str>,
+) -> Result<Page, String> {
+    if let Some(stock) = stock(id)
+        && stock.requires.is_some()
+        && credential.is_none()
+    {
+        return Err(format!("{} needs an access key.", stock.label));
+    }
+    if id == "unsplash" {
+        let key = credential.ok_or_else(|| "Unsplash needs an access key.".to_owned())?;
+        return unsplash_search(query, page, key);
+    }
     if id == "fontawesome-free" {
         let catalogue = fontawesome()?;
         return Ok(fontawesome_page(&catalogue, query, page));
@@ -762,9 +997,20 @@ pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
     }
 }
 
-/// The bytes behind one result: an icon's own SVG, or nothing when the row is
-/// a preset rather than a file.
+/// The bytes behind one result: an icon's own SVG or a photo, and nothing
+/// when the row is a preset rather than a file.
 pub fn bytes(id: &str, result: &str) -> Option<AssetBytes> {
+    bytes_with(id, result, None)
+}
+
+/// The bytes behind one result, with the credential a keyed source needs.
+pub fn bytes_with(id: &str, result: &str, credential: Option<&str>) -> Option<AssetBytes> {
+    if id == "unsplash" {
+        let Some(key) = credential else {
+            return Some(Err("Unsplash needs an access key.".to_owned()));
+        };
+        return unsplash_bytes(result, key);
+    }
     if id == "fontawesome-free" {
         return fontawesome_bytes(result);
     }
@@ -799,6 +1045,47 @@ mod tests {
         assert!(String::from_utf8(svg).unwrap().contains("<svg"));
         assert!(bytes("lucide", "not-an-icon").is_none());
         assert!(icons("lineicons").is_some_and(|icons| !icons.is_empty()));
+    }
+
+    #[test]
+    fn unsplash_drops_every_plus_sign_and_reads_its_feed_pages() {
+        let free = serde_json::json!({
+            "id": "abc_1",
+            "alt_description": "A harbour",
+            "user": {"name": "A photographer"},
+            "links": {"html": "https://unsplash.com/photos/abc_1"},
+            "urls": {"small": "https://images.unsplash.com/small.jpg",
+                     "regular": "https://images.unsplash.com/regular.jpg"},
+        });
+        assert!(unsplash_free(&free));
+        let row = unsplash_result(&free).expect("a row");
+        assert_eq!(row["name"], "A harbour");
+        assert_eq!(row["subtitle"], "A photographer");
+        for paid in [
+            serde_json::json!({"plus": true, "urls": {}}),
+            serde_json::json!({"premium": true, "urls": {}}),
+            serde_json::json!({"urls": {"small": "https://plus.unsplash.com/x.jpg"}}),
+        ] {
+            assert!(!unsplash_free(&paid), "{paid}");
+        }
+        // A named last page wins; a next page means one more; a short feed
+        // ends where it is.
+        let last = r#"<https://api.unsplash.com/photos?page=2>; rel="next", <https://api.unsplash.com/photos?page=9>; rel="last""#;
+        assert_eq!(unsplash_feed_pages(last, 2, 30), 9);
+        let next = r#"<https://api.unsplash.com/photos?page=3>; rel="next""#;
+        assert_eq!(unsplash_feed_pages(next, 2, 4), 3);
+        assert_eq!(unsplash_feed_pages("", 2, 4), 2);
+    }
+
+    #[test]
+    fn a_keyed_source_without_its_key_says_which_key_it_needs() {
+        let error = search_with("unsplash", "harbour", 1, None).unwrap_err();
+        assert!(error.contains("access key"), "{error}");
+        assert!(
+            STOCKS
+                .iter()
+                .any(|stock| stock.id == "unsplash" && stock.requires == Some("unsplash"))
+        );
     }
 
     #[test]
