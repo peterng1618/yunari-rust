@@ -250,6 +250,7 @@ mod tests {
             "providers_list",
             "create_theme",
             "save_theme",
+            "add_card",
             "add_text",
             "add_shape",
             "import_asset",

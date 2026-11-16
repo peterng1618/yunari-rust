@@ -7,6 +7,7 @@
 
 pub mod installed;
 pub mod package;
+pub mod scene;
 
 /// The card pack a fresh install starts with. Committed, never generated.
 pub const STARTER: &[u8] = include_bytes!("../assets/starter-card.yunari-widget-package");
@@ -15,6 +16,7 @@ pub use installed::{InstalledPack, directory, install, installed};
 pub use package::{
     MAX_ARCHIVE_BYTES, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_EXPANDED_BYTES, Pack, Unit, read, write,
 };
+pub use scene::{Inserted, insert, place};
 
 #[cfg(test)]
 mod tests {

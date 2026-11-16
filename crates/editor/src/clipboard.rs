@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use yunari_model::document::{Node, NodeKind, TextContent, TextRun, ThemeDocument};
+use yunari_model::document::{Node, NodeKind, ThemeDocument};
 
 use crate::document::Editor;
 
@@ -121,115 +121,19 @@ fn asset_of(node: &Node) -> Option<String> {
 }
 
 /// Puts a copy of the clipboard into the document, offset and with fresh ids.
-/// Shared with widget insertion, so a pasted card and an inserted one are the
-/// same operation.
+/// The scene merge lives in `yunari_packs`, so the agent surface's card
+/// insertion and an editor paste are the same operation.
 pub(crate) fn insert(document: &mut ThemeDocument, clipboard: &Clipboard, offset: f64) -> Pasted {
-    let mut ids = BTreeMap::new();
-    for node in &clipboard.nodes {
-        map_ids(document, node, &mut ids);
-    }
-    let mut bindings = BTreeSet::new();
-    for held in document.bindings.values() {
-        for binding in held {
-            bindings.insert(binding.id.clone());
-        }
-    }
-    let mut binding_ids = BTreeMap::new();
-    let mut new_bindings = Vec::new();
-    for (old, held) in &clipboard.bindings {
-        let Some(new_node) = ids.get(old) else {
-            continue;
-        };
-        let mut copied = Vec::new();
-        for binding in held {
-            let fresh = fresh_name(&bindings, "binding");
-            bindings.insert(fresh.clone());
-            binding_ids.insert(binding.id.clone(), fresh.clone());
-            let mut binding = binding.clone();
-            binding.id = fresh;
-            copied.push(binding);
-        }
-        new_bindings.push((new_node.clone(), copied));
-    }
-    let mut pasted = Pasted::default();
-    for node in &clipboard.nodes {
-        let mut node = node.clone();
-        let root = ids.get(&node.id).cloned();
-        rename(&mut node, &ids, &binding_ids);
-        node.transform.x += offset;
-        node.transform.y += offset;
-        if let Some(id) = root {
-            pasted.ids.push(id);
-        }
-        if let Some(asset) = asset_of(&node)
-            && !document.assets.iter().any(|held| held.id == asset)
-            && !pasted.missing_assets.contains(&asset)
-        {
-            pasted.missing_assets.push(asset);
-        }
-        document.nodes.push(node);
-    }
-    for (id, held) in new_bindings {
-        document.bindings.insert(id, held);
-    }
-    pasted
-}
-
-/// One fresh id per node in the copied subtree, keyed by the old id.
-fn map_ids(document: &ThemeDocument, node: &Node, ids: &mut BTreeMap<String, String>) {
-    let mut taken: BTreeSet<String> = document
-        .nodes
-        .iter()
-        .map(|node| node.id.clone())
-        .chain(ids.values().cloned())
-        .collect();
-    for node in &document.nodes {
-        collect_ids(node, &mut taken);
-    }
-    let fresh = fresh_name(&taken, &node.id);
-    ids.insert(node.id.clone(), fresh);
-    for child in &node.children {
-        map_ids(document, child, ids);
-    }
-}
-
-fn collect_ids(node: &Node, into: &mut BTreeSet<String>) {
-    into.insert(node.id.clone());
-    for child in &node.children {
-        collect_ids(child, into);
-    }
-}
-
-/// `base-2`, `base-3` … until nothing holds the name.
-fn fresh_name(taken: &BTreeSet<String>, base: &str) -> String {
-    let mut number = 1;
-    loop {
-        let id = format!("{base}-{number}");
-        if !taken.contains(&id) {
-            return id;
-        }
-        number += 1;
-    }
-}
-
-fn rename(node: &mut Node, ids: &BTreeMap<String, String>, bindings: &BTreeMap<String, String>) {
-    if let Some(fresh) = ids.get(&node.id) {
-        node.id = fresh.clone();
-    }
-    if let NodeKind::Text {
-        content: TextContent { runs, .. },
-    } = &mut node.kind
-    {
-        for run in runs {
-            if let TextRun::Value { binding_id, .. } = run
-                && let Some(fresh) = bindings.get(binding_id)
-            {
-                *binding_id = fresh.clone();
-            }
-        }
-    }
-    for child in &mut node.children {
-        rename(child, ids, bindings);
+    let inserted = yunari_packs::insert(
+        document,
+        &clipboard.nodes,
+        &clipboard.bindings,
+        offset,
+        offset,
+    );
+    Pasted {
+        ids: inserted.ids,
+        missing_assets: inserted.missing_assets,
     }
 }
 

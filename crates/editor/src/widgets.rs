@@ -6,10 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use yunari_model::document::{Node, NodeKind};
 use yunari_packs::Unit;
 
-use crate::clipboard::{self, Clipboard};
+use crate::clipboard;
 use crate::document::Editor;
 
 pub const EMPTY_UNIT_MESSAGE: &str = "That unit holds nothing this editor can place.";
@@ -17,53 +16,27 @@ pub const EMPTY_UNIT_MESSAGE: &str = "That unit holds nothing this editor can pl
 /// Inserts one unit's scene, offset from where the package put it. Returns the
 /// id of its top-level node.
 pub fn insert(editor: &mut Editor, unit: &Unit, offset: f64) -> Result<String, String> {
-    if unit.document.nodes.is_empty() {
-        return Err(EMPTY_UNIT_MESSAGE.to_owned());
-    }
-    let asset_map = asset_ids(editor, unit);
-    let mut clipboard = Clipboard {
-        nodes: unit.document.nodes.clone(),
-        bindings: unit.document.bindings.clone(),
-        ..Clipboard::default()
-    };
-    for node in &mut clipboard.nodes {
-        remap_assets(node, &asset_map);
-    }
-
+    let root = unit
+        .document
+        .nodes
+        .first()
+        .ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())?;
+    let left = root.transform.x + offset;
+    let top = root.transform.y + offset;
     let mut inserted = None;
-    editor.edit(|document| {
-        for (id, value) in &unit.document.palette {
-            document
-                .palette
-                .entry(id.clone())
-                .or_insert_with(|| value.clone());
-        }
-        for (id, token) in &unit.document.type_tokens {
-            document
-                .type_tokens
-                .entry(id.clone())
-                .or_insert_with(|| token.clone());
-        }
-        for asset in &unit.document.assets {
-            let Some(fresh) = asset_map.get(&asset.id) else {
-                continue;
-            };
-            if document.assets.iter().any(|held| held.id == *fresh) {
-                continue;
-            }
-            let mut declaration = asset.clone();
-            declaration.id = fresh.clone();
-            document.assets.push(declaration);
-        }
-        let pasted = clipboard::insert(document, &clipboard, offset);
-        inserted = pasted.ids.first().cloned();
-    });
+    editor.edit(|document| inserted = Some(yunari_packs::scene::place(document, unit, left, top)));
+    let inserted = inserted.ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())?;
+    let id = inserted
+        .ids
+        .first()
+        .cloned()
+        .ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())?;
     for declaration in &unit.document.assets {
         if let Some(bytes) = unit.assets.get(&declaration.path) {
             editor.put_asset(declaration.path.clone(), bytes.clone());
         }
     }
-    inserted.ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())
+    Ok(id)
 }
 
 /// A package holding the selected top-level nodes and what travels with them.
@@ -99,48 +72,6 @@ pub fn selection_package(editor: &Editor, ids: &[String]) -> Result<Vec<u8>, Str
     yunari_packs::write(&unit, &assets)
 }
 
-/// The id each package asset takes in this document: the one already holding
-/// the same path, or a fresh id when the document has never seen it.
-fn asset_ids(editor: &Editor, unit: &Unit) -> BTreeMap<String, String> {
-    let document = editor.document();
-    let mut mapping = BTreeMap::new();
-    let mut taken: Vec<String> = document.assets.iter().map(|a| a.id.clone()).collect();
-    for asset in &unit.document.assets {
-        if let Some(held) = document.assets.iter().find(|held| held.path == asset.path) {
-            mapping.insert(asset.id.clone(), held.id.clone());
-            continue;
-        }
-        let mut id = asset.id.clone();
-        let mut counter = 2;
-        while taken.contains(&id) {
-            id = format!("{}-{counter}", asset.id);
-            counter += 1;
-        }
-        taken.push(id.clone());
-        mapping.insert(asset.id.clone(), id);
-    }
-    mapping
-}
-
-fn remap_assets(node: &mut Node, mapping: &BTreeMap<String, String>) {
-    match &mut node.kind {
-        NodeKind::Image { content } => {
-            if let Some(fresh) = mapping.get(&content.asset_id) {
-                content.asset_id = fresh.clone();
-            }
-        }
-        NodeKind::Video { content } => {
-            if let Some(fresh) = mapping.get(&content.asset_id) {
-                content.asset_id = fresh.clone();
-            }
-        }
-        _ => {}
-    }
-    for child in &mut node.children {
-        remap_assets(child, mapping);
-    }
-}
-
 /// The declarations a unit's insertion could not carry, for the status line.
 pub fn missing_assets(editor: &Editor, unit: &Unit) -> Vec<String> {
     let document = editor.document();
@@ -158,7 +89,7 @@ pub fn missing_assets(editor: &Editor, unit: &Unit) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use yunari_model::document::{
-        AssetKind, AssetReference, Binding, ImageContent, ImageFit, NodeKind, Transform,
+        AssetKind, AssetReference, Binding, ImageContent, ImageFit, Node, NodeKind, Transform,
     };
 
     use crate::fixtures::{document, rect};

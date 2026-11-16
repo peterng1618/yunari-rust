@@ -126,6 +126,21 @@ pub fn tools() -> Value {
             }
         },
         {
+            "name": "add_card",
+            "description": "Insert a card-library unit into the draft at artboard coordinates. Returns the created ids and any kit issues.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "unit": {"type": "string", "minLength": 1},
+                    "left": {"type": "number"},
+                    "top": {"type": "number"},
+                    "themeId": theme_id()
+                },
+                "required": ["unit", "left", "top"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "add_text",
             "description": "Add a text object with literal and value runs. A value run names a binding supplied in bindings. A run may name a type token (heading, body or mono).",
             "inputSchema": {
@@ -428,6 +443,7 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "get_draft" => get_draft(app, args),
         "validate_theme" => validate_theme(app, args),
         "list_objects" => list_objects(app, args),
+        "add_card" => add_card(app, args),
         "add_text" => add_text(app, args),
         "add_shape" => add_shape(app, args),
         "import_asset" => import_asset(app, args),
@@ -765,6 +781,34 @@ fn style_ref(prefix: &str, token: &str) -> yunari_model::document::StyleValue {
 fn style_literal(value: Value) -> yunari_model::document::StyleValue {
     use yunari_model::document::{StyleLiteral, StyleValue};
     StyleValue::Literal(StyleLiteral { value })
+}
+
+fn add_card(app: &Shared, args: &Value) -> Result<Value, String> {
+    let unit_id = text(args, "unit").ok_or("add_card needs a unit.")?;
+    let left = number(args, "left").ok_or("add_card needs a left.")?;
+    let top = number(args, "top").ok_or("add_card needs a top.")?;
+    let directory = crate::packs_routes::directory(app);
+    let unit = yunari_packs::installed(&directory)
+        .into_iter()
+        .flat_map(|pack| pack.units)
+        .find(|unit| unit.id == unit_id)
+        .ok_or_else(|| format!("No installed card is named \"{unit_id}\"."))?;
+    with_draft(app, args, |draft| {
+        if unit.document.nodes.is_empty() {
+            return Err(format!("The \"{unit_id}\" card holds nothing to place."));
+        }
+        let placed = yunari_packs::place(&mut draft.document, &unit, left, top);
+        for declaration in &unit.document.assets {
+            if let Some(bytes) = unit.assets.get(&declaration.path) {
+                draft.assets.insert(declaration.path.clone(), bytes.clone());
+            }
+        }
+        Ok(json!({
+            "themeId": draft.document.id,
+            "objectIds": placed.ids,
+            "missingAssets": placed.missing_assets,
+        }))
+    })
 }
 
 fn add_text(app: &Shared, args: &Value) -> Result<Value, String> {
@@ -1575,6 +1619,51 @@ mod tests {
             .expect("a save");
         assert_eq!(saved["id"], "boards");
         assert!(app.library.read("boards").is_ok());
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn an_installed_card_lands_at_the_corner_the_call_names() {
+        let app = app();
+        yunari_packs::install(&crate::packs_routes::directory(&app), yunari_packs::STARTER)
+            .expect("the starter pack");
+        let theme_id = draft_id(&app);
+        let placed = call(
+            &app,
+            "add_card",
+            &json!({"themeId": theme_id, "unit": "card", "left": 240, "top": 90}),
+        )
+        .expect("a tool")
+        .expect("a placed card");
+        let object_ids = placed["objectIds"].as_array().expect("ids");
+        assert_eq!(object_ids.len(), 1);
+        let object_id = object_ids[0].as_str().expect("an id").to_owned();
+        let drafts = app.drafts.lock().expect("drafts");
+        let draft = drafts.draft(Some(&theme_id)).expect("the draft");
+        let root = draft
+            .document
+            .nodes
+            .iter()
+            .find(|node| node.id == object_id)
+            .expect("the placed card");
+        assert_eq!(
+            (root.transform.x, root.transform.y),
+            (240.0, 90.0),
+            "the card's corner is where the call put it"
+        );
+        assert!(!root.children.is_empty(), "the card keeps its rows");
+        let carried: Vec<&str> = draft
+            .document
+            .bindings
+            .values()
+            .flatten()
+            .map(|binding| binding.semantic_key.as_str())
+            .collect();
+        assert!(
+            carried.contains(&"cpu.load"),
+            "the card's readings travel with it: {carried:?}"
+        );
+        drop(drafts);
         std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 
