@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// One page of a finder grid, everywhere: a source that paged differently
@@ -81,6 +82,14 @@ pub const STOCKS: &[Stock] = &[
     Stock {
         id: "google-fonts",
         label: "Google Fonts",
+        category: "font",
+        preset: None,
+        requires: None,
+        body: "font-picker",
+    },
+    Stock {
+        id: "curated-fonts",
+        label: "Curated fonts",
         category: "font",
         preset: None,
         requires: None,
@@ -1126,6 +1135,202 @@ fn fontsource_bytes(result: &str) -> Option<AssetBytes> {
     )
 }
 
+const CURATED_SOURCE: &str = "curated-fonts";
+
+#[derive(Debug, Deserialize)]
+struct CuratedLicence {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CuratedFace {
+    id: String,
+    family: String,
+    weight: u32,
+    style: String,
+    format: String,
+    subset: String,
+    #[serde(rename = "sourceUrl")]
+    source_url: String,
+    license: CuratedLicence,
+}
+
+#[derive(Debug, Deserialize)]
+struct CuratedTrioFace {
+    #[serde(flatten)]
+    face: CuratedFace,
+    role: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CuratedTrio {
+    id: String,
+    name: String,
+    description: String,
+    faces: Vec<CuratedTrioFace>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CuratedCatalogue {
+    faces: Vec<CuratedFace>,
+    trios: Vec<CuratedTrio>,
+}
+
+/// The catalogue ships inside this build: browsing costs no CDN call, and the
+/// bytes of a face are fetched only when an author applies it.
+fn curated() -> &'static CuratedCatalogue {
+    static HELD: OnceLock<CuratedCatalogue> = OnceLock::new();
+    HELD.get_or_init(|| {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/data/curated-fonts.json"
+        )))
+        .expect("the curated catalogue is built in and valid")
+    })
+}
+
+/// Spaces and hyphens are one separator, so "fira code" finds "Fira Code".
+fn curated_fold(value: &str) -> String {
+    let mut folded = String::with_capacity(value.len());
+    let mut separator = false;
+    for letter in value.chars() {
+        if letter.is_whitespace() || letter == '-' {
+            separator = true;
+            continue;
+        }
+        if separator && !folded.is_empty() {
+            folded.push('-');
+        }
+        separator = false;
+        folded.extend(letter.to_lowercase());
+    }
+    folded
+}
+
+fn curated_cut(face: &CuratedFace) -> Value {
+    json!({
+        "id": format!("cut:{}", face.id),
+        "source": CURATED_SOURCE,
+        "family": face.family,
+        "weight": face.weight,
+        "style": face.style,
+        "subset": face.subset,
+        "format": face.format,
+        "previewUrl": face.source_url,
+        "licence": face.license.name,
+        "sourceUrl": face.source_url,
+    })
+}
+
+/// A family row is one cut per distinct family, addressed by the family's
+/// first face.
+fn curated_family_rows(catalogue: &CuratedCatalogue) -> Vec<Value> {
+    let mut families: Vec<(&str, Vec<&CuratedFace>)> = Vec::new();
+    for face in &catalogue.faces {
+        match families.iter_mut().find(|(name, _)| *name == face.family) {
+            Some((_, faces)) => faces.push(face),
+            None => families.push((face.family.as_str(), vec![face])),
+        }
+    }
+    families
+        .into_iter()
+        .filter_map(|(name, faces)| {
+            let lead = *faces.first()?;
+            Some(json!({
+                "id": format!("cut:{}", lead.id),
+                "name": name,
+                "kind": "font",
+                "preview": "",
+                "subtitle": format!("{} cuts", faces.len()),
+                "licence": lead.license.name,
+                "sourceUrl": lead.source_url,
+                "font": {"cuts": faces.iter().map(|face| curated_cut(face)).collect::<Vec<_>>()},
+            }))
+        })
+        .collect()
+}
+
+fn curated_trio_row(trio: &CuratedTrio) -> Option<Value> {
+    let heading = trio.faces.first()?;
+    let mut roles = serde_json::Map::new();
+    for face in &trio.faces {
+        roles.insert(face.role.clone(), curated_cut(&face.face));
+    }
+    Some(json!({
+        "id": format!("trio:{}", trio.id),
+        "name": trio.name,
+        "kind": "font",
+        "preview": "",
+        "subtitle": trio.description,
+        "licence": heading.face.license.name,
+        "sourceUrl": heading.face.source_url,
+        "font": {
+            "cuts": trio.faces.iter().map(|face| curated_cut(&face.face)).collect::<Vec<_>>(),
+            "trio": {
+                "id": trio.id,
+                "name": trio.name,
+                "description": trio.description,
+                "roles": roles,
+            },
+        },
+    }))
+}
+
+/// Trios first: a pairing is the authored decision, a single family the
+/// fallback. The catalogue is small enough to answer one page at once.
+fn curated_page(query: &str) -> Page {
+    let catalogue = curated();
+    let wanted = curated_fold(query.trim());
+    let matches = |value: &str| wanted.is_empty() || curated_fold(value).contains(&wanted);
+    let mut results: Vec<Value> = catalogue
+        .trios
+        .iter()
+        .filter(|trio| {
+            matches(&trio.name)
+                || matches(&trio.description)
+                || trio.faces.iter().any(|face| matches(&face.face.family))
+        })
+        .filter_map(curated_trio_row)
+        .collect();
+    results.extend(
+        curated_family_rows(catalogue)
+            .into_iter()
+            .filter(|row| row["name"].as_str().is_some_and(matches)),
+    );
+    Page {
+        results,
+        total_pages: 1,
+    }
+}
+
+/// A family row is addressed by its lead cut; a trio row by its heading cut.
+fn curated_face_id(result: &str) -> Option<String> {
+    let catalogue = curated();
+    if let Some(id) = result.strip_prefix("cut:") {
+        return catalogue
+            .faces
+            .iter()
+            .find(|face| face.id == id)
+            .map(|face| face.id.clone());
+    }
+    let id = result.strip_prefix("trio:")?;
+    catalogue
+        .trios
+        .iter()
+        .find(|trio| trio.id == id)
+        .and_then(|trio| trio.faces.first())
+        .map(|face| face.face.id.clone())
+}
+
+fn curated_bytes(result: &str) -> Option<AssetBytes> {
+    let id = curated_face_id(result)?;
+    let face = curated().faces.iter().find(|face| face.id == id)?;
+    Some(
+        yunari_providers::http::get_bytes(&face.source_url, TIMEOUT_MS, 16 * 1024 * 1024)
+            .map(|bytes| (bytes, "font/woff2", format!("{}.woff2", face.id))),
+    )
+}
+
 /// Searches one stock source with the host's own HTTP client.
 pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
     search_with(id, query, page, None)
@@ -1150,6 +1355,9 @@ pub fn search_with(
     }
     if id == "google-fonts" {
         return fontsource_search(query, page);
+    }
+    if id == "curated-fonts" {
+        return Ok(curated_page(query));
     }
     if id == "fontawesome-free" {
         let catalogue = fontawesome()?;
@@ -1245,6 +1453,9 @@ pub fn bytes_with(id: &str, result: &str, credential: Option<&str>) -> Option<As
     }
     if id == "google-fonts" {
         return fontsource_bytes(result);
+    }
+    if id == "curated-fonts" {
+        return curated_bytes(result);
     }
     if id == "fontawesome-free" {
         return fontawesome_bytes(result);
@@ -1470,5 +1681,82 @@ mod tests {
         let none = palette_page(&items, "dawn", 3, "CC0-1.0", true);
         assert!(none.results.is_empty());
         assert_eq!(none.total_pages, 1);
+    }
+
+    #[test]
+    fn the_curated_catalogue_ships_with_its_faces_and_trios() {
+        let catalogue = curated();
+        assert!(
+            catalogue.faces.len() > 900,
+            "{} faces",
+            catalogue.faces.len()
+        );
+        assert!(
+            catalogue.trios.len() > 300,
+            "{} trios",
+            catalogue.trios.len()
+        );
+        assert!(
+            catalogue
+                .faces
+                .iter()
+                .all(|face| face.source_url.starts_with("https://cdn.jsdelivr.net/"))
+        );
+    }
+
+    #[test]
+    fn a_curated_search_offers_trios_before_families_and_folds_its_separators() {
+        let page = curated_page("");
+        assert_eq!(page.total_pages, 1);
+        assert!(page.results.len() > 400, "{} rows", page.results.len());
+        let trio = &page.results[0];
+        assert!(trio["id"].as_str().unwrap().starts_with("trio:"));
+        assert_eq!(trio["kind"], "font");
+        assert_eq!(
+            trio["font"]["trio"]["roles"]["heading"]["source"],
+            CURATED_SOURCE
+        );
+        assert!(page.results.iter().any(|row| {
+            let id = row["id"].as_str().unwrap_or_default();
+            id.starts_with("cut:") && id.contains("fira-code")
+        }));
+
+        let folded = curated_page("fira code");
+        assert!(
+            folded.results.iter().any(|row| row["name"] == "Fira Code"),
+            "{} rows",
+            folded.results.len()
+        );
+        // A family row carries every cut of that one family.
+        let family = folded
+            .results
+            .iter()
+            .find(|row| row["id"].as_str().is_some_and(|id| id.starts_with("cut:")))
+            .expect("a family row");
+        let cuts = family["font"]["cuts"].as_array().expect("cuts");
+        assert!(cuts.iter().all(|cut| cut["family"] == family["name"]));
+        assert_eq!(family["subtitle"], format!("{} cuts", cuts.len()));
+    }
+
+    #[test]
+    fn a_curated_row_resolves_to_a_face_and_nothing_else_does() {
+        let catalogue = curated();
+        let lead = catalogue
+            .faces
+            .iter()
+            .find(|face| face.id == "abril-fatface-400")
+            .expect("a known face");
+        assert_eq!(
+            curated_face_id(&format!("cut:{}", lead.id)).as_deref(),
+            Some("abril-fatface-400")
+        );
+        let trio = &catalogue.trios[0];
+        assert_eq!(
+            curated_face_id(&format!("trio:{}", trio.id)).as_deref(),
+            Some(trio.faces[0].face.id.as_str())
+        );
+        assert!(curated_face_id("cut:not-a-face").is_none());
+        assert!(curated_face_id("trio:not-a-trio").is_none());
+        assert!(curated_face_id("abril-fatface-400").is_none());
     }
 }
