@@ -8900,6 +8900,7 @@ dependencies = [
  "tokio-rustls",
  "tower",
  "ureq",
+ "uuid",
  "yunari-library",
  "yunari-model",
  "yunari-packs",

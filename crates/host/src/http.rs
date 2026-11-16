@@ -65,6 +65,8 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/pairing/sessions", get(sessions).post(new_session))
         .route("/api/displays/panels", get(crate::panels_routes::panels))
         .route("/api/displays", get(displays).post(add_display))
+        // What this PC can drive, named so a local display record can hold it.
+        .route("/api/monitors", get(monitors))
         .route(
             "/api/displays/{id}/panel/command",
             post(crate::panels_routes::command),
@@ -795,6 +797,19 @@ async fn displays(
     Json(json!({"displays": displays})).into_response()
 }
 
+async fn monitors(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::monitors::list() {
+        Ok(monitors) => Json(json!({
+            "monitors": monitors.iter().map(crate::monitors::Monitor::json).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(reason) => (StatusCode::SERVICE_UNAVAILABLE, reason).into_response(),
+    }
+}
+
 async fn root(
     State(app): State<Shared>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -1464,6 +1479,8 @@ mod tests {
         let app = app("remote");
         let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
         let (status, _) = ask(app.clone(), "/api/displays", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask(app.clone(), "/api/monitors", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = ask(app.clone(), "/api/pairing/code", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);

@@ -12,6 +12,7 @@ pub mod http;
 pub mod identity;
 pub mod lock;
 pub mod mcp;
+pub mod monitors;
 pub mod origins;
 pub mod packs_routes;
 pub mod pages;
