@@ -3,6 +3,7 @@
 
 use rusb::UsbContext;
 
+pub mod device;
 pub mod protocol;
 
 use crate::family::{PanelFamily, PanelHint};

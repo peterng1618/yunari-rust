@@ -130,24 +130,29 @@ pub fn image(opcode: u8, payload: &[u8], elapsed_ms: u32) -> Vec<u8> {
     )
 }
 
+/// The plaintext of a frame, for tests that assert field placement rather than
+/// reading opaque bytes back.
+#[cfg(test)]
+pub(crate) fn decrypt_block(packet: &[u8]) -> [u8; COMMAND_SIZE] {
+    use cipher::BlockDecryptMut;
+    // PKCS7 rounds the 500-byte block up to the next 8-byte multiple; the bytes
+    // before the trailer hold that padding, not ciphertext.
+    let sealed_len = COMMAND_SIZE.div_ceil(8) * 8;
+    let mut sealed = packet[..sealed_len.min(packet.len())].to_vec();
+    let plain = cbc::Decryptor::<Des>::new(&PACKET_KEY.into(), &PACKET_KEY.into())
+        .decrypt_padded_vec_mut::<Pkcs7>(&mut sealed)
+        .expect("a decryptable block");
+    let mut block = [0_u8; COMMAND_SIZE];
+    block.copy_from_slice(&plain);
+    block
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The panel refuses a packet it cannot decrypt, so the tests decrypt with
-    // the same literal and read the plaintext fields back.
     fn decrypt(packet: &[u8]) -> [u8; COMMAND_SIZE] {
-        use cipher::BlockDecryptMut;
-        // PKCS7 rounds the 500-byte block up to the next 8-byte multiple; the
-        // bytes before the trailer hold that padding, not ciphertext.
-        let sealed_len = COMMAND_SIZE.div_ceil(8) * 8;
-        let mut sealed = packet[..sealed_len].to_vec();
-        let plain = cbc::Decryptor::<Des>::new(&PACKET_KEY.into(), &PACKET_KEY.into())
-            .decrypt_padded_vec_mut::<Pkcs7>(&mut sealed)
-            .expect("a decryptable block");
-        let mut block = [0_u8; COMMAND_SIZE];
-        block.copy_from_slice(&plain);
-        block
+        decrypt_block(packet)
     }
 
     #[test]
