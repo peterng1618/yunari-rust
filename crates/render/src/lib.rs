@@ -8,6 +8,7 @@ pub mod chart;
 mod color;
 mod display_list;
 mod format;
+pub mod icons;
 pub mod image;
 pub mod instant;
 mod path;

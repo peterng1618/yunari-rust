@@ -141,6 +141,22 @@ pub fn tools() -> Value {
             }
         },
         {
+            "name": "add_icon",
+            "description": "Place a glyph from the shared icon set.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "icon": {"type": "string", "minLength": 1},
+                    "box": box_schema,
+                    "name": {"type": "string", "minLength": 1},
+                    "token": {"type": "string", "minLength": 1},
+                    "themeId": theme_id()
+                },
+                "required": ["icon", "box"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "add_text",
             "description": "Add a text object with literal and value runs. A value run names a binding supplied in bindings. A run may name a type token (heading, body or mono).",
             "inputSchema": {
@@ -446,6 +462,7 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "add_card" => add_card(app, args),
         "add_text" => add_text(app, args),
         "add_shape" => add_shape(app, args),
+        "add_icon" => add_icon(app, args),
         "import_asset" => import_asset(app, args),
         "add_image" => add_image(app, args),
         "add_chart" => add_chart(app, args),
@@ -984,6 +1001,47 @@ fn add_shape(app: &Shared, args: &Value) -> Result<Value, String> {
             name: text(args, "name"),
             kind: node_kind,
             transform,
+            visible: true,
+            locked: false,
+            style,
+            glass: None,
+            children: Vec::new(),
+        };
+        added(draft, node, Vec::new())
+    })
+}
+
+fn add_icon(app: &Shared, args: &Value) -> Result<Value, String> {
+    let name = text(args, "icon").ok_or("add_icon needs an icon.")?;
+    let transform = transform(args)?;
+    let size = transform.width.min(transform.height);
+    let glyph = yunari_render::icons::glyph(&name, size).ok_or_else(|| {
+        format!(
+            "There is no icon \"{name}\" in the shared icon set ({}).",
+            yunari_render::icons::names().join(", ")
+        )
+    })?;
+    let token = text(args, "token").unwrap_or_else(|| "text".to_owned());
+    let mut style = yunari_model::document::StyleMap::new();
+    style.insert("stroke".to_owned(), style_ref("palette", &token));
+    style.insert(
+        "strokeWidth".to_owned(),
+        style_literal(Value::from(glyph.stroke_width)),
+    );
+    with_draft(app, args, |draft| {
+        let node = Node {
+            id: free_id(&draft.document, "icon"),
+            name: text(args, "name"),
+            kind: NodeKind::Path {
+                data: glyph.data.clone(),
+                stroke_width: glyph.stroke_width,
+                closed: false,
+            },
+            transform: Transform {
+                width: size,
+                height: size,
+                ..transform
+            },
             visible: true,
             locked: false,
             style,
@@ -1664,6 +1722,58 @@ mod tests {
             "the card's readings travel with it: {carried:?}"
         );
         drop(drafts);
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn an_icon_lands_as_path_data_and_an_unknown_name_is_refused() {
+        let app = app();
+        let theme_id = draft_id(&app);
+        let placed = call(
+            &app,
+            "add_icon",
+            &json!({
+                "themeId": theme_id,
+                "icon": "cpu",
+                "box": {"left": 40, "top": 50, "width": 48, "height": 48}
+            }),
+        )
+        .expect("a tool")
+        .expect("a glyph");
+        let object_id = placed["objectId"].as_str().expect("an id").to_owned();
+        let drafts = app.drafts.lock().expect("drafts");
+        let draft = drafts.draft(Some(&theme_id)).expect("the draft");
+        let node = draft
+            .document
+            .nodes
+            .iter()
+            .find(|node| node.id == object_id)
+            .expect("the glyph");
+        let NodeKind::Path {
+            data,
+            stroke_width,
+            closed,
+        } = &node.kind
+        else {
+            panic!("an icon is a path");
+        };
+        assert!(data.starts_with('M'), "{data}");
+        assert!(!closed);
+        assert!((*stroke_width - 4.0).abs() < 1e-9, "{stroke_width}");
+        assert_eq!((node.transform.width, node.transform.height), (48.0, 48.0));
+        drop(drafts);
+        let refused = call(
+            &app,
+            "add_icon",
+            &json!({
+                "themeId": theme_id,
+                "icon": "no-such-icon",
+                "box": {"left": 0, "top": 0, "width": 24, "height": 24}
+            }),
+        )
+        .expect("a tool")
+        .expect_err("an unknown glyph");
+        assert!(refused.contains("shared icon set"), "{refused}");
         std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 

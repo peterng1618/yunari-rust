@@ -923,14 +923,14 @@ mod tests {
             &document(
                 r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
                     "nodes":[{"id":"n1","transform":{"width":20,"height":20},
-                    "kind":{"type":"path","data":"M0 0 A 5 5 0 0 1 10 0"},
+                    "kind":{"type":"path","data":"M0 0 L"},
                     "style":{"stroke":{"value":"#00ff00"},"strokeWidth":{"value":1}}}]}"##,
             ),
             &mut Fonts::new(),
         );
         assert!(list.ops.is_empty());
         assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
-        assert!(issues[0].detail.contains("arc"));
+        assert!(issues[0].detail.contains("not readable"));
     }
 
     #[test]

@@ -251,6 +251,7 @@ mod tests {
             "create_theme",
             "save_theme",
             "add_card",
+            "add_icon",
             "add_text",
             "add_shape",
             "import_asset",
