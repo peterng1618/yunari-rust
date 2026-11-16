@@ -697,7 +697,7 @@ recorded product decision.
 | 25 | Steam presence and metadata | Partial | The foreground game is named from Steam's local library with cached box art; store metadata and non-Steam launchers (Epic/GOG/Itch/Xbox) are deferred |
 | 26 | Weather backends and places | Partial | Open-Meteo with the place from `weather.json`; WeatherAPI/OpenWeatherMap, Windows location and condition translations deferred |
 | 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
-| 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | GET sources with pointers, plain-text `headers` and `query` (both validated, a query value percent-encoded so it cannot add a parameter), and a per-source `timeoutMs` (500 ms–30 s). `auth` — which needs the encrypted credential store — and paging are deferred |
+| 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | GET sources with pointers, plain-text `headers` and `query` (both validated, a query value percent-encoded so it cannot add a parameter), and a per-source `timeoutMs` (500 ms–30 s). Paged sources fetch every page in order and merge them, failing whole when one page fails. `auth` is deferred: it needs the encrypted credential store |
 | 29 | Extension platform | Dropped | Out of scope for v1 (this spec) |
 | 30 | Store: five kinds, version ladder, verified download, staged refusals, kill list, publisher rules, consent | Deferred | Only the catalogue listing is proxied; nothing downloads or installs yet |
 | 31 | Readings are truthful | Met | Non-negotiable in `sample::{Reading, Status}` and every provider test |

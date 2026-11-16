@@ -50,6 +50,20 @@ pub struct CustomField {
     pub offset: f64,
 }
 
+pub const MAX_PAGES: u32 = 100;
+
+/// Pages fetched in order and merged only when every one succeeded: a partial
+/// body is not a complete reading.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Paging {
+    /// The query parameter the page number goes in.
+    pub page_param: String,
+    pub first_page: u32,
+    pub max_pages: u32,
+    /// A pointer to the array each page carries, when the page is an envelope.
+    pub items_path: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CustomSource {
     pub id: String,
@@ -62,6 +76,8 @@ pub struct CustomSource {
     pub headers: Vec<(String, String)>,
     /// Query parameters added to the address, already encoded.
     pub query: Vec<(String, String)>,
+    /// How several pages become one document, when the source is paged.
+    pub paging: Option<Paging>,
     pub fields: Vec<CustomField>,
 }
 
@@ -71,17 +87,21 @@ impl CustomSource {
         format!("custom.{}.{}", self.id, field.id)
     }
 
-    /// The address the request goes to, with the source's query parameters.
-    pub fn request_url(&self) -> String {
-        if self.query.is_empty() {
-            return self.url.clone();
-        }
-        let separator = if self.url.contains('?') { '&' } else { '?' };
-        let pairs: Vec<String> = self
+    /// The address the request goes to, with the source's query parameters and
+    /// the page number when one is named.
+    pub fn request_url(&self, page: Option<u32>) -> String {
+        let mut pairs: Vec<String> = self
             .query
             .iter()
             .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
             .collect();
+        if let (Some(paging), Some(page)) = (&self.paging, page) {
+            pairs.push(format!("{}={page}", encode(&paging.page_param)));
+        }
+        if pairs.is_empty() {
+            return self.url.clone();
+        }
+        let separator = if self.url.contains('?') { '&' } else { '?' };
         format!("{}{separator}{}", self.url, pairs.join("&"))
     }
 }
@@ -98,6 +118,59 @@ fn encode(text: &str) -> String {
         }
     }
     encoded
+}
+
+/// How a paged source becomes one document.
+fn parse_paging(id: &str, value: Option<&Value>) -> Result<Option<Paging>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(record) = value.as_object() else {
+        return Err(format!(
+            "The source {id} has a paging block that is not an object."
+        ));
+    };
+    let page_param = record
+        .get("pageParam")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if page_param.is_empty()
+        || page_param.len() > MAX_HEADER_NAME
+        || !page_param
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(format!(
+            "The source {id} pages on a parameter name that is not usable."
+        ));
+    }
+    let whole = |field: &str, fallback: u32, min: u32, max: u32| {
+        record
+            .get(field)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value.clamp(min as f64, max as f64) as u32)
+            .unwrap_or(fallback)
+    };
+    let first_page = whole("firstPage", 1, 0, MAX_PAGES - 1);
+    let max_pages = whole("maxPages", 1, 1, MAX_PAGES);
+    let items_path = record
+        .get("itemsPath")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let Some(path) = &items_path
+        && !crate::custom::pointer::valid(path)
+    {
+        return Err(format!(
+            "The source {id} pages on an items path that is not a JSON pointer."
+        ));
+    }
+    Ok(Some(Paging {
+        page_param: page_param.to_owned(),
+        first_page,
+        max_pages,
+        items_path,
+    }))
 }
 
 /// The headers a source sends. A name is a header token and a value is one
@@ -207,6 +280,13 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
                 continue;
             }
         };
+        let paging = match parse_paging(id, record.get("paging")) {
+            Ok(paging) => paging,
+            Err(issue) => {
+                issues.push(issue);
+                continue;
+            }
+        };
         let timeout_ms = record
             .get("timeoutMs")
             .and_then(Value::as_f64)
@@ -252,6 +332,7 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
             timeout_ms,
             headers,
             query,
+            paging,
             fields,
         });
     }

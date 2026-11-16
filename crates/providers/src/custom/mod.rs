@@ -22,6 +22,8 @@ pub const WAITING_MESSAGE: &str = "Waiting for the first reading.";
 pub const STALE_MESSAGE: &str = "The last reading is out of date.";
 pub const NO_SOURCES_MESSAGE: &str = "No custom sources are configured.";
 pub const NOT_JSON_MESSAGE: &str = "The source answered something that is not JSON.";
+pub const PAGE_NOT_ARRAY_MESSAGE: &str = "A page of the source was not an array.";
+pub const ITEMS_PATH_MESSAGE: &str = "The source's items path did not resolve to an array.";
 
 /// Missed intervals after which a last good value is stale rather than fresh.
 const STALE_INTERVALS: u64 = 3;
@@ -290,35 +292,60 @@ fn sync(state: &mut State, loaded: Loaded) {
     state.runtimes = next;
 }
 
+/// One source's document: its single answer, or every page merged in order. A
+/// page that fails fails the whole read, because a partial body is not a
+/// complete reading.
+fn fetch_source(fetch: &Fetch, source: &CustomSource) -> Result<Value, String> {
+    let Some(paging) = &source.paging else {
+        return fetch_json(fetch, source, None);
+    };
+    let mut merged = Vec::new();
+    for offset in 0..paging.max_pages {
+        let page = paging.first_page.saturating_add(offset);
+        let body = fetch_json(fetch, source, Some(page))?;
+        let items = match &paging.items_path {
+            None => body
+                .as_array()
+                .cloned()
+                .ok_or_else(|| PAGE_NOT_ARRAY_MESSAGE.to_owned())?,
+            Some(path) => pointer::resolve(&body, path)
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or_else(|| ITEMS_PATH_MESSAGE.to_owned())?,
+        };
+        merged.extend(items);
+    }
+    Ok(Value::Array(merged))
+}
+
+/// One page's JSON, with the source's headers and deadline.
+fn fetch_json(fetch: &Fetch, source: &CustomSource, page: Option<u32>) -> Result<Value, String> {
+    let request = crate::http::Get {
+        url: source.request_url(page),
+        headers: source.headers.clone(),
+        timeout_ms: source.timeout_ms,
+    };
+    let body = fetch(&request)?;
+    serde_json::from_str::<Value>(&body).map_err(|_| NOT_JSON_MESSAGE.to_owned())
+}
+
 /// Fetches every source that is due. One source's failure is its own keys'.
 fn refresh(state: &Mutex<State>, fetch: &Fetch, now_ms: u64) -> usize {
-    let due: Vec<(usize, crate::http::Get, u64)> = {
+    let due: Vec<(usize, CustomSource, u64)> = {
         let state = state.lock().expect("the custom state");
         state
             .runtimes
             .iter()
             .enumerate()
             .filter(|(_, runtime)| runtime.demanded(now_ms) && now_ms >= runtime.next_due_ms)
-            .map(|(index, runtime)| {
-                (
-                    index,
-                    crate::http::Get {
-                        url: runtime.source.request_url(),
-                        headers: runtime.source.headers.clone(),
-                        timeout_ms: runtime.source.timeout_ms,
-                    },
-                    runtime.source.interval_ms,
-                )
-            })
+            .map(|(index, runtime)| (index, runtime.source.clone(), runtime.source.interval_ms))
             .collect()
     };
 
-    for (index, request, interval_ms) in &due {
-        let outcome = match crate::http::refusal(&request.url) {
+    for (index, source, interval_ms) in &due {
+        let outcome = match crate::http::refusal(&source.url) {
             Some(refusal) => Err(refusal),
-            None => fetch(request).and_then(|body| {
-                serde_json::from_str::<Value>(&body).map_err(|_| NOT_JSON_MESSAGE.to_owned())
-            }),
+            None => fetch_source(fetch, source),
         };
         let mut state = state.lock().expect("the custom state");
         let Some(runtime) = state.runtimes.get_mut(*index) else {
@@ -603,6 +630,7 @@ mod tests {
             timeout_ms: sources::TIMEOUT_DEFAULT_MS,
             headers: Vec::new(),
             query: Vec::new(),
+            paging: None,
             fields: vec![CustomField {
                 id: "x".to_owned(),
                 label: "X".to_owned(),
@@ -723,6 +751,84 @@ mod tests {
         assert!(
             issues.iter().any(|issue| issue.contains("header name")),
             "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_paged_source_merges_every_page_in_order() {
+        let loaded = Loaded {
+            sources: sources::parse(&serde_json::json!({
+                "sources": [{
+                    "id": "pages",
+                    "url": "http://127.0.0.1:9000/list",
+                    "paging": {"pageParam": "page", "firstPage": 1, "maxPages": 3, "itemsPath": "/items"},
+                    "fields": [{"id": "last", "pointer": "/2/x", "type": "number"}]
+                }]
+            }))
+            .0,
+            issues: Vec::new(),
+        };
+        let mut seen = Vec::new();
+        let (provider, _, urls) = provider(loaded, |request| {
+            let page: u32 = request
+                .url
+                .rsplit('=')
+                .next()
+                .and_then(|text| text.parse().ok())
+                .expect("a page number");
+            Ok(serde_json::json!({"items": [{"x": page}]}).to_string())
+        });
+        provider
+            .sample(&keys(&["custom.pages.last"]), 1_000)
+            .unwrap();
+        provider.refresh(1_000);
+        seen.extend(urls.lock().unwrap().iter().cloned());
+        assert_eq!(
+            seen,
+            [
+                "http://127.0.0.1:9000/list?page=1",
+                "http://127.0.0.1:9000/list?page=2",
+                "http://127.0.0.1:9000/list?page=3"
+            ]
+        );
+        let readings = provider
+            .sample(&keys(&["custom.pages.last"]), 1_100)
+            .unwrap();
+        assert_eq!(readings[0].value, Some(3.0));
+        assert_eq!(readings[0].status, Status::Ok);
+    }
+
+    #[test]
+    fn a_failed_page_fails_the_whole_reading() {
+        let loaded = Loaded {
+            sources: sources::parse(&serde_json::json!({
+                "sources": [{
+                    "id": "pages",
+                    "url": "http://127.0.0.1:9000/list",
+                    "paging": {"pageParam": "page", "firstPage": 1, "maxPages": 2},
+                    "fields": [{"id": "last", "pointer": "/3/x", "type": "number"}]
+                }]
+            }))
+            .0,
+            issues: Vec::new(),
+        };
+        let (provider, ..) = provider(loaded, |request| {
+            if request.url.ends_with("page=2") {
+                return Err("the server answered 500".to_owned());
+            }
+            Ok(serde_json::json!([{"x": 1}, {"x": 2}]).to_string())
+        });
+        provider
+            .sample(&keys(&["custom.pages.last"]), 1_000)
+            .unwrap();
+        provider.refresh(1_000);
+        let readings = provider
+            .sample(&keys(&["custom.pages.last"]), 1_100)
+            .unwrap();
+        assert_eq!(readings[0].status, Status::Error);
+        assert_eq!(
+            readings[0].message.as_deref(),
+            Some("the server answered 500")
         );
     }
 
