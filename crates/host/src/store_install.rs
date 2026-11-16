@@ -348,7 +348,7 @@ pub fn editor_theme_path(settings: &Path, catalogue_id: &str) -> std::path::Path
 
 /// One package's theme document, for a test that needs a valid envelope.
 #[cfg(test)]
-fn document(id: &str) -> yunari_model::document::ThemeDocument {
+pub(crate) fn test_document(id: &str) -> yunari_model::document::ThemeDocument {
     use std::collections::BTreeMap;
 
     use yunari_model::document::{
@@ -496,9 +496,12 @@ mod tests {
     #[test]
     fn a_dashboard_theme_lands_in_the_library_with_its_origin() {
         let app = app("dashboard");
-        let package =
-            yunari_library::package::write_package(&document("aurora"), &BTreeMap::new(), None)
-                .expect("a written package");
+        let package = yunari_library::package::write_package(
+            &test_document("aurora"),
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("a written package");
         let installed = install(
             &app,
             &request(Kind::DashboardTheme, &package),
@@ -524,7 +527,7 @@ mod tests {
 
         // A second install of the same catalogue item updates that copy in
         // place rather than creating a sibling.
-        let mut updated = document("aurora");
+        let mut updated = test_document("aurora");
         updated.metadata.name = Some("Aurora".to_owned());
         let package = yunari_library::package::write_package(&updated, &BTreeMap::new(), None)
             .expect("a written package");
@@ -551,9 +554,12 @@ mod tests {
     #[test]
     fn an_editor_theme_lands_as_a_file_and_a_bad_archive_does_not() {
         let app = app("editor-theme");
-        let package =
-            yunari_library::package::write_package(&document("aurora"), &BTreeMap::new(), None)
-                .expect("a written package");
+        let package = yunari_library::package::write_package(
+            &test_document("aurora"),
+            &BTreeMap::new(),
+            None,
+        )
+        .expect("a written package");
         install(
             &app,
             &request(Kind::EditorTheme, &package),

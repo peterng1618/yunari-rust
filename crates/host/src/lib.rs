@@ -22,7 +22,9 @@ pub mod store;
 pub mod store_install;
 pub mod store_routes;
 pub mod stream;
+pub mod submit;
 pub mod themes_routes;
+pub mod thumbnail;
 pub mod tls;
 
 pub use config::HostConfig;

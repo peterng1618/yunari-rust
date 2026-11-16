@@ -119,6 +119,7 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/store/session", get(crate::store_routes::session))
         .route("/api/store/install", post(crate::store_install::route))
         .route("/api/store/mine", get(crate::store_routes::mine))
+        .route("/api/themes/submit", post(crate::submit::route))
         .route(
             "/api/store/items/{id}/{action}",
             post(crate::store_routes::transition),
@@ -1142,6 +1143,25 @@ mod tests {
             request(app, axum::http::Method::POST, "/api/store/install", local).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body, crate::store_install::NOT_JSON_MESSAGE);
+    }
+
+    #[tokio::test]
+    async fn a_submission_is_local_and_needs_a_sign_in() {
+        let app = app_with_store("submit");
+        let local = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50_000));
+        let (status, _) = request(
+            app.clone(),
+            axum::http::Method::POST,
+            "/api/themes/submit",
+            phone,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) =
+            request(app, axum::http::Method::POST, "/api/themes/submit", local).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(body.contains(crate::submit::NO_SESSION_MESSAGE));
     }
 
     #[tokio::test]
