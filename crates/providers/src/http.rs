@@ -4,7 +4,7 @@
 //! refusal to follow a redirect exist once. A reason never carries the URL: it
 //! reaches every display on the network.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 /// A body larger than this is not an answer this host asked for.
@@ -100,18 +100,29 @@ fn read(request: &Get, limit: u64) -> Result<Answer, String> {
     if let Some(refusal) = refusal(url) {
         return Err(refusal);
     }
-    if request.public_only {
-        public_destination(url)?;
-    }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    // A user-authored name is looked up once: the addresses checked here are
+    // the only ones the request may dial, so an answer that changes between a
+    // check and a second lookup cannot reach this PC's own network.
+    let pinned = request
+        .public_only
+        .then(|| public_addresses(url))
+        .transpose()?;
+    let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_millis(request.timeout_ms)))
         // A redirect is not the address this host asked.
         .max_redirects(0)
         // The status is read here, so a 404 says what it was rather than
         // turning into a client error with no code.
         .http_status_as_error(false)
-        .build()
-        .into();
+        .build();
+    let agent: ureq::Agent = match pinned {
+        Some(addresses) => ureq::Agent::with_parts(
+            config,
+            ureq::unversioned::transport::DefaultConnector::default(),
+            Pinned(addresses),
+        ),
+        None => config.into(),
+    };
 
     let mut call = agent.get(url);
     for (name, value) in &request.headers {
@@ -214,11 +225,13 @@ fn host_and_port(url: &str) -> Option<(String, u16)> {
 /// Refuses a destination on this PC's own network, a link-local or a metadata
 /// address. This is the source app's policy for a user-authored URL; the same
 /// answer is never invented for a service the host itself names.
-///
-/// ponytail: the name is resolved here and then dialled by name, so a name that
-/// answers differently on the second lookup is not caught. The upgrade is a
-/// resolver pinned to the address that was checked.
 pub fn public_destination(url: &str) -> Result<(), String> {
+    public_addresses(url).map(|_| ())
+}
+
+/// The addresses a user-authored URL may dial, after the policy check. They are
+/// what the request itself dials, so the check and the connect read one answer.
+fn public_addresses(url: &str) -> Result<Vec<IpAddr>, String> {
     let Some((host, port)) = host_and_port(url) else {
         return Err("the source URL has no host".to_owned());
     };
@@ -243,7 +256,34 @@ pub fn public_destination(url: &str) -> Result<(), String> {
     if addresses.iter().any(|address| is_private(*address)) {
         return Err(PRIVATE_ADDRESS_REASON.to_owned());
     }
-    Ok(())
+    Ok(addresses)
+}
+
+/// The checked addresses as ureq's own resolver result. A name with a mixed
+/// answer is refused whole by the check above, so every address here is one the
+/// policy allowed.
+#[derive(Debug)]
+struct Pinned(Vec<IpAddr>);
+
+impl ureq::unversioned::resolver::Resolver for Pinned {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        _config: &ureq::config::Config,
+        _timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+            Some("https") => 443,
+            _ => 80,
+        });
+        let mut addresses = ureq::unversioned::resolver::ArrayVec::from_fn(|_| {
+            SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))
+        });
+        for address in &self.0 {
+            addresses.push(SocketAddr::new(*address, port));
+        }
+        Ok(addresses)
+    }
 }
 
 fn is_blocked(address: IpAddr) -> bool {
@@ -359,6 +399,33 @@ mod tests {
         // A public literal passes; no name is resolved, so the test needs no
         // network.
         assert!(public_destination("https://1.1.1.1/").is_ok());
+    }
+
+    #[test]
+    fn a_checked_name_is_dialled_at_the_checked_addresses() {
+        use ureq::unversioned::resolver::Resolver as _;
+
+        let pinned = Pinned(vec![IpAddr::from([1, 1, 1, 1]), IpAddr::from([8, 8, 8, 8])]);
+        let config = ureq::config::Config::builder().build();
+        for (url, port) in [
+            ("https://example.test/x", 443),
+            ("http://example.test/x", 80),
+            ("http://example.test:8080/x", 8080),
+        ] {
+            let uri: ureq::http::Uri = url.parse().expect("a URI");
+            let addresses = pinned
+                .resolve(&uri, &config, Default::default())
+                .expect("an answer");
+            let dialled: Vec<SocketAddr> = addresses.iter().copied().collect();
+            assert_eq!(
+                dialled,
+                vec![
+                    SocketAddr::from(([1, 1, 1, 1], port)),
+                    SocketAddr::from(([8, 8, 8, 8], port)),
+                ],
+                "{url}"
+            );
+        }
     }
 
     #[test]
