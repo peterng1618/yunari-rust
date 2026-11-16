@@ -37,18 +37,21 @@ pub struct SettingsDialog {
     /// Which drive answers a theme's abstract disk slots, and the names beside
     /// that choice.
     pub devices: yunari_providers::devices::Assignment,
-    /// The drives this PC reports, as (device id, detected name).
-    pub disks: Vec<(String, String)>,
+    /// The physical devices any provider could name, for the slot rows.
+    pub options: Vec<yunari_providers::provider::Device>,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
 
 impl SettingsDialog {
-    pub fn new(settings: PathBuf, monitors: Vec<MonitorRow>) -> Self {
+    pub fn new(
+        settings: PathBuf,
+        monitors: Vec<MonitorRow>,
+        options: Vec<yunari_providers::provider::Device>,
+    ) -> Self {
         let weather = read_weather(&settings);
         let weather_key_set = read_weather_key_set(&settings, &weather);
         let source_credentials = read_source_credentials(&settings);
-        let disks = detected_disks();
         Self {
             lan: Hosting::load(&settings).lan,
             autostart: yunari_host::autostart::enabled(),
@@ -57,18 +60,11 @@ impl SettingsDialog {
             weather_key_set,
             source_credentials,
             devices: yunari_providers::devices::Assignment::load(&settings),
-            disks,
+            options,
             settings,
             message: None,
         }
     }
-}
-
-/// The drives this PC reports, with the id a saved choice names them by.
-pub fn detected_disks() -> Vec<(String, String)> {
-    use yunari_providers::system::Snapshot;
-    let snapshot = yunari_providers::system::SysinfoSnapshot::new();
-    yunari_providers::devices::ids_for(snapshot.disks().into_iter().map(|disk| disk.name))
 }
 
 /// Writes which drive answers a slot (`system-disk` or `data-disk`) and reports
@@ -315,22 +311,28 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
             cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_key()),
         ));
     }
-    for (index, (slot, label)) in [("system-disk", "System disk"), ("data-disk", "Data disk")]
-        .into_iter()
-        .enumerate()
+    for (index, (slot, label)) in [
+        ("gpu", "GPU"),
+        ("system-disk", "System disk"),
+        ("data-disk", "Data disk"),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let chosen = match slot {
+            "gpu" => dialog.devices.gpu.as_deref(),
             "system-disk" => dialog.devices.system_disk.as_deref(),
             _ => dialog.devices.data_disk.as_deref(),
         };
         let state = match chosen {
             None if slot == "data-disk" => "not assigned".to_owned(),
+            None if slot == "gpu" => "first card this PC reports".to_owned(),
             None => "first drive this PC reports".to_owned(),
             Some(id) => dialog
-                .disks
+                .options
                 .iter()
-                .find(|(disk_id, _)| disk_id == id)
-                .map(|(_, name)| dialog.devices.name_of(id, name).to_owned())
+                .find(|device| device.id == id)
+                .map(|device| dialog.devices.name_of(id, &device.name).to_owned())
                 .unwrap_or_else(|| format!("{id} (not present)")),
         };
         column = column.child(

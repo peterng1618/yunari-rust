@@ -35,6 +35,17 @@ impl Health {
     }
 }
 
+/// One physical device a person may assign to a theme's abstract slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Device {
+    /// `gpu`, `system-disk` or `data-disk`.
+    pub group: String,
+    /// The id `devices.json` names the device by.
+    pub id: String,
+    /// The model the machine reports.
+    pub name: String,
+}
+
 /// One source of readings.
 ///
 /// `sample` takes the union of every display's asks, so many displays cost one
@@ -52,6 +63,12 @@ pub trait Provider: Send + Sync {
     fn describe(&self) -> Vec<Descriptor>;
 
     fn sample(&self, keys: &[String], now_ms: u64) -> Result<Vec<Reading>, String>;
+
+    /// The physical devices this provider can name, so a settings surface can
+    /// offer a choice without knowing how any provider enumerates hardware.
+    fn devices(&self) -> Vec<Device> {
+        Vec::new()
+    }
 
     fn health(&self) -> Health {
         Health::Ok

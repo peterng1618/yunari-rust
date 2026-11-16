@@ -82,6 +82,18 @@ impl Registry {
             .collect()
     }
 
+    /// Every physical device any provider can name, deduplicated.
+    pub fn devices(&self) -> Vec<crate::provider::Device> {
+        let mut devices: Vec<crate::provider::Device> = self
+            .providers
+            .iter()
+            .flat_map(|provider| provider.devices())
+            .collect();
+        devices.sort_by(|left, right| (&left.group, &left.id).cmp(&(&right.group, &right.id)));
+        devices.dedup();
+        devices
+    }
+
     /// Polls every provider once with the union of the asks' keys.
     ///
     /// A provider that fails contributes a failure and nothing else. A reading

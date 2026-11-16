@@ -326,9 +326,15 @@ impl EditorWindow {
             }
             Command::Settings => {
                 let monitors = settings_dialog::monitor_rows(self.host.as_ref(), cx);
+                let options = self
+                    .host
+                    .as_ref()
+                    .map(|host| host.registry.devices())
+                    .unwrap_or_default();
                 self.overlay = Some(Overlay::Settings(Box::new(SettingsDialog::new(
                     self.settings_dir(),
                     monitors,
+                    options,
                 ))));
             }
             Command::Widgets => {
@@ -840,11 +846,18 @@ impl EditorWindow {
         };
         let settings = self.settings_dir();
         let current = match slot {
+            "gpu" => dialog.devices.gpu.clone(),
             "system-disk" => dialog.devices.system_disk.clone(),
             _ => dialog.devices.data_disk.clone(),
         };
         let mut options: Vec<Option<String>> = vec![None];
-        options.extend(dialog.disks.iter().map(|(id, _)| Some(id.clone())));
+        options.extend(
+            dialog
+                .options
+                .iter()
+                .filter(|device| device.group == slot)
+                .map(|device| Some(device.id.clone())),
+        );
         let next = match current.as_ref().and_then(|id| {
             options
                 .iter()

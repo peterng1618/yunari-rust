@@ -149,6 +149,30 @@ impl Provider for LhmProvider {
             .collect())
     }
 
+    fn devices(&self) -> Vec<crate::provider::Device> {
+        let Ok(sensors) = self.sensors() else {
+            return Vec::new();
+        };
+        let assignment = (self.devices)();
+        let mut devices = Vec::new();
+        for (group, key) in [
+            (Group::Gpu, "gpu"),
+            (Group::Storage, "system-disk"),
+            (Group::Storage, "data-disk"),
+        ] {
+            devices.extend(
+                group_devices(&sensors, group, &assignment)
+                    .into_iter()
+                    .map(|node| crate::provider::Device {
+                        group: key.to_owned(),
+                        id: node.id,
+                        name: node.name,
+                    }),
+            );
+        }
+        devices
+    }
+
     fn health(&self) -> Health {
         match self.failure.lock().expect("the LHM failure").clone() {
             Some(reason) => Health::Unavailable(reason),
@@ -254,37 +278,57 @@ fn device_of(
     assigned: Option<&str>,
     devices: &crate::devices::Assignment,
 ) -> Lookup {
-    let mut nodes: Vec<(String, String)> = Vec::new();
-    for sensor in sensors {
-        if group_of(&sensor.hardware_name, &sensor.hardware_id) != Some(group) {
-            continue;
-        }
-        if !nodes
-            .iter()
-            .any(|(hardware_id, _)| hardware_id == &sensor.hardware_id)
-        {
-            nodes.push((sensor.hardware_id.clone(), sensor.hardware_name.clone()));
-        }
-    }
+    let nodes = group_devices(sensors, group, devices);
     if nodes.is_empty() {
         return Lookup::NoneDetected;
     }
-    let ids: Vec<String> = crate::devices::ids_for(nodes.iter().map(|(_, name)| name.clone()))
-        .into_iter()
-        .map(|(_, id)| id)
-        .collect();
     let chosen = match assigned {
-        Some(assigned) => match ids.iter().position(|id| id == assigned) {
+        Some(assigned) => match nodes.iter().position(|node| node.id == assigned) {
             Some(index) => index,
             None => return Lookup::Gone,
         },
         None => 0,
     };
-    let (hardware_id, detected) = &nodes[chosen];
+    let node = &nodes[chosen];
     Lookup::Found(Found {
-        hardware_id: hardware_id.clone(),
-        name: devices.name_of(&ids[chosen], detected).to_owned(),
+        hardware_id: node.hardware_id.clone(),
+        name: node.name.clone(),
     })
+}
+
+/// The hardware nodes of one group, in the order the machine reports them.
+fn group_devices(
+    sensors: &[LhmSensor],
+    group: Group,
+    devices: &crate::devices::Assignment,
+) -> Vec<NodeInfo> {
+    let mut names: Vec<(String, String)> = Vec::new();
+    for sensor in sensors {
+        if group_of(&sensor.hardware_name, &sensor.hardware_id) != Some(group) {
+            continue;
+        }
+        if !names
+            .iter()
+            .any(|(hardware_id, _)| hardware_id == &sensor.hardware_id)
+        {
+            names.push((sensor.hardware_id.clone(), sensor.hardware_name.clone()));
+        }
+    }
+    crate::devices::ids_for(names.iter().map(|(_, name)| name.clone()))
+        .into_iter()
+        .zip(names)
+        .map(|((_, id), (hardware_id, detected))| NodeInfo {
+            hardware_id,
+            name: devices.name_of(&id, &detected).to_owned(),
+            id,
+        })
+        .collect()
+}
+
+struct NodeInfo {
+    hardware_id: String,
+    id: String,
+    name: String,
 }
 
 #[cfg(test)]
@@ -386,6 +430,21 @@ mod tests {
             .expect("a cycle");
         assert_eq!(readings.len(), 1);
         assert_eq!(readings[0].semantic_key, "cpu.temp");
+    }
+
+    #[test]
+    fn the_devices_a_person_can_assign_are_named_by_their_id() {
+        let running = provider(payload);
+        let devices = running.devices();
+        assert_eq!(
+            devices
+                .iter()
+                .find(|device| device.group == "gpu")
+                .map(|device| device.id.as_str()),
+            Some("nvidia-geforce-rtx-4090")
+        );
+        // An unreachable server offers no device rather than a guess.
+        assert!(provider(|| Err("refused".to_owned())).devices().is_empty());
     }
 
     #[test]

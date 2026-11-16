@@ -324,6 +324,19 @@ impl Provider for SystemProvider {
             .collect()
     }
 
+    fn devices(&self) -> Vec<crate::provider::Device> {
+        crate::devices::ids_for(self.snapshot.disks().into_iter().map(|disk| disk.name))
+            .into_iter()
+            .flat_map(|(name, id)| {
+                ["system-disk", "data-disk"].map(|group| crate::provider::Device {
+                    group: group.to_owned(),
+                    id: id.clone(),
+                    name: name.clone(),
+                })
+            })
+            .collect()
+    }
+
     fn sample(&self, keys: &[String], now_ms: u64) -> Result<Vec<Reading>, String> {
         // One snapshot answers every key: the devices this poll sees decide
         // which keys exist at all.
@@ -535,6 +548,22 @@ mod tests {
         assert_eq!(
             keys.iter().filter(|key| key.starts_with("disk.")).count(),
             13
+        );
+    }
+
+    #[test]
+    fn the_devices_a_person_can_assign_are_the_drives_reported() {
+        let provider = SystemProvider::with_snapshot(two_disks());
+        let devices = provider.devices();
+        assert!(
+            devices.iter().any(|device| {
+                device.group == "system-disk" && device.id == "samsung-ssd-990-pro"
+            })
+        );
+        assert!(
+            devices
+                .iter()
+                .any(|device| device.group == "data-disk" && device.name == "WD Blue")
         );
     }
 
