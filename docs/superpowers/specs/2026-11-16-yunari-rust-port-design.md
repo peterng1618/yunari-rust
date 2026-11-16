@@ -102,6 +102,24 @@ circle artboard, node depth 32, node count 5000, `[A-Za-z0-9_-]{1,64}` IDs,
 `assets/...` paths, the existing background bounds and composition ranges.
 Newer or older schema majors are refused; no migration path exists pre-release.
 
+### Reading a theme stored by the source editor (2026-11-16)
+
+The source editor stores `{schemaVersion, fabricVersion, globals, scene}` with
+flat Fabric scene objects. `yunari_model::source` lifts one of those envelopes
+into this model on read: palette, type tokens, assets, bindings and chart
+settings carry across unchanged, each object becomes a node (`type` → `kind`,
+`left/top/width/height` → `transform`, `yunariPaint` → `style`, `yunariGlass` →
+`glass`, `objects` → `children`, Fabric path commands → one SVG path string), and
+a kind this port does not draw is dropped rather than failing the theme.
+
+Two consequences, both recorded here because they are product decisions:
+
+- The document's semantic-key grammar accepts its segments in any case, since
+  stored themes bind `weather.feelsLike` and `weather.windDirection.compass`.
+  A provider's catalogue, not the document, decides which keys exist.
+- A theme saved again is written in this model's shape; its original bytes stay
+  beside it as `theme.fabric.json` so the other editor's copy is never lost.
+
 Semantic keys and unit metadata are ported from
 `renderer-core/data/semantic-keys.ts` as the single vocabulary for host and
 editor: families, labels, units, unit kinds, display units, value kinds, media

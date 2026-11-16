@@ -13,6 +13,7 @@ members = [
     "crates/render-gpui",
     "crates/app",
     "crates/host",
+    "crates/panels",
 ]
 
 [workspace.package]
@@ -40,3 +41,4 @@ yunari-golden = { path = "crates/golden" }
 yunari-render-gpui = { path = "crates/render-gpui" }
 yunari-render-raster = { path = "crates/raster" }
 yunari-host = { path = "crates/host" }
+yunari-panels = { path = "crates/panels" }
