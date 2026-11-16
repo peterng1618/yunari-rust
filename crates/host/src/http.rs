@@ -75,6 +75,11 @@ pub fn router(app: Shared) -> axum::Router {
             "/api/wallpaper-engine/item/{id}/{part}",
             get(wallpaper_item),
         )
+        // The one write in this surface: the item becomes an editable project.
+        .route(
+            "/api/wallpaper-engine/item/{id}/project",
+            post(wallpaper_engine_project),
+        )
         .route("/api/path-presets", get(path_presets).post(add_path_preset))
         .route("/api/path-presets/packs", post(import_path_preset_pack))
         .route(
@@ -836,11 +841,29 @@ async fn monitors(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
     }
 }
 
-async fn wallpaper_engine(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
+async fn wallpaper_engine(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
     if let Some(refusal) = loopback_only(peer) {
         return refusal;
     }
-    Json(crate::wallpaper_engine::listing()).into_response()
+    Json(crate::wallpaper_engine::listing_cached(
+        &app.config.settings_dir(),
+    ))
+    .into_response()
+}
+
+/// Unpacks one item into the engine's own `myprojects`. The selection is the
+/// whole request: no body is read, and only this PC may ask.
+async fn wallpaper_engine_project(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    Json(crate::wallpaper_engine::project(&id)).into_response()
 }
 
 async fn wallpaper_item(
@@ -1498,7 +1521,7 @@ mod tests {
         let here = SocketAddr::from(([127, 0, 0, 1], 50000));
         let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
         let list =
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"themes_list"}}"#;
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_themes"}}"#;
         let (status, body) = ask_post(app.clone(), "/api/mcp", here, list).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("fixture"), "{body}");

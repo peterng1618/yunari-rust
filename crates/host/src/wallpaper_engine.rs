@@ -101,13 +101,111 @@ pub fn listing() -> Value {
     if install.libraries.is_empty() {
         return json!({"available": false, "reason": "no-library"});
     }
-    let scan = scan(&install);
+    listing_of(&install)
+}
+
+/// The same answer, kept in the settings folder until anything the scan read
+/// changes. A scan opens every descriptor and every scene package; the
+/// fingerprint only stats them, so a listing costs one pass over the disk.
+pub fn listing_cached(settings: &Path) -> Value {
+    let Some(install) = locate() else {
+        return json!({"available": false, "reason": "not-installed"});
+    };
+    if install.libraries.is_empty() {
+        return json!({"available": false, "reason": "no-library"});
+    }
+    cached_listing(&install, settings)
+}
+
+fn cached_listing(install: &Install, settings: &Path) -> Value {
+    let path = settings.join(CACHE_FILE);
+    let fingerprint = fingerprint(install);
+    if let Ok(text) = std::fs::read_to_string(&path)
+        && let Ok(cached) = serde_json::from_str::<Value>(&text)
+        && cached["version"] == CACHE_VERSION
+        && cached["fingerprint"] == fingerprint
+        && let Some(listing) = cached.get("listing")
+    {
+        return listing.clone();
+    }
+    let listing = listing_of(install);
+    if let Ok(text) = serde_json::to_string(&json!({
+        "version": CACHE_VERSION,
+        "fingerprint": fingerprint,
+        "listing": listing,
+    })) {
+        // A torn read is worse than a miss, so the cache swaps in whole.
+        let temporary = path.with_extension("json.tmp");
+        if std::fs::write(&temporary, text).is_ok() {
+            let _ = std::fs::rename(&temporary, &path);
+        }
+    }
+    listing
+}
+
+/// Bumped whenever the entry's shape or the scan's meaning changes.
+const CACHE_VERSION: u32 = 1;
+const CACHE_FILE: &str = "wallpaper-listing.json";
+
+fn listing_of(install: &Install) -> Value {
+    let scan = scan(install);
     json!({
         "available": true,
         "install": install.root.display().to_string(),
         "items": scan.items.iter().map(item_json).collect::<Vec<_>>(),
         "skipped": scan.skipped,
     })
+}
+
+/// What the scan read, as a string that changes when anything it depends on
+/// changes: the install, its workshop cache, every library, and each item's
+/// descriptor and scene package. Sorted so two passes over one library agree.
+fn fingerprint(install: &Install) -> String {
+    let mut rows = vec![install.root.display().to_string().to_ascii_lowercase()];
+    rows.push(format!(
+        "cache:{}",
+        stamp(&install.root.join("bin/workshopcache.json"))
+    ));
+    let mut libraries = install.libraries.clone();
+    libraries.sort_by_key(|library| library.display().to_string().to_ascii_lowercase());
+    for library in &libraries {
+        rows.push(format!(
+            "library:{}:{}",
+            library.display().to_string().to_ascii_lowercase(),
+            stamp(library)
+        ));
+        let mut directories: Vec<PathBuf> = std::fs::read_dir(library)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        directories.sort_by_key(|directory| directory.display().to_string().to_ascii_lowercase());
+        for directory in directories {
+            rows.push(format!(
+                "item:{}:{}:{}",
+                directory.display().to_string().to_ascii_lowercase(),
+                stamp(&directory.join("project.json")),
+                stamp(&directory.join(SCENE_PACKAGE))
+            ));
+        }
+    }
+    rows.join("\n")
+}
+
+fn stamp(path: &Path) -> String {
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| {
+            let modified = meta
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?;
+            Some(format!("{}:{}", modified.as_millis(), meta.len()))
+        })
+        .unwrap_or_else(|| "-".to_owned())
 }
 
 fn item_json(item: &Item) -> Value {
@@ -752,6 +850,154 @@ fn video_content_type(extension: &str) -> &'static str {
     }
 }
 
+/// Marks a project as this host's own conversion, so the engine's list tells
+/// it apart from the item it came from.
+const TITLE_PREFIX: &str = "[yunari] ";
+
+/// Writes the item `workshop_id` names as an editable project under
+/// `projects/myprojects/<id>`, and nothing else: the selection is the whole
+/// request.
+pub fn project(workshop_id: &str) -> Value {
+    let Some(install) = locate() else {
+        return json!({"ok": false, "reason": "no-install"});
+    };
+    unpack(&install, workshop_id)
+}
+
+/// The unpack itself, against an install. Never removes a directory this run
+/// did not create: an existing project is reused, and a failed write removes
+/// only what it made.
+pub fn unpack(install: &Install, workshop_id: &str) -> Value {
+    // A workshop id names one directory and nothing else.
+    if workshop_id.is_empty() || !workshop_id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return json!({"ok": false, "reason": "refused"});
+    }
+    let Some(item) = item_of(install, workshop_id) else {
+        return json!({"ok": false, "reason": "unreadable"});
+    };
+    let directory = install.my_projects.join(workshop_id);
+    match std::fs::create_dir(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // A project unpacked before the preview was copied still shows no
+            // thumbnail; filling that in is the one write reuse performs.
+            let _ = fill_preview(&item, &directory);
+            return json!({"ok": true, "name": workshop_id, "reused": true});
+        }
+        Err(_) => return json!({"ok": false, "reason": "refused"}),
+    }
+    match write_project(&item, &directory) {
+        Ok(()) => json!({"ok": true, "name": workshop_id, "reused": false}),
+        Err(_) => {
+            let _ = std::fs::remove_dir_all(&directory);
+            json!({"ok": false, "reason": "unreadable"})
+        }
+    }
+}
+
+/// The listed item a workshop id names, read through the same descriptor rules
+/// the library listing uses.
+fn item_of(install: &Install, workshop_id: &str) -> Option<Item> {
+    let cache = workshop_cache(install);
+    install.libraries.iter().find_map(|library| {
+        let directory = library.join(workshop_id);
+        directory
+            .is_dir()
+            .then(|| read_item(workshop_id, &directory, &cache))
+            .flatten()
+    })
+}
+
+/// Where a member may be written. A member name is third-party data: real
+/// packages nest under `/` and never use `\`, so nesting is allowed and
+/// anything that could leave the project — an absolute path, a drive letter, a
+/// backslash, an empty, `.` or `..` segment — is refused rather than cleaned up.
+fn member_path(directory: &Path, name: &str) -> Option<PathBuf> {
+    if name.is_empty() || name.contains(char::from(92)) {
+        return None;
+    }
+    if name
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return None;
+    }
+    let target = name
+        .split('/')
+        .fold(directory.to_path_buf(), |path, segment| path.join(segment));
+    inside(directory, &target).then_some(target)
+}
+
+/// Every member, then the rewritten descriptor and the preview.
+fn write_project(item: &Item, directory: &Path) -> Result<(), ()> {
+    let bytes = std::fs::read(&item.payload).map_err(|_| ())?;
+    let package = read_package(&bytes).ok_or(())?;
+    if package.member("scene.json").is_none() {
+        return Err(());
+    }
+    let text = std::fs::read_to_string(item.directory.join("project.json")).map_err(|_| ())?;
+    let mut descriptor: Value = serde_json::from_str(&text).map_err(|_| ())?;
+    if !descriptor.is_object() {
+        return Err(());
+    }
+    for (name, _, _) in &package.members {
+        let target = member_path(directory, name).ok_or(())?;
+        let member = package.member(name).ok_or(())?;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| ())?;
+        }
+        std::fs::write(&target, member).map_err(|_| ())?;
+    }
+    // The one packed-only field: a subscribed project says `scene.pkg`, while a
+    // source project — the shape the editor opens — says `scene.json`. A title
+    // already carrying the prefix is left alone, so a re-unpack cannot double it.
+    if let Some(object) = descriptor.as_object_mut() {
+        let title = object
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty())
+            .map(|title| {
+                if title.starts_with(TITLE_PREFIX) {
+                    title.to_owned()
+                } else {
+                    format!("{TITLE_PREFIX}{title}")
+                }
+            });
+        if let Some(title) = title {
+            object.insert("title".to_owned(), Value::String(title));
+        }
+        object.insert("file".to_owned(), Value::String("scene.json".to_owned()));
+    }
+    std::fs::write(
+        directory.join("project.json"),
+        serde_json::to_vec_pretty(&descriptor).map_err(|_| ())?,
+    )
+    .map_err(|_| ())?;
+    fill_preview(item, directory)
+}
+
+/// The descriptor's own preview, copied beside it: the thumbnail is the
+/// workshop's file, not a package member, so without this copy a local project
+/// shows none in the engine's own list.
+fn fill_preview(item: &Item, directory: &Path) -> Result<(), ()> {
+    let text = std::fs::read_to_string(directory.join("project.json")).map_err(|_| ())?;
+    let descriptor: Value = serde_json::from_str(&text).map_err(|_| ())?;
+    let preview = descriptor
+        .get("preview")
+        .and_then(Value::as_str)
+        .ok_or(())?;
+    let source = item.preview.as_ref().ok_or(())?;
+    if !inside(&item.directory, source) {
+        return Err(());
+    }
+    let target = member_path(directory, preview).ok_or(())?;
+    let bytes = std::fs::read(source).map_err(|_| ())?;
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| ())?;
+    }
+    std::fs::write(target, bytes).map_err(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,7 +1117,7 @@ mod tests {
         mvhd.extend(1000u32.to_be_bytes());
         mvhd.extend(5000u32.to_be_bytes());
         mvhd.extend([0u8; 80]);
-        let mut mp4 = boxed(b"ftyp", b"isom    isom");
+        let mut mp4 = boxed(b"ftyp", b"isom\0\0\0\0isom");
         mp4.extend(boxed(b"moov", &boxed(b"mvhd", &mvhd)));
         let clip = directory.join("clip.mp4");
         std::fs::write(&clip, &mp4).unwrap();
@@ -880,7 +1126,7 @@ mod tests {
 
         // A descriptor's `.mp4` name over Matroska bytes is still Matroska.
         let mut matroska = vec![0x1a, 0x45, 0xdf, 0xa3];
-        matroska.extend(b"matroska webm");
+        matroska.extend(b"matroska\0webm");
         let other = directory.join("clip2.mp4");
         std::fs::write(&other, &matroska).unwrap();
         assert_eq!(video_container(&other), "webm");
@@ -953,6 +1199,119 @@ mod tests {
         assert_eq!(scan.items[0].workshop_id, "12");
         assert!(scan.items[0].preview.is_none());
         assert_eq!(scan.skipped, 3);
+    }
+
+    #[test]
+    fn a_scene_package_unpacks_into_an_editable_project() {
+        let root = temp_dir();
+        let install = fixture(&root);
+        std::fs::create_dir_all(&install.my_projects).unwrap();
+        let item = install.libraries[0].join("123");
+        write_project(
+            &item,
+            json!({"type": "Scene", "file": "scene.pkg", "title": "City", "preview": "preview.jpg"}),
+        );
+        let bytes = package(&[
+            ("scene.json", br#"{"objects":[]}"#),
+            ("materials/sky.tex", b"tex"),
+        ]);
+        std::fs::write(item.join("scene.pkg"), &bytes).unwrap();
+        std::fs::write(item.join("preview.jpg"), b"jpeg").unwrap();
+
+        let answer = unpack(&install, "123");
+        assert_eq!(answer["ok"], true);
+        let project = install.my_projects.join("123");
+        assert_eq!(
+            std::fs::read(project.join("scene.json")).unwrap(),
+            br#"{"objects":[]}"#
+        );
+        assert_eq!(
+            std::fs::read(project.join("materials/sky.tex")).unwrap(),
+            b"tex"
+        );
+        assert_eq!(std::fs::read(project.join("preview.jpg")).unwrap(), b"jpeg");
+        let descriptor: Value =
+            serde_json::from_slice(&std::fs::read(project.join("project.json")).unwrap()).unwrap();
+        assert_eq!(descriptor["file"], "scene.json");
+        assert_eq!(descriptor["title"], "[yunari] City");
+
+        // A second request reuses the project and cannot double the prefix.
+        let again = unpack(&install, "123");
+        assert_eq!(again["reused"], true);
+        let descriptor: Value =
+            serde_json::from_slice(&std::fs::read(project.join("project.json")).unwrap()).unwrap();
+        assert_eq!(descriptor["title"], "[yunari] City");
+    }
+
+    #[test]
+    fn a_listing_is_cached_until_something_it_read_changes() {
+        let root = temp_dir();
+        let install = fixture(&root);
+        let settings = root.join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        let item = install.libraries[0].join("200");
+        write_project(
+            &item,
+            json!({"type": "Scene", "file": "scene.pkg", "title": "Cached"}),
+        );
+        std::fs::write(item.join("scene.pkg"), package(&[("scene.json", b"{}")])).unwrap();
+
+        let first = cached_listing(&install, &settings);
+        assert_eq!(first["items"].as_array().unwrap().len(), 1);
+        // The file it left holds exactly the answer it returned.
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(settings.join(CACHE_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(written["listing"], first);
+        // A second pass answers the same and rewrites the same file.
+        let again = cached_listing(&install, &settings);
+        assert_eq!(again, first);
+
+        // Replacing an item's package changes the fingerprint, so the next
+        // pass reads the disk again.
+        let before = fingerprint(&install);
+        std::fs::write(
+            item.join("scene.pkg"),
+            package(&[("scene.json", br#"{"objects":[]}"#)]),
+        )
+        .unwrap();
+        assert_ne!(fingerprint(&install), before);
+        let third = cached_listing(&install, &settings);
+        assert_eq!(third["items"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_member_that_could_leave_the_project_refuses_the_whole_item() {
+        let root = temp_dir();
+        let install = fixture(&root);
+        std::fs::create_dir_all(&install.my_projects).unwrap();
+        let item = install.libraries[0].join("9");
+        write_project(
+            &item,
+            json!({"type": "Scene", "file": "scene.pkg", "title": "Bad"}),
+        );
+        let bytes = package(&[("scene.json", b"{}"), ("../escape.tex", b"x")]);
+        std::fs::write(item.join("scene.pkg"), &bytes).unwrap();
+
+        let answer = unpack(&install, "9");
+        assert_eq!(answer["ok"], false);
+        assert_eq!(answer["reason"], "unreadable");
+        assert!(!install.my_projects.join("9").exists());
+        assert!(!root.join("escape.tex").exists());
+
+        // An id that is not one directory name is refused before a path exists.
+        assert_eq!(unpack(&install, "..")["reason"], "refused");
+        assert_eq!(unpack(&install, "a/b")["reason"], "refused");
+
+        // A package with no scene member is not a project.
+        let item = install.libraries[0].join("10");
+        write_project(
+            &item,
+            json!({"type": "Scene", "file": "scene.pkg", "title": "NoScene"}),
+        );
+        std::fs::write(item.join("scene.pkg"), package(&[("other.tex", b"x")])).unwrap();
+        assert_eq!(unpack(&install, "10")["reason"], "unreadable");
+        assert!(!install.my_projects.join("10").exists());
     }
 
     #[test]
