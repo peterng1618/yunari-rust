@@ -833,9 +833,6 @@ impl EditorWindow {
         let Some(key) = self.editing.take() else {
             return;
         };
-        let Some(id) = self.selection.first().map(str::to_owned) else {
-            return;
-        };
         let mut outcome = Ok(());
         if let Some(rest) = key.strip_prefix("palette.") {
             outcome = if rest == "new" {
@@ -867,8 +864,15 @@ impl EditorWindow {
             } else {
                 Err("No such type token field".to_owned())
             };
-        } else {
+        } else if key.starts_with("theme.")
+            || key.starts_with("artboard.")
+            || key.starts_with("background.")
+        {
+            self.editor.edit(|document| outcome = inspector::apply_document(document, &key, value));
+        } else if let Some(id) = self.selection.first().map(str::to_owned) {
             self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
+        } else {
+            outcome = Err("Select a node to edit its fields".to_owned());
         }
         match outcome {
             Ok(()) => {
@@ -880,11 +884,10 @@ impl EditorWindow {
     }
 
     fn inspector_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sections = self
-            .selection
-            .first()
-            .map(|id| inspector::sections(self.editor.document(), id))
-            .unwrap_or_default();
+        let sections = match self.selection.first() {
+            Some(id) => inspector::sections(self.editor.document(), id),
+            None => inspector::document_sections(self.editor.document()),
+        };
         let mut children: Vec<AnyElement> = Vec::new();
         if sections.is_empty() {
             children.push(

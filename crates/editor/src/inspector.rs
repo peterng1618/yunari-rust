@@ -5,8 +5,9 @@
 //! same way and a refused value changes nothing.
 
 use yunari_model::document::{
-    ImageFit, Node, NodeKind, StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign, TextContent,
-    TextOverflow, TextRun, ThemeDocument, VerticalAlign,
+    ArtboardShape, BackgroundMode, ContentFit, ImageFit, Node, NodeKind, StyleLiteral, StyleMap,
+    StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument,
+    VerticalAlign,
 };
 
 use crate::selection::find_mut;
@@ -135,6 +136,160 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         _ => {}
     }
     sections
+}
+
+/// The theme's own fields, shown when no node is selected: what the theme is
+/// called, how big the artboard is and what sits behind every node.
+pub fn document_sections(document: &ThemeDocument) -> Vec<Section> {
+    let metadata = &document.metadata;
+    let artboard = &document.artboard;
+    let background = &document.background;
+    let mut sections = vec![
+        Section {
+            title: "Theme",
+            rows: vec![
+                text_field("theme.name", "Name", metadata.name.as_deref()),
+                text_field("theme.author", "Author", metadata.author.as_deref()),
+                text_field("theme.description", "Description", metadata.description.as_deref()),
+                text_field("theme.version", "Version", metadata.version.as_deref()),
+                text_field("theme.language", "Language", metadata.theme_language.as_deref()),
+                text_field("theme.tags", "Tags", Some(metadata.tags.join(", ").as_str())),
+            ],
+        },
+        Section {
+            title: "Artboard",
+            rows: vec![
+                number("artboard.width", "Width", artboard.width, Some(MIN_SIZE)),
+                number("artboard.height", "Height", artboard.height, Some(MIN_SIZE)),
+                choice(
+                    "artboard.contentFit",
+                    "Content fit",
+                    match artboard.content_fit {
+                        ContentFit::Contain => "contain",
+                        ContentFit::Cover => "cover",
+                    },
+                ),
+                choice(
+                    "artboard.shape",
+                    "Shape",
+                    match artboard.shape {
+                        ArtboardShape::Rect => "rect",
+                        ArtboardShape::Circle => "circle",
+                    },
+                ),
+            ],
+        },
+        Section {
+            title: "Background",
+            rows: vec![
+                choice(
+                    "background.mode",
+                    "Mode",
+                    match background.mode {
+                        BackgroundMode::Simple => "simple",
+                        BackgroundMode::Advanced => "advanced",
+                    },
+                ),
+                colour("background.color", "Colour", background.color.as_ref()),
+            ],
+        },
+    ];
+    if let Some(media) = &background.media {
+        sections.push(Section {
+            title: "Background media",
+            rows: vec![text_field("background.media", "Asset", Some(media.asset_id.as_str()))],
+        });
+    }
+    sections
+}
+
+fn text_field(key: &'static str, label: &'static str, value: Option<&str>) -> Field {
+    Field {
+        key: key.to_owned(),
+        label,
+        kind: FieldKind::Text,
+        value: value.unwrap_or_default().to_owned(),
+    }
+}
+
+/// Writes one document-level field: the theme's metadata, the artboard or the
+/// background. The same refusal rule applies — a rejected value changes nothing.
+pub fn apply_document(
+    document: &mut ThemeDocument,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    match key {
+        "artboard.width" | "artboard.height" => {
+            let parsed = value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| format!("{} needs a number", friendly(key)))?;
+            if !parsed.is_finite() || parsed < MIN_SIZE {
+                return Err(format!("{} must be at least {MIN_SIZE}", friendly(key)));
+            }
+            if key == "artboard.width" {
+                document.artboard.width = parsed;
+            } else {
+                document.artboard.height = parsed;
+            }
+        }
+        "artboard.contentFit" => {
+            document.artboard.content_fit = match value.trim() {
+                "contain" => ContentFit::Contain,
+                "cover" => ContentFit::Cover,
+                other => return Err(format!("{other} is not a content fit")),
+            };
+        }
+        "artboard.shape" => {
+            document.artboard.shape = match value.trim() {
+                "rect" => ArtboardShape::Rect,
+                "circle" => ArtboardShape::Circle,
+                other => return Err(format!("{other} is not an artboard shape")),
+            };
+        }
+        "background.mode" => {
+            document.background.mode = match value.trim() {
+                "simple" => BackgroundMode::Simple,
+                "advanced" => BackgroundMode::Advanced,
+                other => return Err(format!("{other} is not a background mode")),
+            };
+        }
+        "background.color" => {
+            if value.trim().is_empty() {
+                document.background.color = None;
+            } else {
+                document.background.color = Some(paint(value)?);
+            }
+        }
+        "theme.tags" => {
+            document.metadata.tags = value
+                .split(',')
+                .map(str::trim)
+                .filter(|tag| !tag.is_empty())
+                .map(str::to_owned)
+                .collect();
+        }
+        _ => {
+            let Some(field) = key.strip_prefix("theme.") else {
+                return Err(format!("{} is not editable yet", friendly(key)));
+            };
+            let trimmed = value.trim();
+            if trimmed.chars().any(char::is_control) {
+                return Err(format!("{} is one line", friendly(key)));
+            }
+            let slot = match field {
+                "name" => &mut document.metadata.name,
+                "author" => &mut document.metadata.author,
+                "description" => &mut document.metadata.description,
+                "version" => &mut document.metadata.version,
+                "language" => &mut document.metadata.theme_language,
+                _ => return Err(format!("{} is not a theme field", friendly(key))),
+            };
+            *slot = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn text_rows(content: &TextContent) -> Vec<Field> {
@@ -633,6 +788,61 @@ mod tests {
         };
         let mut document = with_token(document(vec![node]));
         assert!(apply(&mut document, "label", "kind.content.runs.0.text", "x").is_err());
+    }
+
+    #[test]
+    fn the_document_shows_theme_artboard_and_background() {
+        let document = document(vec![]);
+        let sections = document_sections(&document);
+        let titles: Vec<&str> = sections.iter().map(|section| section.title).collect();
+        assert_eq!(titles, ["Theme", "Artboard", "Background"]);
+        let artboard = &sections[1].rows;
+        assert_eq!(artboard[0].value, "450");
+        assert_eq!(artboard[2].value, "contain");
+        assert_eq!(artboard[3].value, "rect");
+    }
+
+    #[test]
+    fn artboard_edits_are_written_and_refused_values_change_nothing() {
+        let mut document = document(vec![]);
+        assert!(apply_document(&mut document, "artboard.width", "1920").is_ok());
+        assert_eq!(document.artboard.width, 1920.0);
+        assert!(apply_document(&mut document, "artboard.width", "0").is_err());
+        assert_eq!(document.artboard.width, 1920.0);
+        assert!(apply_document(&mut document, "artboard.shape", "circle").is_ok());
+        assert_eq!(document.artboard.shape, ArtboardShape::Circle);
+        assert!(apply_document(&mut document, "artboard.shape", "hexagon").is_err());
+        assert!(apply_document(&mut document, "artboard.height", "wide").is_err());
+    }
+
+    #[test]
+    fn metadata_fields_take_text_and_clear_when_empty() {
+        let mut document = document(vec![]);
+        assert!(apply_document(&mut document, "theme.name", " Desk ").is_ok());
+        assert_eq!(document.metadata.name.as_deref(), Some("Desk"));
+        assert!(apply_document(&mut document, "theme.name", "  ").is_ok());
+        assert_eq!(document.metadata.name, None);
+        assert!(apply_document(&mut document, "theme.tags", "dark, minimal").is_ok());
+        assert_eq!(document.metadata.tags, ["dark", "minimal"]);
+        assert!(apply_document(&mut document, "theme.version", "1\n2").is_err());
+        assert!(apply_document(&mut document, "theme.unknown", "x").is_err());
+    }
+
+    #[test]
+    fn the_background_takes_a_colour_or_a_palette_reference() {
+        let mut document = document(vec![]);
+        assert!(apply_document(&mut document, "background.color", "#101014").is_ok());
+        assert!(matches!(
+            document.background.color,
+            Some(StyleValue::Literal(_))
+        ));
+        assert!(apply_document(&mut document, "background.color", "palette.desk").is_ok());
+        assert!(matches!(document.background.color, Some(StyleValue::Ref(_))));
+        assert!(apply_document(&mut document, "background.color", "").is_ok());
+        assert_eq!(document.background.color, None);
+        assert!(apply_document(&mut document, "background.color", "navy").is_err());
+        assert!(apply_document(&mut document, "background.mode", "advanced").is_ok());
+        assert_eq!(document.background.mode, BackgroundMode::Advanced);
     }
 
     #[test]
