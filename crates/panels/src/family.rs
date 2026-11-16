@@ -251,6 +251,42 @@ pub trait PanelDevice: Send {
     fn close(&mut self) -> Result<(), String>;
 }
 
+/// A boxed driver is a driver: the manager keeps one runner per panel and only
+/// the trait object's methods are ever called.
+impl PanelDevice for Box<dyn PanelDevice> {
+    fn geometry(&self) -> Geometry {
+        (**self).geometry()
+    }
+
+    fn open(&mut self) -> Result<(), String> {
+        (**self).open()
+    }
+
+    fn present(&mut self, still: &[u8]) -> Result<(), String> {
+        (**self).present(still)
+    }
+
+    fn still_format(&self) -> StillFormat {
+        (**self).still_format()
+    }
+
+    fn frame_interval_ms(&self) -> u32 {
+        (**self).frame_interval_ms()
+    }
+
+    fn accepts(&self, kind: CommandKind) -> bool {
+        (**self).accepts(kind)
+    }
+
+    fn run(&mut self, command: PanelCommand) -> Result<String, String> {
+        (**self).run(command)
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        (**self).close()
+    }
+}
+
 /// One attached device, as its family enumerates it.
 pub fn attached() -> Vec<PanelHint> {
     let mut hints = Vec::new();

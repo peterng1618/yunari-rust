@@ -4,6 +4,7 @@
 
 pub mod family;
 pub mod kraken;
+pub mod manager;
 pub mod runner;
 pub mod tur_usb;
 pub mod turzx;

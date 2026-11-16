@@ -13,3 +13,4 @@ des = "0.8"
 cipher = "0.4"
 cbc = { version = "0.1", features = ["alloc"] }
 image.workspace = true
+serde.workspace = true

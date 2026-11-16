@@ -28,5 +28,6 @@ tokio-rustls = "0.26"
 tower = "0.5"
 yunari-library.workspace = true
 yunari-model.workspace = true
+yunari-panels.workspace = true
 yunari-providers.workspace = true
 yunari-render.workspace = true

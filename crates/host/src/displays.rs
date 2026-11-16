@@ -13,6 +13,8 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use yunari_panels::manager::PanelDeviceId;
+
 use crate::config::{read_json, write_json};
 
 /// The key an unpaired client is served as, and the fallback for a display
@@ -79,6 +81,9 @@ pub struct DisplayRecord {
     pub shape: Option<DisplayShape>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<u16>,
+    /// The physical panel this record drives, when it is a panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<PanelDeviceId>,
 }
 
 impl DisplayRecord {
@@ -95,6 +100,7 @@ impl DisplayRecord {
             "monitor": self.monitor,
             "shape": self.shape,
             "rotation": self.rotation,
+            "device": self.device,
         })
     }
 }
@@ -154,6 +160,7 @@ impl DisplayStore {
             monitor: None,
             shape: None,
             rotation: None,
+            device: None,
         }
     }
 
@@ -178,6 +185,7 @@ impl DisplayStore {
             monitor: None,
             shape,
             rotation,
+            device: None,
         };
         self.records.push(record.clone());
         self.save();
@@ -204,6 +212,40 @@ impl DisplayStore {
             monitor,
             shape,
             rotation,
+            device: None,
+        };
+        self.records.push(record.clone());
+        self.save();
+        Ok(record)
+    }
+
+    /// Add a physical panel this host drives. Its shape comes from the family,
+    /// because a panel's glass is a property of the hardware, not the record.
+    pub fn adopt_panel(
+        &mut self,
+        label: &str,
+        device: PanelDeviceId,
+    ) -> Result<DisplayRecord, LabelRefusal> {
+        let label = normalize_label(label)?;
+        let id = self.free_id(&label);
+        let shape =
+            yunari_panels::for_device(device.vendor_id, device.product_id).map(
+                |family| match family.shape {
+                    yunari_panels::PanelShape::Rect => DisplayShape::Rect,
+                    yunari_panels::PanelShape::Circle => DisplayShape::Circle,
+                },
+            );
+        let record = DisplayRecord {
+            id,
+            label,
+            kind: DisplayKind::Panel,
+            created_at: now(),
+            last_seen_at: now(),
+            token_hash: None,
+            monitor: None,
+            shape,
+            rotation: None,
+            device: Some(device),
         };
         self.records.push(record.clone());
         self.save();
@@ -395,6 +437,35 @@ mod tests {
         std::fs::create_dir_all(&dir).ok();
         let store = DisplayStore::load(&dir);
         (dir, store)
+    }
+
+    #[test]
+    fn a_panel_record_names_its_device_and_takes_the_family_shape() {
+        let (dir, mut store) = store("panel");
+        let record = store
+            .adopt_panel(
+                "Kraken glass",
+                PanelDeviceId {
+                    vendor_id: 0x1e71,
+                    product_id: 0x3008,
+                    serial: "kraken-1".to_owned(),
+                    device_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(record.kind, DisplayKind::Panel);
+        assert_eq!(record.shape, Some(DisplayShape::Circle));
+        assert_eq!(
+            record.device.as_ref().map(|device| device.serial.as_str()),
+            Some("kraken-1")
+        );
+
+        // The record survives a reload with its device, or a panel would have
+        // to be re-picked after every restart.
+        let reloaded = DisplayStore::load(&dir);
+        let stored = reloaded.get(&record.id).expect("the panel is stored");
+        assert_eq!(stored.device, record.device);
+        assert_eq!(stored.peer_json()["device"]["serial"], "kraken-1");
     }
 
     #[test]

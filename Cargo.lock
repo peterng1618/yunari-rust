@@ -8893,6 +8893,7 @@ dependencies = [
  "tower",
  "yunari-library",
  "yunari-model",
+ "yunari-panels",
  "yunari-providers",
  "yunari-render",
 ]
@@ -8930,6 +8931,7 @@ dependencies = [
  "hidapi",
  "image",
  "rusb",
+ "serde",
  "serialport",
 ]
 

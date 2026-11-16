@@ -10,7 +10,7 @@
 
 use std::sync::Mutex;
 
-use crate::family::{PanelCommand, PanelDevice};
+use crate::family::{CommandKind, PanelCommand, PanelDevice};
 
 /// The panel's refresh cadence. A wall screen costs the machine it reports on.
 pub const DEFAULT_INTERVAL_MS: u32 = 1_000;
@@ -91,6 +91,11 @@ impl<D: PanelDevice> Runner<D> {
     pub fn on_frame(mut self, report: impl Fn() + Send + Sync + 'static) -> Self {
         self.on_frame = Box::new(report);
         self
+    }
+
+    /// Whether the device running now takes this control at all.
+    pub fn accepts(&self, kind: CommandKind) -> bool {
+        self.device.lock().expect("the panel").accepts(kind)
     }
 
     pub fn interval_ms(&self) -> u32 {
