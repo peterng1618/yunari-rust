@@ -48,6 +48,12 @@ pub fn run(host: Shared, editor: Option<AnyWindowHandle>, cx: &mut App) {
                                 Some(cx.update(|app| yunari_editor::open_with(Some(host), app)));
                         }
                     }
+                    yunari_tray::Action::Themes => {
+                        open_editor_command(&host, yunari_editor::Command::Store, cx);
+                    }
+                    yunari_tray::Action::Settings => {
+                        open_editor_command(&host, yunari_editor::Command::Settings, cx);
+                    }
                     yunari_tray::Action::Exit => {
                         cx.update(|app| app.quit());
                         return;
@@ -57,6 +63,14 @@ pub fn run(host: Shared, editor: Option<AnyWindowHandle>, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Opens the editor already showing one of its dialogs. The tray never keeps a
+/// second window over the same library, so this is a fresh window only when
+/// no editor was opened at launch.
+fn open_editor_command(host: &Shared, command: yunari_editor::Command, cx: &mut AsyncApp) {
+    let host = host.clone();
+    cx.update(|app| yunari_editor::open_command(Some(host), command, app));
 }
 
 fn status(host: &Shared) -> yunari_tray::Status {

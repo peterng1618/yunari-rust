@@ -16,6 +16,8 @@ pub enum Action {
     AutoStart,
     Pair,
     Editor,
+    Themes,
+    Settings,
     Folder,
     Exit,
 }
@@ -276,6 +278,8 @@ mod platform {
             for (id, label) in [
                 (ITEM_PAIR, "Pair display…"),
                 (ITEM_EDITOR, "Theme Editor"),
+                (ITEM_THEMES, "Theme Store"),
+                (ITEM_SETTINGS, "Host Settings"),
                 (ITEM_FOLDER, "Open Yunari folder"),
                 (ITEM_EXIT, "Exit"),
             ] {
@@ -301,6 +305,8 @@ mod platform {
                 ITEM_AUTOSTART => Some(Action::AutoStart),
                 ITEM_PAIR => Some(Action::Pair),
                 ITEM_EDITOR => Some(Action::Editor),
+                ITEM_THEMES => Some(Action::Themes),
+                ITEM_SETTINGS => Some(Action::Settings),
                 ITEM_FOLDER => Some(Action::Folder),
                 ITEM_EXIT => Some(Action::Exit),
                 _ => None,
@@ -314,8 +320,10 @@ mod platform {
     const ITEM_AUTOSTART: usize = 1;
     const ITEM_PAIR: usize = 2;
     const ITEM_EDITOR: usize = 3;
-    const ITEM_FOLDER: usize = 4;
-    const ITEM_EXIT: usize = 5;
+    const ITEM_THEMES: usize = 4;
+    const ITEM_SETTINGS: usize = 5;
+    const ITEM_FOLDER: usize = 6;
+    const ITEM_EXIT: usize = 7;
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()

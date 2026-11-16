@@ -23,4 +23,5 @@ pub mod widgets;
 
 pub use document::{Editor, Source};
 pub use history::History;
-pub use ui::{open, open_with};
+pub use ui::menus::Command;
+pub use ui::{open, open_command, open_with};

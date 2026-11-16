@@ -3464,6 +3464,16 @@ pub fn open(cx: &mut App) {
 /// are the ones the host serves. The handle is returned so the app can bring the
 /// window back rather than open a second one.
 pub fn open_with(host: Option<Shared>, cx: &mut App) -> AnyWindowHandle {
+    window_for(host, None, cx)
+}
+
+/// Opens the editor with one command already applied, so a row outside the
+/// editor (the tray's Store and Settings) lands on the surface it names.
+pub fn open_command(host: Option<Shared>, command: Command, cx: &mut App) -> AnyWindowHandle {
+    window_for(host, Some(command), cx)
+}
+
+fn window_for(host: Option<Shared>, command: Option<Command>, cx: &mut App) -> AnyWindowHandle {
     let library = Library::new(default_root());
     open_window(
         WindowOptions {
@@ -3479,7 +3489,13 @@ pub fn open_with(host: Option<Shared>, cx: &mut App) -> AnyWindowHandle {
             ..Default::default()
         },
         cx,
-        move |_, cx| cx.new(|cx| EditorWindow::new(library, host, cx)),
+        move |window, cx| {
+            let editor = cx.new(|cx| EditorWindow::new(library, host, cx));
+            if let Some(command) = command {
+                editor.update(cx, |editor, cx| editor.apply(command, window, cx));
+            }
+            editor
+        },
     )
     .expect("failed to open the editor window")
     .0
