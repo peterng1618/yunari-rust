@@ -7,8 +7,9 @@
 use std::collections::BTreeMap;
 
 use yunari_library::{Saved, StoredTheme};
-use yunari_model::document::{Node, ThemeDocument};
+use yunari_model::document::{AssetKind, AssetReference, Node, ThemeDocument};
 
+use crate::assets;
 use crate::clipboard::Clipboard;
 use crate::history::History;
 
@@ -79,6 +80,49 @@ impl Editor {
     /// Declares an asset's bytes. Storing the same bytes again changes nothing.
     pub fn put_asset(&mut self, path: impl Into<String>, bytes: Vec<u8>) {
         self.assets.insert(path.into(), bytes);
+    }
+
+    /// Takes a file this PC holds as a theme asset, refusing anything this
+    /// editor will not draw. Returns the new asset's id; the bytes are held
+    /// beside the document until a save writes them.
+    pub fn import_asset(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, String> {
+        let kind = assets::sniff(name, &bytes)?;
+        if kind == AssetKind::Svg {
+            let text =
+                std::str::from_utf8(&bytes).map_err(|_| assets::NOT_A_FILE_MESSAGE.to_owned())?;
+            assets::sanitize_svg(text)?;
+        }
+        let limit = assets::limit(kind);
+        if bytes.len() as u64 > limit {
+            return Err(format!(
+                "That file is larger than the {} MiB an imported file may be.",
+                limit / (1024 * 1024)
+            ));
+        }
+        let path = free_asset_path(
+            self.document(),
+            &assets::stem(name),
+            assets::extension(kind),
+        );
+        let id = free_asset_id(self.document());
+        let reference = AssetReference {
+            id: id.clone(),
+            kind,
+            path: path.clone(),
+            // The renderer trusts the bytes beside the document, so the digest
+            // is recorded for whoever wants to check them later.
+            sha256: Some(yunari_library::sha256_hex(&bytes)),
+            source_url: None,
+            license: None,
+            family: None,
+            weight: None,
+            style: None,
+            format: None,
+            subset: None,
+        };
+        self.edit(|document| document.assets.push(reference));
+        self.put_asset(path, bytes);
+        Ok(id)
     }
 
     pub fn replace_assets(&mut self, assets: BTreeMap<String, Vec<u8>>) {
@@ -222,6 +266,28 @@ impl Editor {
 /// The document as the clean test sees it: one canonical JSON spelling.
 fn canonical(document: &ThemeDocument) -> String {
     serde_json::to_string(document).unwrap_or_default()
+}
+
+/// A path no declared asset holds, so importing a second file of the same name
+/// lands beside the first rather than over it.
+fn free_asset_path(document: &ThemeDocument, stem: &str, extension: &str) -> String {
+    let mut path = format!("assets/{stem}.{extension}");
+    let mut n = 2;
+    while document.assets.iter().any(|asset| asset.path == path) {
+        path = format!("assets/{stem}-{n}.{extension}");
+        n += 1;
+    }
+    path
+}
+
+fn free_asset_id(document: &ThemeDocument) -> String {
+    let mut id = "asset".to_owned();
+    let mut n = 2;
+    while document.assets.iter().any(|asset| asset.id == id) {
+        id = format!("asset-{n}");
+        n += 1;
+    }
+    id
 }
 
 fn apply_one(node: &mut Node, changes: &[(String, yunari_model::document::Transform)]) {
@@ -386,6 +452,54 @@ mod tests {
         assert!(editor.remove_nodes(&["group".to_owned()]));
         assert!(editor.document().nodes.is_empty());
         assert!(editor.document().bindings.is_empty());
+    }
+
+    #[test]
+    fn an_imported_picture_is_an_asset_with_its_bytes_beside_the_document() {
+        const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        let mut editor = Editor::new(document());
+        let id = editor
+            .import_asset("My Photo.PNG", PNG.to_vec())
+            .expect("an import");
+        let asset = editor
+            .document()
+            .assets
+            .iter()
+            .find(|asset| asset.id == id)
+            .expect("the asset");
+        assert_eq!(asset.path, "assets/my-photo.png");
+        assert_eq!(asset.kind, AssetKind::Image);
+        assert!(asset.sha256.as_deref().is_some_and(|sha| sha.len() == 64));
+        assert_eq!(
+            editor.assets().get("assets/my-photo.png"),
+            Some(&PNG.to_vec())
+        );
+        // A second file of the same name lands beside the first.
+        let second = editor
+            .import_asset("my photo.png", PNG.to_vec())
+            .expect("a second import");
+        assert_ne!(second, id);
+        assert_eq!(editor.document().assets.len(), 2);
+        assert_ne!(
+            editor.document().assets[0].path,
+            editor.document().assets[1].path
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_picture_leaves_the_document_alone() {
+        let mut editor = Editor::new(document());
+        assert_eq!(
+            editor.import_asset("a.png", b"PK\x03\x04".to_vec()),
+            Err(assets::NOT_A_FILE_MESSAGE.to_owned())
+        );
+        assert_eq!(
+            editor.import_asset("x.svg", b"<svg><script/></svg>".to_vec()),
+            Err(assets::UNSAFE_SVG_MESSAGE.to_owned())
+        );
+        assert!(editor.document().assets.is_empty());
+        assert!(editor.assets().is_empty());
+        assert!(!editor.can_undo());
     }
 
     #[test]

@@ -17,10 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use gpui_kit::*;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
-    Artboard, ArtboardShape, Background, ChartContent, ChartFamily, ContentFit, Metadata, Node,
-    NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign,
-    TextContent, TextOverflow, TextRun, ThemeDocument, Transform, TypeToken, TypeWeight,
-    VerticalAlign,
+    Artboard, ArtboardShape, Background, ChartContent, ChartFamily, ContentFit, ImageContent,
+    ImageFit, Metadata, Node, NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap, StyleRef,
+    StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform, TypeToken,
+    TypeWeight, VerticalAlign,
 };
 use yunari_providers::clock::ClockProvider;
 use yunari_providers::registry::Registry;
@@ -35,6 +35,7 @@ use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use crate::arrange;
+use crate::assets;
 use crate::document::{Editor, Source};
 use crate::inspector;
 use crate::layers::{self, Move as LayerMove};
@@ -90,6 +91,7 @@ impl Status {
 enum Overlay {
     SaveAs(Prompt),
     Import(Prompt),
+    ImportAsset(Prompt),
     Library(LibraryDialog),
     Rename(Prompt),
     Field(Prompt),
@@ -262,12 +264,14 @@ impl EditorWindow {
         true
     }
 
-    /// Pictures are read from beside the theme that names them.
+    /// Pictures are read from beside the theme that names them, plus the bytes
+    /// an import is holding that no save has written yet.
     fn point_images(&mut self) {
-        let images = match self.editor.source() {
-            Source::Library { id, .. } => Images::at(self.library.root().join(id)),
-            Source::Unsaved => Images::empty(),
-        };
+        let images = images_for(
+            self.editor.source(),
+            self.library.root(),
+            self.editor.assets(),
+        );
         self.images = Rc::new(RefCell::new(images));
     }
 
@@ -291,6 +295,13 @@ impl EditorWindow {
                     "",
                 )));
             }
+            Command::ImportAsset => {
+                self.overlay = Some(Overlay::ImportAsset(Prompt::new(
+                    "Import asset",
+                    "Path to a picture on this PC",
+                    "",
+                )));
+            }
             Command::Undo => {
                 self.editor.undo();
                 self.refresh();
@@ -307,6 +318,13 @@ impl EditorWindow {
             Command::AddWedge => self.add(wedge_node),
             Command::AddText => self.add(text_node),
             Command::AddVerticalText => self.add(vertical_text_node),
+            Command::AddImage => {
+                let asset = assets::first_picture(self.editor.document()).map(|a| a.id.clone());
+                match asset {
+                    Some(asset_id) => self.add(|document| image_node(document, &asset_id)),
+                    None => self.status = Some(Status::error(assets::NO_PICTURE_MESSAGE)),
+                }
+            }
             Command::AddGauge => self.add(|document| chart_node(document, ChartFamily::Gauge)),
             Command::AddLineChart => self.add(|document| chart_node(document, ChartFamily::Line)),
             Command::AddBarChart => self.add(|document| chart_node(document, ChartFamily::Bar)),
@@ -526,6 +544,35 @@ impl EditorWindow {
         match import_package(&self.library, &bytes) {
             Ok(id) => self.open_entry(&id, cx),
             Err(error) => self.status = Some(Status::error(error)),
+        }
+    }
+
+    /// Takes a file from this PC into the open theme. The bytes are held until
+    /// the next save, so an imported picture draws before the theme is stored.
+    fn import_asset(&mut self, value: &str) {
+        self.overlay = None;
+        let path = value.trim();
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "{}{path}: {error}",
+                    assets::UNREADABLE_MESSAGE
+                )));
+                return;
+            }
+        };
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path);
+        match self.editor.import_asset(name, bytes) {
+            Ok(id) => {
+                self.point_images();
+                self.status = Some(Status::ok(format!("Imported {id}")));
+                self.refresh();
+            }
+            Err(message) => self.status = Some(Status::error(message)),
         }
     }
 
@@ -1469,6 +1516,13 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
+            Overlay::ImportAsset(mut prompt) => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => self.overlay = Some(Overlay::ImportAsset(prompt)),
+                    Outcome::Cancel => {}
+                    Outcome::Submit(value) => self.import_asset(&value),
+                }
+            }
             Overlay::Confirm { message, resume } => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
@@ -1871,6 +1925,9 @@ impl EditorWindow {
             Some(Overlay::Rename(prompt)) => self.rename_node(&prompt.value),
             Some(Overlay::Field(prompt)) => self.apply_field(&prompt.value),
             Some(Overlay::Import(prompt)) => self.guard(Resume::Import(prompt.value), cx),
+            Some(Overlay::ImportAsset(prompt)) => {
+                self.import_asset(&prompt.value);
+            }
             other => self.overlay = other,
         }
         cx.notify();
@@ -1882,7 +1939,9 @@ impl EditorWindow {
             Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt) | Overlay::Field(prompt)) => {
                 Self::prompt_panel(prompt, cx)
             }
-            Some(Overlay::Import(prompt)) => Self::prompt_panel(prompt, cx),
+            Some(Overlay::Import(prompt) | Overlay::ImportAsset(prompt)) => {
+                Self::prompt_panel(prompt, cx)
+            }
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
@@ -2354,6 +2413,26 @@ fn rectangle_node(document: &ThemeDocument) -> Node {
     }
 }
 
+fn image_node(document: &ThemeDocument, asset_id: &str) -> Node {
+    Node {
+        id: free_id(document, "image"),
+        name: None,
+        kind: NodeKind::Image {
+            content: ImageContent {
+                asset_id: asset_id.to_owned(),
+                fit: ImageFit::Contain,
+                monochrome: None,
+            },
+        },
+        transform: place(document, 480.0, 320.0),
+        visible: true,
+        locked: false,
+        style: StyleMap::default(),
+        glass: None,
+        children: Vec::new(),
+    }
+}
+
 fn text_node(document: &ThemeDocument) -> Node {
     let mut style = style_with_fill("#e8e8ea");
     style.insert(
@@ -2470,6 +2549,19 @@ fn find_node<'a>(nodes: &'a [Node], id: &str) -> Option<&'a Node> {
     None
 }
 
+/// The pictures a frame can reach: those beside a stored theme, then the bytes
+/// the editor is holding, so an import draws before it is saved.
+fn images_for(source: &Source, root: &Path, assets: &BTreeMap<String, Vec<u8>>) -> Images {
+    let mut images = match source {
+        Source::Library { id, .. } => Images::at(root.join(id)),
+        Source::Unsaved => Images::empty(),
+    };
+    for (path, bytes) in assets {
+        images.put(path, bytes);
+    }
+    images
+}
+
 /// The id Save As offers: the theme's name as a stable id.
 fn suggested_id(document: &ThemeDocument) -> String {
     document
@@ -2548,8 +2640,59 @@ mod tests {
     // attribute, and a glob would shadow the built-in one.
     use super::{
         INSET, Node, NodeKind, Path, STEP, StyleMap, ThemeDocument, Transform, blank, chart_node,
-        export_path, free_id, line_node, place, rectangle_node, slug, suggested_id,
+        export_path, free_id, image_node, images_for, line_node, place, rectangle_node, slug,
+        suggested_id,
     };
+
+    #[test]
+    fn an_imported_picture_draws_before_the_theme_is_saved() {
+        use std::collections::BTreeMap;
+
+        use image::ImageEncoder;
+
+        use crate::document::Source;
+
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .expect("a picture");
+        let assets = BTreeMap::from([("assets/red.png".to_owned(), png)]);
+        let mut images = images_for(&Source::Unsaved, Path::new(""), &assets);
+        let picture = images.load("assets/red.png").expect("the imported picture");
+        assert_eq!((picture.width, picture.height), (1, 1));
+        // A path the editor holds nothing for is still absent, not invented.
+        assert!(images.load("assets/gone.png").is_none());
+    }
+
+    #[test]
+    fn placing_an_image_names_the_themes_first_picture() {
+        use yunari_model::document::{AssetKind, AssetReference};
+
+        let mut document = blank();
+        // Nothing to place yet.
+        assert!(crate::assets::first_picture(&document).is_none());
+        document.assets.push(AssetReference {
+            id: "logo".to_owned(),
+            kind: AssetKind::Image,
+            path: "assets/logo.png".to_owned(),
+            sha256: None,
+            source_url: None,
+            license: None,
+            family: None,
+            weight: None,
+            style: None,
+            format: None,
+            subset: None,
+        });
+        let asset = crate::assets::first_picture(&document).expect("a picture");
+        let node = image_node(&document, &asset.id);
+        let NodeKind::Image { content } = &node.kind else {
+            panic!("an image node");
+        };
+        assert_eq!(content.asset_id, "logo");
+        // Its box is inside the blank artboard.
+        assert!(node.transform.x + node.transform.width <= document.artboard.width);
+    }
 
     #[test]
     fn the_blank_theme_holds_the_source_defaults() {

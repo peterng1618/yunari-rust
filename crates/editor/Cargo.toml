@@ -15,3 +15,6 @@ yunari-render.workspace = true
 yunari-render-gpui.workspace = true
 yunari-render-raster.workspace = true
 yunari-player.workspace = true
+
+[dev-dependencies]
+image.workspace = true

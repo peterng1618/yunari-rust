@@ -39,6 +39,13 @@ impl Images {
         Self::default()
     }
 
+    /// A picture the caller holds in memory, such as one just imported and not
+    /// yet saved. It takes the same path the document will store it under.
+    pub fn put(&mut self, path: &str, bytes: &[u8]) {
+        let decoded = decode_bytes(bytes);
+        self.cache.insert(path.to_owned(), decoded);
+    }
+
     /// The picture at an asset path, decoded on first use. `None` means the
     /// bytes are missing or are not an image this build reads, and nothing is
     /// substituted for them.
@@ -53,7 +60,11 @@ impl Images {
 
 fn decode(path: &Path) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
-    let image = image::load_from_memory(&bytes).ok()?.into_rgba8();
+    decode_bytes(&bytes)
+}
+
+fn decode_bytes(bytes: &[u8]) -> Option<Decoded> {
+    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
     Some(Decoded {
         width: image.width(),
         height: image.height(),

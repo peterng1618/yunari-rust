@@ -8,6 +8,7 @@ pub enum Command {
     SaveAs,
     Export,
     Import,
+    ImportAsset,
     Undo,
     Redo,
     AddRectangle,
@@ -18,6 +19,7 @@ pub enum Command {
     AddWedge,
     AddText,
     AddVerticalText,
+    AddImage,
     AddGauge,
     AddLineChart,
     AddBarChart,
@@ -43,13 +45,14 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 40] = [
         Self::New,
         Self::Open,
         Self::Save,
         Self::SaveAs,
         Self::Export,
         Self::Import,
+        Self::ImportAsset,
         Self::Undo,
         Self::Redo,
         Self::AddRectangle,
@@ -60,6 +63,7 @@ impl Command {
         Self::AddWedge,
         Self::AddText,
         Self::AddVerticalText,
+        Self::AddImage,
         Self::AddGauge,
         Self::AddLineChart,
         Self::AddBarChart,
@@ -92,6 +96,7 @@ impl Command {
             Self::SaveAs => "Save As…",
             Self::Export => "Export…",
             Self::Import => "Import…",
+            Self::ImportAsset => "Import asset…",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::AddRectangle => "Rectangle",
@@ -102,6 +107,7 @@ impl Command {
             Self::AddWedge => "Wedge",
             Self::AddText => "Text",
             Self::AddVerticalText => "Vertical text",
+            Self::AddImage => "Image",
             Self::AddGauge => "Gauge",
             Self::AddLineChart => "Line chart",
             Self::AddBarChart => "Bar chart",
@@ -135,6 +141,7 @@ impl Command {
             Self::SaveAs => "Ctrl+Shift+S",
             Self::Export => "Ctrl+E",
             Self::Import => "Ctrl+I",
+            Self::ImportAsset => "Ctrl+Shift+I",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Shift+Z",
             Self::AddRectangle => "R",
@@ -144,6 +151,7 @@ impl Command {
             Self::AddArc => "",
             Self::AddWedge => "",
             Self::AddText => "T",
+            Self::AddImage => "I",
             Self::AddVerticalText => "",
             Self::AddGauge => "",
             Self::AddLineChart => "",
@@ -183,6 +191,7 @@ impl Command {
             (true, false, "n") => Some(Self::New),
             (true, false, "e") => Some(Self::Export),
             (true, false, "i") => Some(Self::Import),
+            (true, true, "i") => Some(Self::ImportAsset),
             (true, false, "z") => Some(Self::Undo),
             (true, true, "z") => Some(Self::Redo),
             // Windows' own redo chord, alongside the one every editor shares.
@@ -198,6 +207,7 @@ impl Command {
             (false, false, "r") => Some(Self::AddRectangle),
             (false, false, "e") => Some(Self::AddEllipse),
             (false, false, "t") => Some(Self::AddText),
+            (false, false, "i") => Some(Self::AddImage),
             _ => None,
         }
     }
