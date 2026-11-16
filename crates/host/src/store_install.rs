@@ -22,7 +22,6 @@ pub const NOT_JSON_MESSAGE: &str = "That install request is not JSON.";
 pub const NEEDS_FACTS_MESSAGE: &str =
     "An install needs packageUrl, catalogueId, kind, version, sha256 and bytes.";
 pub const NO_PACKS_MESSAGE: &str = "This host keeps no widget packs.";
-pub const NO_PRESETS_MESSAGE: &str = "This host keeps no path presets.";
 pub const NO_PLUGINS_MESSAGE: &str = "This host keeps no plugins.";
 
 /// The package's own cap follows the theme reader's.
@@ -212,7 +211,7 @@ pub fn install(
         Kind::DashboardTheme => dashboard_theme(app, request, &bytes),
         Kind::WidgetPack => widget_pack(app, &bytes),
         Kind::EditorTheme => editor_theme(app, request, &bytes),
-        Kind::PathPresetPack => Err(Refusal::at(Stage::Store, NO_PRESETS_MESSAGE)),
+        Kind::PathPresetPack => path_presets(app, &bytes),
         Kind::Plugin => Err(Refusal::at(Stage::Store, NO_PLUGINS_MESSAGE)),
     }
 }
@@ -269,6 +268,13 @@ fn widget_pack(app: &Shared, bytes: &[u8]) -> Result<Installed, Refusal> {
     let installed = yunari_packs::install(&directory, bytes)
         .map_err(|message| Refusal::at(Stage::Package, message))?;
     Ok(Installed { id: installed.id })
+}
+
+fn path_presets(app: &Shared, bytes: &[u8]) -> Result<Installed, Refusal> {
+    let (id, _) = crate::path_presets::Store::at(app.config.settings_dir())
+        .add_pack(bytes)
+        .map_err(|message| Refusal::at(Stage::Package, message))?;
+    Ok(Installed { id })
 }
 
 fn editor_theme(
@@ -578,18 +584,51 @@ mod tests {
     }
 
     #[test]
-    fn the_dropped_kinds_are_refused_as_this_hosts_own_gap() {
+    fn a_plugin_is_refused_as_this_hosts_own_gap() {
         let app = app("dropped-kinds");
         let bytes = b"whatever".to_vec();
-        for (kind, message) in [
-            (Kind::PathPresetPack, NO_PRESETS_MESSAGE),
-            (Kind::Plugin, NO_PLUGINS_MESSAGE),
-        ] {
-            let refusal = install(&app, &request(kind, &bytes), &served(bytes.clone()))
-                .expect_err("a refusal");
-            assert_eq!(refusal.stage, Stage::Store);
-            assert_eq!(refusal.message, message);
-        }
+        let refusal =
+            install(&app, &request(Kind::Plugin, &bytes), &served(bytes)).expect_err("a refusal");
+        assert_eq!(refusal.stage, Stage::Store);
+        assert_eq!(refusal.message, NO_PLUGINS_MESSAGE);
+    }
+
+    #[test]
+    fn a_path_preset_pack_is_installed_into_the_presets_store() {
+        let app = app("preset-pack");
+        let pack = serde_json::json!({
+            "format": "yunari-path-preset-pack",
+            "version": 1,
+            "id": "space",
+            "name": "Space shapes",
+            "presets": [
+                {"id": "orbit", "label": "Orbit", "data": "M 0 0 L 10 10 Z", "paint": "fill"}
+            ]
+        })
+        .to_string()
+        .into_bytes();
+        let installed = install(
+            &app,
+            &request(Kind::PathPresetPack, &pack),
+            &served(pack.clone()),
+        )
+        .expect("an installed pack");
+        assert_eq!(installed.id, "space");
+        assert!(
+            crate::path_presets::Store::at(app.config.settings_dir())
+                .read()
+                .presets
+                .iter()
+                .any(|preset| preset.id == "pack:space:orbit")
+        );
+        // A pack that is not one is the package's refusal, not a store fault.
+        let refusal = install(
+            &app,
+            &request(Kind::PathPresetPack, b"not a pack"),
+            &served(b"not a pack".to_vec()),
+        )
+        .expect_err("a refusal");
+        assert_eq!(refusal.stage, Stage::Package);
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub mod pages;
 pub mod pairing;
 pub mod panels;
 pub mod panels_routes;
+pub mod path_presets;
 pub mod server;
 pub mod store;
 pub mod store_install;

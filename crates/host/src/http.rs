@@ -67,6 +67,24 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/displays", get(displays).post(add_display))
         // What this PC can drive, named so a local display record can hold it.
         .route("/api/monitors", get(monitors))
+        .route("/api/path-presets", get(path_presets).post(add_path_preset))
+        .route("/api/path-presets/packs", post(import_path_preset_pack))
+        .route(
+            "/api/path-presets/packs/{id}",
+            axum::routing::delete(remove_path_preset_pack),
+        )
+        .route(
+            "/api/path-presets/builtins/restore",
+            post(restore_path_presets),
+        )
+        .route(
+            "/api/path-presets/builtins/{id}/remove",
+            post(remove_path_preset_builtin),
+        )
+        .route(
+            "/api/path-presets/{id}",
+            axum::routing::delete(remove_path_preset),
+        )
         .route(
             "/api/displays/{id}/panel/command",
             post(crate::panels_routes::command),
@@ -810,6 +828,116 @@ async fn monitors(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> Response {
     }
 }
 
+async fn path_presets(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    Json(
+        crate::path_presets::Store::at(app.config.settings_dir())
+            .read()
+            .json(),
+    )
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct NewPathPreset {
+    label: String,
+    data: String,
+}
+
+async fn add_path_preset(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(body): Json<NewPathPreset>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir())
+        .add_user(&body.label, &body.data)
+    {
+        Ok(preset) => Json(preset.json()).into_response(),
+        Err(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+    }
+}
+
+async fn import_path_preset_pack(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir()).add_pack(&body) {
+        Ok((pack_id, presets)) => Json(json!({
+            "packId": pack_id,
+            "presets": presets.iter().map(crate::path_presets::Preset::json).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+    }
+}
+
+async fn remove_path_preset(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir()).remove(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn remove_path_preset_builtin(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir()).remove_builtin(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn restore_path_presets(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir()).restore_builtins() {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+async fn remove_path_preset_pack(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    match crate::path_presets::Store::at(app.config.settings_dir()).remove_pack(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
 async fn root(
     State(app): State<Shared>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -1482,6 +1610,8 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = ask(app.clone(), "/api/monitors", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask(app.clone(), "/api/path-presets", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, _) = ask(app.clone(), "/api/pairing/code", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         let (status, body) = ask(app.clone(), "/api/host", phone).await;
@@ -1497,6 +1627,10 @@ mod tests {
         let here = SocketAddr::from(([127, 0, 0, 1], 50000));
         let (status, body) = ask(app.clone(), "/api/displays", here).await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        // The built-ins are served even when this PC has stored none.
+        let (status, body) = ask(app.clone(), "/api/path-presets", here).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.contains("\"line\""), "{body}");
         let (status, _) = ask(app, "/", here).await;
         assert_eq!(status, StatusCode::OK);
     }
