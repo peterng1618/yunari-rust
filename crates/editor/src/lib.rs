@@ -7,6 +7,7 @@ pub mod document;
 pub mod fixtures;
 pub mod grouping;
 pub mod history;
+pub mod inspector;
 pub mod layers;
 pub mod persistence;
 pub mod selection;

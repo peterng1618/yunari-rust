@@ -71,6 +71,19 @@ pub fn find<'a>(document: &'a ThemeDocument, id: &str) -> Option<&'a Node> {
     find_in(&document.nodes, id)
 }
 
+/// The node with this id, mutable, anywhere in the tree.
+pub fn find_mut<'a>(nodes: &'a mut [Node], id: &str) -> Option<&'a mut Node> {
+    for node in nodes {
+        if node.id == id {
+            return Some(node);
+        }
+        if let Some(found) = find_mut(&mut node.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub fn find_in<'a>(nodes: &'a [Node], id: &str) -> Option<&'a Node> {
     for node in nodes {
         if node.id == id {

@@ -35,6 +35,7 @@ use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use crate::arrange;
 use crate::document::{Editor, Source};
+use crate::inspector;
 use crate::layers::{self, Move as LayerMove};
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
@@ -88,6 +89,7 @@ enum Overlay {
     Import(Prompt),
     Library(LibraryDialog),
     Rename(Prompt),
+    Field(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
     Confirm { message: String, resume: Resume },
 }
@@ -149,6 +151,8 @@ pub struct EditorWindow {
     expanded: BTreeSet<String>,
     /// The row a rename prompt is editing.
     renaming: Option<String>,
+    /// The inspector key a field prompt is editing.
+    editing: Option<String>,
     overlay: Option<Overlay>,
     status: Option<Status>,
     focus: FocusHandle,
@@ -197,6 +201,7 @@ impl EditorWindow {
             nudge_epoch: 0,
             expanded: BTreeSet::new(),
             renaming: None,
+            editing: None,
             overlay: None,
             status: None,
             focus: cx.focus_handle(),
@@ -812,6 +817,113 @@ impl EditorWindow {
         }
     }
 
+    fn begin_field(&mut self, key: &str, label: &str, value: &str, cx: &mut Context<Self>) {
+        self.editing = Some(key.to_owned());
+        self.overlay = Some(Overlay::Field(Prompt::new(
+            format!("Edit {label}"),
+            "Enter applies, Esc cancels",
+            value,
+        )));
+        cx.notify();
+    }
+
+    fn apply_field(&mut self, value: &str) {
+        let Some(key) = self.editing.take() else {
+            return;
+        };
+        let Some(id) = self.selection.first().map(str::to_owned) else {
+            return;
+        };
+        let mut outcome = Ok(());
+        self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
+        match outcome {
+            Ok(()) => {
+                self.status = Some(Status::ok(format!("Set {}", key.rsplit('.').next().unwrap_or(&key))));
+                self.refresh();
+            }
+            Err(message) => self.status = Some(Status::error(message)),
+        }
+    }
+
+    fn inspector_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let sections = self
+            .selection
+            .first()
+            .map(|id| inspector::sections(self.editor.document(), id))
+            .unwrap_or_default();
+        let mut children: Vec<AnyElement> = Vec::new();
+        if sections.is_empty() {
+            children.push(
+                div()
+                    .p_2()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child("Select a node to edit it")
+                    .into_any_element(),
+            );
+        }
+        for (section_index, section) in sections.into_iter().enumerate() {
+            children.push(
+                div()
+                    .px_2()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(section.title)
+                    .into_any_element(),
+            );
+            for (row_index, field) in section.rows.into_iter().enumerate() {
+                let key = field.key.clone();
+                let label = field.label;
+                let value = field.value.clone();
+                children.push(
+                    div()
+                        .id(("field", section_index * 32 + row_index))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .cursor_pointer()
+                        .text_sm()
+                        .child(div().text_color(rgb(MUTED)).child(label))
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(rgb(0x101014))
+                                .text_color(rgb(INK))
+                                .child(value.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.begin_field(&key, label, &value, cx)
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        div()
+            .w(px(260.0))
+            .flex_shrink_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(rgb(0x2e2e38))
+            .bg(rgb(PANEL))
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child("Inspector"),
+            )
+            .children(children)
+    }
+
     fn toggle_expanded(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.expanded.remove(id) {
             self.expanded.insert(id.to_owned());
@@ -1088,6 +1200,13 @@ impl EditorWindow {
                     self.discard(resume, window, cx);
                 } else {
                     self.overlay = Some(Overlay::Confirm { message, resume });
+                }
+            }
+            Overlay::Field(mut prompt) => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => self.overlay = Some(Overlay::Field(prompt)),
+                    Outcome::Cancel => self.editing = None,
+                    Outcome::Submit(value) => self.apply_field(&value),
                 }
             }
             Overlay::Rename(mut prompt) => {
@@ -1467,6 +1586,7 @@ impl EditorWindow {
         match self.overlay.take() {
             Some(Overlay::SaveAs(prompt)) => self.save_as(&prompt.value),
             Some(Overlay::Rename(prompt)) => self.rename_node(&prompt.value),
+            Some(Overlay::Field(prompt)) => self.apply_field(&prompt.value),
             Some(Overlay::Import(prompt)) => self.guard(Resume::Import(prompt.value), cx),
             other => self.overlay = other,
         }
@@ -1476,7 +1596,7 @@ impl EditorWindow {
     fn overlay_view(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let content = match &self.overlay {
             None => return None,
-            Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt)) => {
+            Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt) | Overlay::Field(prompt)) => {
                 Self::prompt_panel(prompt, cx)
             }
             Some(Overlay::Import(prompt)) => Self::prompt_panel(prompt, cx),
@@ -1601,8 +1721,9 @@ impl Render for EditorWindow {
                 .flex()
                 .flex_1()
                 .w_full()
-                .child(self.canvas_view(cx))
                 .child(self.layers_view(cx))
+                .child(self.canvas_view(cx))
+                .child(self.inspector_view(cx))
                 .into_any_element(),
         );
         rows.push(self.status_view().into_any_element());
