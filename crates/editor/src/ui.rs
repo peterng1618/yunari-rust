@@ -172,6 +172,9 @@ pub struct EditorWindow {
     /// Space holds pan mode, as in the source.
     space_held: bool,
     polling: bool,
+    /// How far the inspector's rows are pushed up, since gpui-kit has no
+    /// scroll container of its own.
+    inspector_scroll: f32,
 }
 
 impl EditorWindow {
@@ -217,6 +220,7 @@ impl EditorWindow {
             panning: None,
             space_held: false,
             polling: false,
+            inspector_scroll: 0.0,
         }
     }
 
@@ -1111,6 +1115,9 @@ impl EditorWindow {
                 }))
                 .into_any_element(),
         );
+        // The rows are one column pushed up by the wheel: kit's div has no
+        // scroll container, so the panel keeps the offset and clips.
+        let max_scroll = (children.len() as f32 * 30.0 - 500.0).max(0.0);
         div()
             .w(px(260.0))
             .flex_shrink_0()
@@ -1128,7 +1135,27 @@ impl EditorWindow {
                     .text_color(rgb(MUTED))
                     .child("Inspector"),
             )
-            .children(children)
+            .child(
+                div()
+                    .id("inspector-body")
+                    .flex_1()
+                    .w_full()
+                    .overflow_hidden()
+                    .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                        let (_, dy) = scroll_delta(event);
+                        this.inspector_scroll =
+                            (this.inspector_scroll - dy).clamp(0.0, max_scroll);
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .mt(px(-self.inspector_scroll))
+                            .children(children),
+                    ),
+            )
     }
 
     fn toggle_expanded(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1289,10 +1316,7 @@ impl EditorWindow {
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
-        let (dx, dy) = match event.delta {
-            ScrollDelta::Pixels(delta) => (f32::from(delta.x), f32::from(delta.y)),
-            ScrollDelta::Lines(delta) => (delta.x * LINE_HEIGHT, delta.y * LINE_HEIGHT),
-        };
+        let (dx, dy) = scroll_delta(event);
         let cursor = point(
             event.position.x - bounds.origin.x,
             event.position.y - bounds.origin.y,
@@ -1928,6 +1952,8 @@ impl Render for EditorWindow {
                 .flex()
                 .flex_1()
                 .w_full()
+                .min_h(px(0.0))
+                .overflow_hidden()
                 .child(self.layers_view(cx))
                 .child(self.canvas_view(cx))
                 .child(self.inspector_view(cx))
@@ -2031,6 +2057,14 @@ fn place(document: &ThemeDocument, width: f64, height: f64) -> Transform {
         width,
         height,
         ..Transform::default()
+    }
+}
+
+/// A wheel event as pixels on both axes.
+fn scroll_delta(event: &ScrollEvent) -> (f32, f32) {
+    match event.delta {
+        ScrollDelta::Pixels(delta) => (f32::from(delta.x), f32::from(delta.y)),
+        ScrollDelta::Lines(delta) => (delta.x * LINE_HEIGHT, delta.y * LINE_HEIGHT),
     }
 }
 
