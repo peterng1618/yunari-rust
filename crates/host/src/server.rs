@@ -138,6 +138,9 @@ fn providers(
     registry.add(yunari_providers::media::MediaProvider::new(
         settings_dir.join("media-artwork"),
     ));
+    // User-authored HTTP sources: each is fetched only while a display asks for
+    // one of its keys.
+    registry.add(custom(settings_dir));
     registry
 }
 
@@ -153,6 +156,21 @@ fn weather(settings_dir: &std::path::Path) -> yunari_providers::weather::Weather
         yunari_providers::weather::WeatherSettings::from_json(&stored)
     });
     yunari_providers::weather::WeatherProvider::new(settings)
+}
+
+/// Custom sources read `sources.json` on every poll, so a settings write is
+/// seen without a restart.
+fn custom(settings_dir: &std::path::Path) -> yunari_providers::custom::CustomProvider {
+    let path = settings_dir.join(yunari_providers::custom::sources::FILE);
+    let settings: yunari_providers::custom::SettingsLoader = Arc::new(move || {
+        let stored: serde_json::Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let (sources, issues) = yunari_providers::custom::sources::parse(&stored);
+        yunari_providers::custom::Loaded { sources, issues }
+    });
+    yunari_providers::custom::CustomProvider::new(settings)
 }
 
 pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {

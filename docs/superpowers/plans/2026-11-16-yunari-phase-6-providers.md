@@ -100,15 +100,16 @@
 ### Task 6: Custom HTTP sources
 
 **Files:**
-- Create: `crates/providers/src/custom/{mod.rs,fetch.rs}`
+- Create: `crates/providers/src/custom/{mod.rs,pointer.rs,sources.rs}`
 - Test: same files
 
 **Interfaces:**
-- Produces: `custom.<slug>` keys from a source list (`{slug, url, jsonPath, unit}`); JSON pointer extraction; a 2 s timeout; the URL revalidated to `http`/`https` and never a file path.
+- Produces: `custom.<source>.<field>` keys from `sources.json` (`{id,name,url,intervalMs,fields:[{id,label,pointer,type,unit,scale,offset}]}`), validated field-by-field; `pointer::resolve` (RFC 6901, array indexes and `~0`/`~1` escapes); a 2 s timeout through `http::get`; the URL revalidated to `http`/`https` before any request.
+- Deferred: credentials (`auth`), paging, per-source `headers`/`query` and `timeoutMs`; there is no credential store or settings UI yet, and a file written for the desktop app still loads (unknown keys are ignored).
 
-- [ ] Test: a pointer `/a/b/0` reads the first array element; a missing pointer is `missing` with the pointer's name.
-- [ ] Test: a `file://` URL is refused before any request.
-- [ ] Commit.
+- [x] Test: a pointer `/a/b/0` reads the first array element; a missing pointer is `missing` with the pointer's name.
+- [x] Test: a `file://` URL is refused before any request.
+- [x] Commit.
 
 ### Task 7: Game catalogue (Steam)
 

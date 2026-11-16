@@ -7,6 +7,7 @@
 //! presented.
 
 pub mod clock;
+pub mod custom;
 pub mod frame;
 pub mod http;
 pub mod lhm;

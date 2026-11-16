@@ -1,0 +1,245 @@
+//! `sources.json`, read into the shape the provider fetches.
+//!
+//! A file a person edits by hand: an entry that cannot be used is skipped with
+//! a one-line issue rather than taking the file or the host down. Only the
+//! fields this build reads are taken; a key it does not know is ignored, so a
+//! file written for the desktop app still loads.
+
+use serde_json::Value;
+
+pub const FILE: &str = "sources.json";
+pub const MAX_SOURCES: usize = 32;
+pub const MAX_FIELDS: usize = 64;
+
+pub const INTERVAL_DEFAULT_MS: u64 = 60_000;
+const INTERVAL_MIN_MS: u64 = 10_000;
+const INTERVAL_MAX_MS: u64 = 86_400_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Number,
+    Text,
+    Boolean,
+}
+
+impl Kind {
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "number" => Some(Self::Number),
+            "text" => Some(Self::Text),
+            "boolean" => Some(Self::Boolean),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomField {
+    pub id: String,
+    pub label: String,
+    pub pointer: String,
+    pub kind: Kind,
+    pub unit: Option<String>,
+    pub scale: f64,
+    pub offset: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomSource {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub interval_ms: u64,
+    pub fields: Vec<CustomField>,
+}
+
+impl CustomSource {
+    /// `custom.<source>.<field>`, the key a field is read by.
+    pub fn key(&self, field: &CustomField) -> String {
+        format!("custom.{}.{}", self.id, field.id)
+    }
+}
+
+/// The sources this build can read, and one line per entry it skipped.
+pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
+    let mut sources = Vec::new();
+    let mut issues = Vec::new();
+    let Some(entries) = value.get("sources").and_then(Value::as_array) else {
+        return (sources, issues);
+    };
+    for entry in entries.iter().take(MAX_SOURCES) {
+        let Some(record) = entry.as_object() else {
+            issues.push("A source in sources.json is not an object.".to_owned());
+            continue;
+        };
+        let id = record.get("id").and_then(Value::as_str).unwrap_or_default();
+        if !valid_source_id(id) {
+            issues.push(format!("A source id {id:?} is not usable."));
+            continue;
+        }
+        let Some(url) = record.get("url").and_then(Value::as_str) else {
+            issues.push(format!("The source {id} has no address."));
+            continue;
+        };
+        if let Some(refusal) = crate::http::refusal(url) {
+            issues.push(format!("The source {id}: {refusal}"));
+            continue;
+        }
+        let interval_ms = record
+            .get("intervalMs")
+            .and_then(Value::as_f64)
+            .filter(|value| {
+                value.is_finite()
+                    && *value >= INTERVAL_MIN_MS as f64
+                    && *value <= INTERVAL_MAX_MS as f64
+            })
+            .map_or(INTERVAL_DEFAULT_MS, |value| value as u64);
+        let fields: Vec<CustomField> = record
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .take(MAX_FIELDS)
+                    .filter_map(|field| parse_field(id, field, &mut issues))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if fields.is_empty() {
+            issues.push(format!("The source {id} has no field a display can read."));
+            continue;
+        }
+        sources.push(CustomSource {
+            id: id.to_owned(),
+            name: record
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(id)
+                .to_owned(),
+            url: url.to_owned(),
+            interval_ms,
+            fields,
+        });
+    }
+    (sources, issues)
+}
+
+fn parse_field(source_id: &str, value: &Value, issues: &mut Vec<String>) -> Option<CustomField> {
+    let record = value.as_object()?;
+    let id = record.get("id").and_then(Value::as_str).unwrap_or_default();
+    if !valid_field_id(id) {
+        issues.push(format!(
+            "The source {source_id} has a field id {id:?} that is not usable."
+        ));
+        return None;
+    }
+    let Some(pointer) = record.get("pointer").and_then(Value::as_str) else {
+        issues.push(format!("The field {source_id}.{id} has no pointer."));
+        return None;
+    };
+    let Some(kind) = record
+        .get("type")
+        .and_then(Value::as_str)
+        .and_then(Kind::parse)
+    else {
+        issues.push(format!(
+            "The field {source_id}.{id} is not a number, text or boolean."
+        ));
+        return None;
+    };
+    let number = |field: &str, fallback: f64| {
+        record
+            .get(field)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .unwrap_or(fallback)
+    };
+    Some(CustomField {
+        id: id.to_owned(),
+        label: record
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or(id)
+            .to_owned(),
+        pointer: pointer.to_owned(),
+        kind,
+        unit: record
+            .get("unit")
+            .and_then(Value::as_str)
+            .filter(|unit| !unit.is_empty())
+            .map(str::to_owned),
+        scale: number("scale", 1.0),
+        offset: number("offset", 0.0),
+    })
+}
+
+/// A source id may carry `_` and `-`, and may start with one.
+fn valid_source_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 32
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+}
+
+fn valid_field_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 32
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file() -> Value {
+        serde_json::json!({
+            "sources": [
+                {
+                    "id": "my_source",
+                    "name": "Lab",
+                    "url": "http://127.0.0.1:9000/status",
+                    "intervalMs": 5000,
+                    "unknown": "ignored",
+                    "fields": [
+                        {"id": "field_1", "label": "Temperature", "pointer": "/a/b/0", "type": "number", "unit": "°C", "scale": 2},
+                        {"id": "Name", "pointer": "", "type": "text"},
+                        {"id": "up", "pointer": "/up", "type": "boolean", "offset": 1}
+                    ]
+                },
+                {"id": "Bad Id", "url": "http://127.0.0.1:1/x", "fields": []},
+                {"id": "files", "url": "file:///etc/passwd", "fields": []}
+            ]
+        })
+    }
+
+    #[test]
+    fn a_file_is_read_into_the_sources_its_fields_name() {
+        let (sources, issues) = parse(&file());
+        assert_eq!(sources.len(), 1, "{issues:?}");
+        let source = &sources[0];
+        assert_eq!(source.id, "my_source");
+        assert_eq!(source.name, "Lab");
+        // Below the floor is the default cadence, not a five-second poll.
+        assert_eq!(source.interval_ms, INTERVAL_DEFAULT_MS);
+        assert_eq!(source.fields.len(), 3);
+        assert_eq!(source.key(&source.fields[0]), "custom.my_source.field_1");
+        assert_eq!(source.fields[0].kind, Kind::Number);
+        assert_eq!(source.fields[0].unit.as_deref(), Some("°C"));
+        assert_eq!(source.fields[0].scale, 2.0);
+        assert_eq!(source.fields[1].label, "Name");
+        assert_eq!(source.fields[2].offset, 1.0);
+        // Two entries were skipped, each with its own line.
+        assert_eq!(issues.len(), 2, "{issues:?}");
+        assert!(issues.iter().any(|issue| issue.contains("Bad Id")));
+        assert!(issues.iter().any(|issue| issue.contains("only http")));
+    }
+
+    #[test]
+    fn a_file_that_is_not_an_object_yields_no_sources_rather_than_a_panic() {
+        assert_eq!(parse(&serde_json::json!(null)).0, Vec::new());
+        assert_eq!(parse(&serde_json::json!({"sources": 7})).0, Vec::new());
+    }
+}
