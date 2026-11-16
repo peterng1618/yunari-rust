@@ -6,7 +6,7 @@
 //! the network. A failed fetch is not remembered, so the next search retries.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{Value, json};
 
@@ -28,6 +28,13 @@ pub struct Stock {
 }
 
 pub const STOCKS: &[Stock] = &[
+    Stock {
+        id: "fontawesome-free",
+        label: "Font Awesome Free",
+        category: "icon",
+        preset: None,
+        requires: None,
+    },
     Stock {
         id: "lucide",
         label: "Lucide",
@@ -75,6 +82,10 @@ pub const STOCKS: &[Stock] = &[
 pub fn stock(id: &str) -> Option<&'static Stock> {
     STOCKS.iter().find(|stock| stock.id == id)
 }
+
+/// A result's own file: its bytes, the media type it is, and the name a
+/// declaration gives it.
+pub type AssetBytes = Result<(Vec<u8>, &'static str, String), String>;
 
 /// One page of results, with how many pages the question has.
 #[derive(Debug, Clone, PartialEq)]
@@ -509,8 +520,174 @@ fn icon_page(icons: &[LocalIcon], query: &str, page: u32, licence: &str, home_ur
     }
 }
 
+const FONTAWESOME_BASE: &str = "https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.7.2/";
+
+#[derive(Debug, Clone)]
+struct FaIcon {
+    name: String,
+    label: String,
+    styles: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct FaCatalogue {
+    licence: String,
+    icons: Vec<FaIcon>,
+}
+
+/// The free set's metadata, read once and only kept when it loaded whole.
+fn fontawesome() -> Result<Arc<FaCatalogue>, String> {
+    static HELD: OnceLock<Mutex<Option<Arc<FaCatalogue>>>> = OnceLock::new();
+    let held = HELD.get_or_init(|| Mutex::new(None));
+    let mut slot = held
+        .lock()
+        .map_err(|_| "the catalogue lock is poisoned".to_owned())?;
+    if let Some(catalogue) = slot.as_ref() {
+        return Ok(Arc::clone(catalogue));
+    }
+    let icons = yunari_providers::http::get(
+        &format!("{FONTAWESOME_BASE}metadata/icon-families.json"),
+        TIMEOUT_MS,
+    )?;
+    let package =
+        yunari_providers::http::get(&format!("{FONTAWESOME_BASE}package.json"), TIMEOUT_MS)?;
+    let package: Value = serde_json::from_str(&package).unwrap_or(Value::Null);
+    let licence = package
+        .get("license")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned();
+    let catalogue = Arc::new(FaCatalogue {
+        licence,
+        icons: fontawesome_of(&icons),
+    });
+    *slot = Some(Arc::clone(&catalogue));
+    Ok(catalogue)
+}
+
+fn fontawesome_of(body: &str) -> Vec<FaIcon> {
+    let Value::Object(entries) = serde_json::from_str(body).unwrap_or(Value::Null) else {
+        return Vec::new();
+    };
+    let mut icons = Vec::new();
+    for (name, entry) in &entries {
+        let label = entry
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let Some(classic) = entry
+            .get("svgs")
+            .and_then(|svgs| svgs.get("classic"))
+            .and_then(Value::as_object)
+        else {
+            continue;
+        };
+        let styles: Vec<String> = classic
+            .keys()
+            .filter(|style| {
+                !style.is_empty() && style.bytes().all(|byte| byte.is_ascii_lowercase())
+            })
+            .cloned()
+            .collect();
+        if styles.is_empty() {
+            continue;
+        }
+        let mut styles = styles;
+        styles.sort();
+        icons.push(FaIcon {
+            name: name.clone(),
+            label,
+            styles,
+        });
+    }
+    icons.sort_by(|left, right| left.name.cmp(&right.name));
+    icons
+}
+
+fn fontawesome_page(catalogue: &FaCatalogue, query: &str, page: u32) -> Page {
+    let strip = |value: &str| -> String {
+        value
+            .chars()
+            .filter(|letter| !letter.is_whitespace() && *letter != '_' && *letter != '-')
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let wanted = strip(query);
+    let mut matches = Vec::new();
+    for icon in &catalogue.icons {
+        if !wanted.is_empty()
+            && !strip(&icon.name).contains(&wanted)
+            && !strip(&icon.label).contains(&wanted)
+        {
+            continue;
+        }
+        for style in &icon.styles {
+            matches.push((icon, style));
+        }
+    }
+    let offset = (page_of(page) - 1) * ICON_PAGE;
+    let start = offset.min(matches.len());
+    let rows = &matches[start..(start + ICON_PAGE).min(matches.len())];
+    Page {
+        results: rows
+            .iter()
+            .map(|(icon, style)| {
+                json!({
+                    "id": format!("{style}:{}", icon.name),
+                    "name": icon.name,
+                    "kind": "icon",
+                    "preview": format!("{FONTAWESOME_BASE}svgs/{style}/{}.svg", icon.name),
+                    "subtitle": style,
+                    "licence": catalogue.licence,
+                    "sourceUrl": format!("https://fontawesome.com/icons/{}?f={style}", icon.name),
+                })
+            })
+            .collect(),
+        total_pages: u32::try_from(matches.len().div_ceil(ICON_PAGE))
+            .unwrap_or(u32::MAX)
+            .max(1),
+    }
+}
+
+/// One Font Awesome result's file, fetched from the pinned package. Only an
+/// id the catalogue itself names is ever addressed.
+fn fontawesome_bytes(result: &str) -> Option<AssetBytes> {
+    let (style, name) = result.split_once(':')?;
+    if !style.bytes().all(|byte| byte.is_ascii_lowercase())
+        || name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        return None;
+    }
+    let Ok(catalogue) = fontawesome() else {
+        return Some(Err("Font Awesome metadata is unavailable.".to_owned()));
+    };
+    let known = catalogue
+        .icons
+        .iter()
+        .any(|icon| icon.name == name && icon.styles.iter().any(|held| held == style));
+    if !known {
+        return None;
+    }
+    Some(
+        yunari_providers::http::get_bytes(
+            &format!("{FONTAWESOME_BASE}svgs/{style}/{name}.svg"),
+            TIMEOUT_MS,
+            1024 * 1024,
+        )
+        .map(|bytes| (bytes, "image/svg+xml", format!("{name}.svg"))),
+    )
+}
+
 /// Searches one stock source with the host's own HTTP client.
 pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
+    if id == "fontawesome-free" {
+        let catalogue = fontawesome()?;
+        return Ok(fontawesome_page(&catalogue, query, page));
+    }
     if let Some(icons) = icons(id) {
         return match id {
             "lucide" => Ok(icon_page(
@@ -587,14 +764,17 @@ pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
 
 /// The bytes behind one result: an icon's own SVG, or nothing when the row is
 /// a preset rather than a file.
-pub fn bytes(id: &str, result: &str) -> Option<(Vec<u8>, &'static str, String)> {
+pub fn bytes(id: &str, result: &str) -> Option<AssetBytes> {
+    if id == "fontawesome-free" {
+        return fontawesome_bytes(result);
+    }
     let icons = icons(id)?;
     let icon = icons.iter().find(|icon| icon.name == result)?;
-    Some((
+    Some(Ok((
         icon.svg.as_bytes().to_vec(),
         "image/svg+xml",
         format!("{result}.svg"),
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -611,12 +791,41 @@ mod tests {
             "{} rows",
             page.results.len()
         );
-        let (svg, mime, name) = bytes("lucide", "arrow-down").expect("the icon's bytes");
+        let (svg, mime, name) = bytes("lucide", "arrow-down")
+            .expect("the icon's bytes")
+            .expect("the icon reads");
         assert_eq!(mime, "image/svg+xml");
         assert_eq!(name, "arrow-down.svg");
         assert!(String::from_utf8(svg).unwrap().contains("<svg"));
         assert!(bytes("lucide", "not-an-icon").is_none());
         assert!(icons("lineicons").is_some_and(|icons| !icons.is_empty()));
+    }
+
+    #[test]
+    fn a_font_awesome_entry_offers_only_the_styles_the_free_package_ships() {
+        let body = r#"{
+            "house": {"label":"Home","svgs":{"classic":{"solid":{},"regular":{},"brands":{}}}},
+            "brand": {"label":"Brand","svgs":{"classic":{"brands":{}}}},
+            "empty": {"label":"Empty","svgs":{"classic":{}}},
+            "no svgs": {"label":"None"}
+        }"#;
+        let icons = fontawesome_of(body);
+        assert_eq!(icons.len(), 2, "{icons:?}");
+        assert_eq!(icons[0].name, "brand");
+        assert_eq!(icons[0].styles, ["brands"]);
+        let catalogue = FaCatalogue {
+            licence: "CC-BY-4.0".to_owned(),
+            icons,
+        };
+        let page = fontawesome_page(&catalogue, "home", 1);
+        assert_eq!(page.results.len(), 2, "{:?}", page.results);
+        assert_eq!(page.results[0]["id"], "regular:house");
+        assert_eq!(page.results[0]["licence"], "CC-BY-4.0");
+        assert!(
+            fontawesome_page(&catalogue, "nothing", 1)
+                .results
+                .is_empty()
+        );
     }
 
     #[test]
