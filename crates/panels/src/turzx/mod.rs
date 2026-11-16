@@ -1,6 +1,7 @@
 //! TURZX 5" panels: a serial port at 115200 baud with 250-byte frames.
 
 pub mod device;
+pub mod overlay;
 pub mod protocol;
 
 use std::time::Duration;
