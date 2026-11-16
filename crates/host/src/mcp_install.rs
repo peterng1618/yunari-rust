@@ -307,19 +307,19 @@ pub fn uninstall(home: &Path) -> Report {
         message: None,
     };
 
-    if config.exists() {
-        if let Err(message) = edit_json(&config, |held| {
+    if config.exists()
+        && let Err(message) = edit_json(&config, |held| {
             if let Some(servers) = held.get_mut("mcpServers").and_then(Value::as_object_mut) {
                 servers.remove(SERVER_NAME);
             }
             Ok(())
-        }) {
-            push_message(&mut report.message, message);
-        }
+        })
+    {
+        push_message(&mut report.message, message);
     }
 
-    if settings_file.exists() {
-        if let Err(message) = edit_json(&settings_file, |held| {
+    if settings_file.exists()
+        && let Err(message) = edit_json(&settings_file, |held| {
             if let Some(allow) = held
                 .get_mut("permissions")
                 .and_then(Value::as_object_mut)
@@ -329,9 +329,9 @@ pub fn uninstall(home: &Path) -> Report {
                 allow.retain(|rule| rule != AUTO_APPROVAL);
             }
             Ok(())
-        }) {
-            push_message(&mut report.message, message);
-        }
+        })
+    {
+        push_message(&mut report.message, message);
     }
 
     for target in skill_targets(home) {
