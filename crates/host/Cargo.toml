@@ -31,3 +31,5 @@ yunari-model.workspace = true
 yunari-panels.workspace = true
 yunari-providers.workspace = true
 yunari-render.workspace = true
+yunari-render-raster.workspace = true
+image.workspace = true

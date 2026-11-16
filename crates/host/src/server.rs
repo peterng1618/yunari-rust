@@ -48,6 +48,8 @@ pub struct Server {
     pub fingerprint: Option<String>,
     /// The root certificate as PEM, when the host serves TLS.
     pub certificate_pem: Option<String>,
+    /// The panels this host is driving, stopped when the server stops.
+    panels: Arc<yunari_panels::manager::Manager>,
     shutdown: Option<oneshot::Sender<()>>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -64,6 +66,9 @@ impl Server {
             shutdown.send(()).ok();
         }
         self.handle.await.ok();
+        // A panel left open would keep showing the last frame after the host
+        // that claims to drive it is gone.
+        self.panels.stop_all();
     }
 }
 
@@ -72,17 +77,31 @@ pub fn app(config: HostConfig) -> Shared {
     let settings = config.settings_dir();
     std::fs::create_dir_all(&settings).ok();
     let authority = crate::tls::Authority::load(&settings).ok();
+    let library = yunari_library::Library::new(config.themes_dir());
+    let registry = Arc::new(providers());
+    let frames = Arc::new(crate::panels::PanelFrames::new(
+        library.clone(),
+        Arc::clone(&registry),
+        settings.clone(),
+    ));
+    let manager = Arc::new(
+        yunari_panels::manager::Manager::new(frames.source()).on_error(|display, message| {
+            eprintln!("Panel {display}: {message}");
+        }),
+    );
     Arc::new(App {
         identity: crate::identity::HostIdentity::load_or_mint(&settings),
         displays: std::sync::Mutex::new(crate::displays::DisplayStore::load(&settings)),
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),
-        library: yunari_library::Library::new(config.themes_dir()),
+        library,
         bound_port: AtomicU16::new(config.port),
         streams: crate::stream::Streams::new(),
         assignment: std::sync::Mutex::new(crate::assignment::Assignment::load(
             &config.settings_dir(),
         )),
-        registry: providers(),
+        registry,
+        manager,
+        panel_frames: frames,
         authority,
         config,
     })
@@ -131,6 +150,7 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
         .as_ref()
         .map(|authority| tokio_rustls::TlsAcceptor::from(authority.server_config()));
     crate::stream::spawn(app.clone());
+    crate::panels::spawn(app.clone());
     let router = crate::http::router(app.clone());
     let live = Arc::new(AtomicUsize::new(0));
     let (shutdown, mut stopped) = oneshot::channel();
@@ -175,6 +195,7 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
             .authority
             .as_ref()
             .map(|authority| authority.certificate_pem().to_owned()),
+        panels: Arc::clone(&app.manager),
         shutdown: Some(shutdown),
         handle,
     })

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::family::{CommandKind, PanelCommand, PanelDevice, PanelFamily, for_device};
+use crate::family::{CommandKind, PanelCommand, PanelDevice, PanelFamily, StillFormat, for_device};
 use crate::open_device;
 use crate::runner::{Capture, Runner};
 
@@ -80,9 +80,10 @@ impl std::fmt::Display for PanelManagerError {
 
 impl std::error::Error for PanelManagerError {}
 
-/// One encoded still for a record's panel, from its own geometry.
+/// One encoded still for a record's panel, from its own geometry. The format
+/// is the device's: a panel that reorders pixels itself takes raw RGBA.
 pub type FrameSource =
-    Arc<dyn Fn(&DisplayRecord, u32, u32) -> Result<Vec<u8>, String> + Send + Sync>;
+    Arc<dyn Fn(&DisplayRecord, u32, u32, StillFormat) -> Result<Vec<u8>, String> + Send + Sync>;
 
 /// How a panel device is opened. The seam keeps hardware out of tests.
 pub type OpenDevice =
@@ -99,6 +100,8 @@ pub struct DisplayRecord {
     pub label: String,
     /// True when this record drives a panel.
     pub panel: bool,
+    /// The quarter turn the owner chose, when the panel's glass is not upright.
+    pub rotation: Option<u16>,
     pub device: Option<PanelDeviceId>,
 }
 
@@ -201,10 +204,11 @@ impl Manager {
         let mut panel = (self.open)(family)?;
         panel.open()?;
         let interval = panel.frame_interval_ms();
+        let format = panel.still_format();
         let capture: Capture = {
             let source = Arc::clone(&self.frame_source);
             let record = record.clone();
-            Box::new(move |width, height| source(&record, width, height))
+            Box::new(move |width, height| source(&record, width, height, format))
         };
         let entry = Arc::new(Entry {
             runner: Runner::new(panel, capture, interval),

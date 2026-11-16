@@ -17,6 +17,7 @@ use crate::config::HostConfig;
 use crate::displays::{DisplayShape, DisplayStore};
 use crate::identity::HostIdentity;
 use crate::pairing::{ClaimError, NO_PAIRING_CODE, Pairing};
+use crate::panels::PanelFrames;
 
 pub const SESSION_HEADER: &str = "x-yunari-session";
 pub const SESSION_COOKIE: &str = "yunari_session";
@@ -35,8 +36,10 @@ pub struct App {
     /// The port the listener actually took, which the first attempt may not be.
     pub bound_port: std::sync::atomic::AtomicU16,
     pub streams: crate::stream::Streams,
-    pub registry: yunari_providers::registry::Registry,
+    pub registry: Arc<yunari_providers::registry::Registry>,
     pub assignment: Mutex<crate::assignment::Assignment>,
+    pub manager: Arc<yunari_panels::manager::Manager>,
+    pub panel_frames: Arc<PanelFrames>,
 }
 
 pub type Shared = Arc<App>;
@@ -55,7 +58,16 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/pair", get(pair_page))
         .route("/api/pairing/code", get(code).post(mint_code))
         .route("/api/pairing/sessions", get(sessions).post(new_session))
+        .route("/api/displays/panels", get(crate::panels_routes::panels))
         .route("/api/displays", get(displays).post(add_display))
+        .route(
+            "/api/displays/{id}/panel/command",
+            post(crate::panels_routes::command),
+        )
+        .route(
+            "/api/displays/{id}/panel/reset-device",
+            post(crate::panels_routes::reset_device),
+        )
         .route(
             "/api/displays/{id}",
             axum::routing::patch(patch_display).delete(remove_display),
@@ -75,6 +87,10 @@ pub fn router(app: Shared) -> axum::Router {
         .route(
             "/api/themes/{id}/document",
             get(crate::themes_routes::document),
+        )
+        .route(
+            "/api/themes/{id}/panel-preview",
+            get(crate::panels_routes::preview),
         )
         .route(
             "/api/themes/{id}/assets/{*path}",
@@ -473,9 +489,12 @@ async fn new_session(
 }
 
 #[derive(Debug, Deserialize)]
-struct NewDisplay {
+pub(crate) struct NewDisplay {
     label: String,
+    /// `local` for a monitor, `panel` for a physical panel.
+    kind: Option<String>,
     monitor: Option<Monitor>,
+    device: Option<yunari_panels::manager::PanelDeviceId>,
     shape: Option<String>,
     rotation: Option<u16>,
 }
@@ -516,6 +535,9 @@ async fn add_display(
     if let Some(refusal) = loopback_only(peer) {
         return refusal;
     }
+    if body.kind.as_deref() == Some("panel") {
+        return add_panel_display(&app, body).await;
+    }
     let shape = match parse_presentation(body.shape.as_deref(), body.rotation) {
         Ok(shape) => shape,
         Err((status, message)) => return (status, message).into_response(),
@@ -548,6 +570,67 @@ async fn add_display(
             .into_response(),
         Err(refusal) => (StatusCode::BAD_REQUEST, refusal.0).into_response(),
     }
+}
+
+/// A panel record, and its runner started on the spot.
+///
+/// The attachment is checked here rather than trusted: a record naming a device
+/// no driver claims would be a display that never shows anything.
+pub(crate) async fn add_panel_display(app: &Shared, body: NewDisplay) -> Response {
+    let Some(device) = body.device else {
+        return (StatusCode::BAD_REQUEST, "A panel display needs a device.").into_response();
+    };
+    if yunari_panels::for_device(device.vendor_id, device.product_id).is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "No driver on this host claims {:04x}:{:04x}.",
+                device.vendor_id, device.product_id
+            ),
+        )
+            .into_response();
+    }
+    let record = {
+        let mut store = match app.displays.lock() {
+            Ok(store) => store,
+            Err(_) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.")
+                    .into_response();
+            }
+        };
+        if store
+            .list()
+            .iter()
+            .any(|record| record.device.as_ref() == Some(&device))
+        {
+            return (
+                StatusCode::CONFLICT,
+                "A panel display already holds that device.",
+            )
+                .into_response();
+        }
+        match store.adopt_panel(&body.label, device) {
+            Ok(record) => record,
+            Err(refusal) => return (StatusCode::BAD_REQUEST, refusal.0).into_response(),
+        }
+    };
+    // The runner is attempted now so the answer reports the panel's state; a
+    // failure is not the record's: the retry pass opens it when it appears.
+    // Opening a panel is a USB conversation, not a request: it runs off the
+    // async runtime so one slow device cannot hold another display's page.
+    let manager = Arc::clone(&app.manager);
+    let manager_record = crate::panels::manager_record(&record);
+    let opened = tokio::task::spawn_blocking(move || manager.start(&manager_record))
+        .await
+        .unwrap_or_else(|error| Err(error.to_string()));
+    let mut response = json!({
+        "display": record.peer_json(),
+        "panel": { "status": app.manager.status(&record.id) },
+    });
+    if let Err(message) = opened {
+        response["panel"]["reason"] = Value::String(message);
+    }
+    (StatusCode::CREATED, Json(response)).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,6 +965,33 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn a_panel_display_for_an_unknown_family_is_refused() {
+        let app = app("panel-unknown");
+        let response = add_panel_display(
+            &app,
+            NewDisplay {
+                label: "Odd panel".to_owned(),
+                kind: Some("panel".to_owned()),
+                monitor: None,
+                device: Some(yunari_panels::manager::PanelDeviceId {
+                    vendor_id: 0x1234,
+                    product_id: 0x5678,
+                    serial: String::new(),
+                    device_id: None,
+                }),
+                shape: None,
+                rotation: None,
+            },
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_text(response.into_body()).await.unwrap_or_default();
+        assert_eq!(body, "No driver on this host claims 1234:5678.");
+        // Nothing was stored: a record no driver claims would never show.
+        assert!(app.displays.lock().unwrap().list().is_empty());
     }
 
     #[tokio::test]

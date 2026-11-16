@@ -14,6 +14,16 @@ pub use family::{
     StillFormat, families, for_device,
 };
 
+/// The panels of this family attached right now.
+pub fn attached(family: &PanelFamily) -> Vec<PanelHint> {
+    match family.id {
+        "lianli-9-2" | "lianli-8-8" => tur_usb::attached(family),
+        "kraken-z3" => kraken::attached(family),
+        "turzx-5" => turzx::attached(family),
+        _ => Vec::new(),
+    }
+}
+
 /// Open the attached device of this family.
 ///
 /// Refused with a sentence rather than a bare failure when none is attached,

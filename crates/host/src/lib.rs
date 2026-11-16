@@ -12,6 +12,8 @@ pub mod identity;
 pub mod lock;
 pub mod pages;
 pub mod pairing;
+pub mod panels;
+pub mod panels_routes;
 pub mod server;
 pub mod stream;
 pub mod themes_routes;

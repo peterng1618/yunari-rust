@@ -69,9 +69,11 @@ fn harness(fail_present: bool, accepts: bool) -> Harness {
     let reported = Arc::clone(&reports);
 
     let manager = Manager::with_device_source(
-        Arc::new(move |_record: &DisplayRecord, _w, _h| {
-            Ok(vec![counted_frames.fetch_add(1, Ordering::SeqCst) as u8])
-        }),
+        Arc::new(
+            move |_record: &DisplayRecord, _w, _h, _format: StillFormat| {
+                Ok(vec![counted_frames.fetch_add(1, Ordering::SeqCst) as u8])
+            },
+        ),
         Box::new(move |_family: &PanelFamily| {
             counted.fetch_add(1, Ordering::SeqCst);
             Ok(Box::new(FakePanel {
@@ -101,6 +103,7 @@ fn record(id: &str) -> DisplayRecord {
         id: id.to_owned(),
         label: id.to_owned(),
         panel: true,
+        rotation: None,
         device: Some(PanelDeviceId {
             vendor_id: FAMILY_VID,
             product_id: FAMILY_PID,

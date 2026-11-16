@@ -8879,6 +8879,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "image",
  "jiff",
  "rand 0.10.4",
  "rcgen",
@@ -8896,6 +8897,7 @@ dependencies = [
  "yunari-panels",
  "yunari-providers",
  "yunari-render",
+ "yunari-render-raster",
 ]
 
 [[package]]
