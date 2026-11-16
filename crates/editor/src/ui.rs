@@ -111,9 +111,11 @@ enum Overlay {
         dialog: Box<SettingsDialog>,
         prompt: Prompt,
     },
-    /// A weather backend's key, stored under the OS protector.
-    WeatherKey {
+    /// A credential named by the settings (a weather backend's key or a source's
+    /// `auth`), stored under the OS protector.
+    Credential {
         dialog: Box<SettingsDialog>,
+        id: String,
         prompt: Prompt,
     },
     /// An action that would throw unsaved work away, waiting for an answer.
@@ -836,23 +838,43 @@ impl EditorWindow {
         let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
             return;
         };
-        self.overlay = Some(Overlay::WeatherKey {
+        let Some(id) = settings_dialog::weather_key_id(&dialog.weather.provider) else {
+            return;
+        };
+        self.overlay = Some(Overlay::Credential {
             dialog: Box::new(dialog),
+            id: id.to_owned(),
             prompt: Prompt::new("Weather key", "The key this backend issued to you", ""),
         });
     }
 
-    fn save_weather_key(&mut self, mut dialog: SettingsDialog, value: &str) {
+    /// Asks for a credential a custom source named in its `auth` block.
+    pub fn edit_credential(&mut self, id: String) {
+        let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
+            return;
+        };
+        self.overlay = Some(Overlay::Credential {
+            dialog: Box::new(dialog),
+            prompt: Prompt::new(
+                format!("Credential {id}"),
+                "The value this source's auth expects",
+                "",
+            ),
+            id,
+        });
+    }
+
+    fn save_credential(&mut self, mut dialog: SettingsDialog, id: &str, value: &str) {
         let settings = self.settings_dir();
-        let provider = dialog.weather.provider.clone();
         dialog.message = Some(
-            match settings_dialog::set_weather_key(&settings, &provider, value) {
-                Ok(()) if value.trim().is_empty() => "The weather key is forgotten.".to_owned(),
-                Ok(()) => "The weather key is stored for this Windows account.".to_owned(),
+            match settings_dialog::set_credential(&settings, id, value) {
+                Ok(()) if value.trim().is_empty() => format!("The credential {id} is forgotten."),
+                Ok(()) => format!("The credential {id} is stored for this Windows account."),
                 Err(error) => error,
             },
         );
         dialog.weather_key_set = settings_dialog::read_weather_key_set(&settings, &dialog.weather);
+        dialog.source_credentials = settings_dialog::read_source_credentials(&settings);
         self.overlay = Some(Overlay::Settings(dialog));
     }
 
@@ -2155,17 +2177,19 @@ impl EditorWindow {
                     }
                 }
             }
-            Overlay::WeatherKey { dialog, mut prompt } => {
-                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
-                    Outcome::Pending => {
-                        self.overlay = Some(Overlay::WeatherKey { dialog, prompt });
-                    }
-                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
-                    Outcome::Submit(value) => {
-                        self.save_weather_key(*dialog, &value);
-                    }
+            Overlay::Credential {
+                dialog,
+                id,
+                mut prompt,
+            } => match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                Outcome::Pending => {
+                    self.overlay = Some(Overlay::Credential { dialog, id, prompt });
                 }
-            }
+                Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
+                Outcome::Submit(value) => {
+                    self.save_credential(*dialog, &id, &value);
+                }
+            },
             Overlay::Field(mut prompt) => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => self.overlay = Some(Overlay::Field(prompt)),
@@ -2573,7 +2597,7 @@ impl EditorWindow {
             Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt) | Overlay::Field(prompt)) => {
                 Self::prompt_panel(prompt, cx)
             }
-            Some(Overlay::WeatherPlace { prompt, .. } | Overlay::WeatherKey { prompt, .. }) => {
+            Some(Overlay::WeatherPlace { prompt, .. } | Overlay::Credential { prompt, .. }) => {
                 Self::prompt_panel(prompt, cx)
             }
             Some(Overlay::Import(prompt) | Overlay::ImportAsset(prompt)) => {

@@ -31,6 +31,9 @@ pub struct SettingsDialog {
     /// Whether the selected backend has a stored key; the key itself is never
     /// carried by the dialog.
     pub weather_key_set: bool,
+    /// The credential ids the configured custom sources name, and whether each
+    /// one is stored. Never the secrets.
+    pub source_credentials: Vec<(String, bool)>,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
@@ -39,12 +42,14 @@ impl SettingsDialog {
     pub fn new(settings: PathBuf, monitors: Vec<MonitorRow>) -> Self {
         let weather = read_weather(&settings);
         let weather_key_set = read_weather_key_set(&settings, &weather);
+        let source_credentials = read_source_credentials(&settings);
         Self {
             lan: Hosting::load(&settings).lan,
             autostart: yunari_host::autostart::enabled(),
             monitors,
             weather,
             weather_key_set,
+            source_credentials,
             settings,
             message: None,
         }
@@ -108,6 +113,35 @@ pub fn set_weather_key(settings: &Path, provider: &str, secret: &str) -> Result<
     let Some(id) = weather_key_id(provider) else {
         return Err("Open-Meteo needs no key.".to_owned());
     };
+    Credentials::at(settings).set(id, secret)
+}
+
+/// The credential ids the configured custom sources name, and whether each is
+/// stored. Sorted and deduplicated, so two sources may share one secret.
+pub fn read_source_credentials(settings: &Path) -> Vec<(String, bool)> {
+    let stored: serde_json::Value =
+        std::fs::read_to_string(settings.join(yunari_providers::custom::sources::FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+    let (sources, _) = yunari_providers::custom::sources::parse(&stored);
+    let mut ids: Vec<String> = sources
+        .iter()
+        .filter_map(|source| source.auth.credential_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let store = Credentials::at(settings);
+    ids.into_iter()
+        .map(|id| {
+            let set = store.get(&id).is_some();
+            (id, set)
+        })
+        .collect()
+}
+
+/// Stores one credential under the OS protector. An empty value forgets it.
+pub fn set_credential(settings: &Path, id: &str, secret: &str) -> Result<(), String> {
     Credentials::at(settings).set(id, secret)
 }
 
@@ -247,6 +281,26 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
             cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_key()),
         ));
     }
+    for (index, (id, set)) in dialog.source_credentials.iter().enumerate() {
+        let state = if *set { "stored" } else { "not set" };
+        let label = format!("Source credential {id}: {state}  ·  click to enter");
+        let credential = id.clone();
+        column = column.child(
+            div()
+                .id(("settings-source-credential", index))
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(rgb(0xe8e8ea))
+                .bg(rgb(0x22222a))
+                .child(label)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                    this.edit_credential(credential.clone());
+                })),
+        );
+    }
     for (index, monitor) in dialog.monitors.iter().enumerate() {
         let uuid = monitor.uuid.clone();
         let state = if monitor.shown {
@@ -371,6 +425,42 @@ mod tests {
         assert!(weather_key_id("open-meteo").is_none());
         set_weather_key(&settings, "weatherapi", "").expect("a forgotten key");
         assert!(!read_weather_key_set(&settings, &weather));
+        std::fs::remove_dir_all(&settings).ok();
+    }
+
+    #[test]
+    fn a_source_credential_is_listed_and_stored_under_its_id() {
+        let settings = temp_settings("source-credential");
+        std::fs::write(
+            settings.join("sources.json"),
+            serde_json::json!({
+                "sources": [
+                    {"id": "one", "url": "https://a.example/x",
+                     "auth": {"kind": "bearer", "credentialId": "lab_key"},
+                     "fields": [{"id": "x", "pointer": "", "type": "number"}]},
+                    {"id": "two", "url": "https://b.example/x",
+                     "auth": {"kind": "bearer", "credentialId": "lab_key"},
+                     "fields": [{"id": "x", "pointer": "", "type": "number"}]}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // Two sources, one secret: one row, not two.
+        assert_eq!(
+            super::read_source_credentials(&settings),
+            vec![("lab_key".to_owned(), false)]
+        );
+        super::set_credential(&settings, "lab_key", "secret").expect("a stored credential");
+        assert_eq!(
+            super::read_source_credentials(&settings),
+            vec![("lab_key".to_owned(), true)]
+        );
+        super::set_credential(&settings, "lab_key", "").expect("a forgotten credential");
+        assert_eq!(
+            super::read_source_credentials(&settings),
+            vec![("lab_key".to_owned(), false)]
+        );
         std::fs::remove_dir_all(&settings).ok();
     }
 }
