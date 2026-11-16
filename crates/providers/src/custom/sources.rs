@@ -7,6 +7,8 @@
 
 use serde_json::Value;
 
+use crate::http::encode;
+
 pub const FILE: &str = "sources.json";
 pub const MAX_SOURCES: usize = 32;
 pub const MAX_FIELDS: usize = 64;
@@ -104,20 +106,6 @@ impl CustomSource {
         let separator = if self.url.contains('?') { '&' } else { '?' };
         format!("{}{separator}{}", self.url, pairs.join("&"))
     }
-}
-
-/// Percent-encodes everything outside the unreserved set, so a query value
-/// cannot add a parameter of its own.
-fn encode(text: &str) -> String {
-    let mut encoded = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
 }
 
 /// How a paged source becomes one document.

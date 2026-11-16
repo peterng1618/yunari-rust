@@ -64,11 +64,17 @@ pub fn spawn(script: &str) -> Result<(Receiver<String>, Stop), String> {
 /// that outlives [`RUN_TIMEOUT`] is killed, so a catalogue read cannot wedge
 /// the caller.
 pub fn run(script: &str) -> Result<String, String> {
+    run_within(script, RUN_TIMEOUT)
+}
+
+/// [`run`] with its own deadline: Windows location may show a permission prompt,
+/// so that read has to outlast a person.
+pub fn run_within(script: &str, timeout: Duration) -> Result<String, String> {
     let (lines, stop) = spawn(script)?;
     let mut stop = Some(stop);
     let mut output = String::new();
     loop {
-        match lines.recv_timeout(RUN_TIMEOUT) {
+        match lines.recv_timeout(timeout) {
             Ok(line) => {
                 output.push_str(&line);
                 output.push('\n');
@@ -80,7 +86,7 @@ pub fn run(script: &str) -> Result<String, String> {
                 }
                 return Err(format!(
                     "it did not finish within {} seconds.",
-                    RUN_TIMEOUT.as_secs()
+                    timeout.as_secs()
                 ));
             }
         }

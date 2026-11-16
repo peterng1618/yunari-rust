@@ -10,6 +10,8 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use serde_json::Value;
 
+use super::wire;
+
 pub const ENDPOINT: &str = "https://api.open-meteo.com/v1/forecast";
 
 /// Open-Meteo's licence (CC BY 4.0) asks for this credit, linking to their site.
@@ -49,11 +51,7 @@ pub struct Weather {
 
 /// One bounded request, then one parse.
 pub fn fetch(location: &Location, fetch: &Fetch) -> Result<Weather, String> {
-    let url = url_for(location);
-    let body = fetch(&url, TIMEOUT_MS)
-        .map_err(|error| format!("{LABEL} could not be reached: {error}"))?;
-    let payload: Value = serde_json::from_str(&body)
-        .map_err(|_| format!("{LABEL} answered something unexpected."))?;
+    let payload = super::wire::json(fetch, &url_for(location), TIMEOUT_MS, LABEL)?;
     parse(&payload)
 }
 
@@ -67,24 +65,24 @@ pub fn url_for(location: &Location) -> String {
 
 /// One answer, as the fields the keys read.
 pub fn parse(payload: &Value) -> Result<Weather, String> {
-    let current = object(payload, "current")?;
-    let daily = object(payload, "daily")?;
-    let offset = number(payload, "utc_offset_seconds")? as i64;
-    let daylight = number(current, "is_day")?;
+    let current = wire::object(payload, "current", LABEL)?;
+    let daily = wire::object(payload, "daily", LABEL)?;
+    let offset = wire::number(payload, "utc_offset_seconds", LABEL)? as i64;
+    let daylight = wire::number(current, "is_day", LABEL)?;
     if daylight != 0.0 && daylight != 1.0 {
         return Err(format!("{LABEL}'s answer has an unreadable is_day."));
     }
     Ok(Weather {
-        temp_c: number(current, "temperature_2m")?,
-        feels_like_c: number(current, "apparent_temperature")?,
+        temp_c: wire::number(current, "temperature_2m", LABEL)?,
+        feels_like_c: wire::number(current, "apparent_temperature", LABEL)?,
         high_c: first_number(daily, "temperature_2m_max")?,
         low_c: first_number(daily, "temperature_2m_min")?,
-        humidity: number(current, "relative_humidity_2m")?,
-        pressure_hpa: number(current, "pressure_msl")?,
-        precipitation_mm: number(current, "precipitation")?,
-        wind_kph: number(current, "wind_speed_10m")?,
-        wind_deg: number(current, "wind_direction_10m")?,
-        code: number(current, "weather_code")? as i64,
+        humidity: wire::number(current, "relative_humidity_2m", LABEL)?,
+        pressure_hpa: wire::number(current, "pressure_msl", LABEL)?,
+        precipitation_mm: wire::number(current, "precipitation", LABEL)?,
+        wind_kph: wire::number(current, "wind_speed_10m", LABEL)?,
+        wind_deg: wire::number(current, "wind_direction_10m", LABEL)?,
+        code: wire::number(current, "weather_code", LABEL)? as i64,
         is_day: daylight == 1.0,
         sunrise: first_instant(daily, "sunrise", offset)?,
         sunset: first_instant(daily, "sunset", offset)?,
@@ -119,27 +117,8 @@ pub fn instant_of(wall: &str, offset_seconds: i64) -> Result<String, String> {
     Ok(instant.to_string())
 }
 
-fn object<'a>(record: &'a Value, field: &str) -> Result<&'a Value, String> {
-    record
-        .get(field)
-        .filter(|value| value.is_object())
-        .ok_or_else(|| format!("{LABEL}'s answer is missing {field}."))
-}
-
-fn number(record: &Value, field: &str) -> Result<f64, String> {
-    record
-        .get(field)
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| format!("{LABEL}'s answer is missing {field}."))
-}
-
 fn first<'a>(record: &'a Value, field: &str) -> Result<&'a Value, String> {
-    record
-        .get(field)
-        .and_then(Value::as_array)
-        .and_then(|list| list.first())
-        .ok_or_else(|| format!("{LABEL}'s answer is missing {field}."))
+    wire::first(record, field, LABEL)
 }
 
 fn first_number(record: &Value, field: &str) -> Result<f64, String> {

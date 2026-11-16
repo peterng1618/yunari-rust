@@ -105,6 +105,17 @@ enum Overlay {
     Store(StoreDialog),
     Rename(Prompt),
     Field(Prompt),
+    /// A weather place typed as `label|latitude|longitude`, with the settings
+    /// dialog it was opened from.
+    WeatherPlace {
+        dialog: Box<SettingsDialog>,
+        prompt: Prompt,
+    },
+    /// A weather backend's key, stored under the OS protector.
+    WeatherKey {
+        dialog: Box<SettingsDialog>,
+        prompt: Prompt,
+    },
     /// An action that would throw unsaved work away, waiting for an answer.
     Confirm {
         message: String,
@@ -724,6 +735,125 @@ impl EditorWindow {
         };
         dialog.message = Some(message);
         cx.notify();
+    }
+
+    /// Cycles the weather backend and keeps the key state beside it.
+    fn cycle_weather_backend(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings_dir();
+        let Some(Overlay::Settings(dialog)) = &mut self.overlay else {
+            return;
+        };
+        let index = settings_dialog::WEATHER_BACKENDS
+            .iter()
+            .position(|id| *id == dialog.weather.provider)
+            .unwrap_or(0);
+        dialog.weather.provider = settings_dialog::WEATHER_BACKENDS
+            [(index + 1) % settings_dialog::WEATHER_BACKENDS.len()]
+        .to_owned();
+        dialog.weather_key_set = settings_dialog::read_weather_key_set(&settings, &dialog.weather);
+        dialog.message = Some(
+            match settings_dialog::write_weather(&settings, &dialog.weather) {
+                Ok(()) => format!("Weather backend is now {}.", dialog.weather.provider),
+                Err(error) => error,
+            },
+        );
+        cx.notify();
+    }
+
+    /// Turns the Windows location fallback on or off.
+    fn toggle_weather_location(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings_dir();
+        let Some(Overlay::Settings(dialog)) = &mut self.overlay else {
+            return;
+        };
+        dialog.weather.use_windows_location = !dialog.weather.use_windows_location;
+        dialog.message = Some(
+            match settings_dialog::write_weather(&settings, &dialog.weather) {
+                Ok(()) if dialog.weather.use_windows_location => {
+                    "Windows location is on; it asks Windows itself for a fix.".to_owned()
+                }
+                Ok(()) => "Windows location is off; a place must be set.".to_owned(),
+                Err(error) => error,
+            },
+        );
+        cx.notify();
+    }
+
+    /// Asks for a place as `label|latitude|longitude`.
+    fn edit_weather_place(&mut self) {
+        let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
+            return;
+        };
+        let value = format!(
+            "{}|{}|{}",
+            dialog.weather.label, dialog.weather.latitude, dialog.weather.longitude
+        );
+        self.overlay = Some(Overlay::WeatherPlace {
+            dialog: Box::new(dialog),
+            prompt: Prompt::new(
+                "Weather place",
+                "Label|latitude|longitude, e.g. Berlin|52.52|13.405",
+                value,
+            ),
+        });
+    }
+
+    fn save_weather_place(&mut self, mut dialog: SettingsDialog, value: &str) {
+        let settings = self.settings_dir();
+        let parts: Vec<&str> = value.split('|').map(str::trim).collect();
+        let parsed = match parts.as_slice() {
+            [label, latitude, longitude] if !label.is_empty() => {
+                match (latitude.parse::<f64>(), longitude.parse::<f64>()) {
+                    (Ok(latitude), Ok(longitude))
+                        if (-90.0..=90.0).contains(&latitude)
+                            && (-180.0..=180.0).contains(&longitude) =>
+                    {
+                        Some(((*label).to_owned(), latitude, longitude))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        dialog.message = Some(match parsed {
+            Some((label, latitude, longitude)) => {
+                dialog.weather.label = label;
+                dialog.weather.latitude = latitude;
+                dialog.weather.longitude = longitude;
+                match settings_dialog::write_weather(&settings, &dialog.weather) {
+                    Ok(()) => "The weather place is saved.".to_owned(),
+                    Err(error) => error,
+                }
+            }
+            None => "A place needs Label|latitude|longitude, with the numbers in range.".to_owned(),
+        });
+        self.overlay = Some(Overlay::Settings(dialog));
+    }
+
+    /// Asks for the selected backend's key; it is stored under the OS protector
+    /// and never shown again.
+    fn edit_weather_key(&mut self) {
+        let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
+            return;
+        };
+        self.overlay = Some(Overlay::WeatherKey {
+            dialog: Box::new(dialog),
+            prompt: Prompt::new("Weather key", "The key this backend issued to you", ""),
+        });
+    }
+
+    fn save_weather_key(&mut self, mut dialog: SettingsDialog, value: &str) {
+        let settings = self.settings_dir();
+        let provider = dialog.weather.provider.clone();
+        dialog.message = Some(
+            match settings_dialog::set_weather_key(&settings, &provider, value) {
+                Ok(()) if value.trim().is_empty() => "The weather key is forgotten.".to_owned(),
+                Ok(()) => "The weather key is stored for this Windows account.".to_owned(),
+                Err(error) => error,
+            },
+        );
+        dialog.weather_key_set = settings_dialog::read_weather_key_set(&settings, &dialog.weather);
+        self.overlay = Some(Overlay::Settings(dialog));
     }
 
     fn packs_directory(&self) -> PathBuf {
@@ -2014,6 +2144,28 @@ impl EditorWindow {
                     self.overlay = Some(Overlay::Confirm { message, resume });
                 }
             }
+            Overlay::WeatherPlace { dialog, mut prompt } => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => {
+                        self.overlay = Some(Overlay::WeatherPlace { dialog, prompt });
+                    }
+                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
+                    Outcome::Submit(value) => {
+                        self.save_weather_place(*dialog, &value);
+                    }
+                }
+            }
+            Overlay::WeatherKey { dialog, mut prompt } => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => {
+                        self.overlay = Some(Overlay::WeatherKey { dialog, prompt });
+                    }
+                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
+                    Outcome::Submit(value) => {
+                        self.save_weather_key(*dialog, &value);
+                    }
+                }
+            }
             Overlay::Field(mut prompt) => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => self.overlay = Some(Overlay::Field(prompt)),
@@ -2419,6 +2571,9 @@ impl EditorWindow {
         let content = match &self.overlay {
             None => return None,
             Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt) | Overlay::Field(prompt)) => {
+                Self::prompt_panel(prompt, cx)
+            }
+            Some(Overlay::WeatherPlace { prompt, .. } | Overlay::WeatherKey { prompt, .. }) => {
                 Self::prompt_panel(prompt, cx)
             }
             Some(Overlay::Import(prompt) | Overlay::ImportAsset(prompt)) => {

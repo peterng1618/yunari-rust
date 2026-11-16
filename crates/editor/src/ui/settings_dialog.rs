@@ -3,9 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use gpui_kit::*;
+use yunari_host::credentials::Credentials;
 use yunari_host::displays::DisplayKind;
 use yunari_host::hosting::Hosting;
 use yunari_host::http::Shared;
+use yunari_providers::weather::WeatherSettings;
 
 use crate::ui::EditorWindow;
 
@@ -24,20 +26,89 @@ pub struct SettingsDialog {
     /// Whether the app starts with Windows.
     pub autostart: bool,
     pub monitors: Vec<MonitorRow>,
+    /// Where this PC's weather comes from and the place it is for.
+    pub weather: WeatherSettings,
+    /// Whether the selected backend has a stored key; the key itself is never
+    /// carried by the dialog.
+    pub weather_key_set: bool,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
 
 impl SettingsDialog {
     pub fn new(settings: PathBuf, monitors: Vec<MonitorRow>) -> Self {
+        let weather = read_weather(&settings);
+        let weather_key_set = read_weather_key_set(&settings, &weather);
         Self {
             lan: Hosting::load(&settings).lan,
             autostart: yunari_host::autostart::enabled(),
             monitors,
+            weather,
+            weather_key_set,
             settings,
             message: None,
         }
     }
+}
+
+/// The three backends this host reads, in the order the row cycles them.
+pub const WEATHER_BACKENDS: [&str; 3] = ["open-meteo", "weatherapi", "openweathermap"];
+
+/// The credential id a backend's key is stored under, `None` for the keyless
+/// one.
+pub fn weather_key_id(provider: &str) -> Option<&'static str> {
+    match provider {
+        "weatherapi" => Some("weatherapi"),
+        "openweathermap" => Some("openweathermap"),
+        _ => None,
+    }
+}
+
+/// Whether the selected backend's key is stored on this account.
+pub fn read_weather_key_set(settings: &Path, weather: &WeatherSettings) -> bool {
+    weather_key_id(&weather.provider).is_some_and(|id| Credentials::at(settings).get(id).is_some())
+}
+
+pub fn weather_path(settings: &Path) -> PathBuf {
+    settings.join("weather.json")
+}
+
+/// The stored settings, or the defaults when the file is absent or unreadable:
+/// a wrong setting may not stop the host.
+pub fn read_weather(settings: &Path) -> WeatherSettings {
+    let stored: serde_json::Value = std::fs::read_to_string(weather_path(settings))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    WeatherSettings::from_json(&stored)
+}
+
+/// Writes the settings where the host reads them on its next poll.
+pub fn write_weather(settings: &Path, weather: &WeatherSettings) -> Result<(), String> {
+    let text =
+        serde_json::to_string_pretty(&weather.to_json()).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(settings).map_err(|error| error.to_string())?;
+    let temp = settings.join("weather.json.new");
+    std::fs::write(
+        &temp,
+        format!(
+            "{text}
+"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::rename(&temp, weather_path(settings)).map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        error.to_string()
+    })
+}
+
+/// Stores a backend's key under the OS protector. An empty value forgets it.
+pub fn set_weather_key(settings: &Path, provider: &str, secret: &str) -> Result<(), String> {
+    let Some(id) = weather_key_id(provider) else {
+        return Err("Open-Meteo needs no key.".to_owned());
+    };
+    Credentials::at(settings).set(id, secret)
 }
 
 /// The monitors GPUI sees, each marked when a local display record holds it.
@@ -82,6 +153,26 @@ pub fn set_autostart(on: bool) -> Result<bool, String> {
     Ok(yunari_host::autostart::enabled())
 }
 
+/// One clickable settings row.
+fn row(
+    id: &'static str,
+    label: String,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .id(id)
+        .w_full()
+        .px_3()
+        .py_2()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_color(rgb(0xe8e8ea))
+        .bg(rgb(0x22222a))
+        .child(label)
+        .on_click(on_click)
+        .into_any_element()
+}
+
 pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
     let lan = if dialog.lan {
         "On  ·  phones on this network can pair and play"
@@ -113,6 +204,48 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
                     this.flip_setting(id, cx);
                 })),
         );
+    }
+    let provider = dialog.weather.provider.clone();
+    let key_state = match weather_key_id(&provider) {
+        None => "no key needed".to_owned(),
+        Some(_) if dialog.weather_key_set => "key stored".to_owned(),
+        Some(_) => "no key yet".to_owned(),
+    };
+    let place = if dialog.weather.label.is_empty() {
+        "Windows location".to_owned()
+    } else {
+        format!(
+            "{} ({}, {})",
+            dialog.weather.label, dialog.weather.latitude, dialog.weather.longitude
+        )
+    };
+    let windows = if dialog.weather.use_windows_location {
+        "On"
+    } else {
+        "Off"
+    };
+    column = column
+        .child(row(
+            "settings-weather-backend",
+            format!("Weather backend: {provider}  ·  {key_state}"),
+            cx.listener(|this, _: &ClickEvent, _, cx| this.cycle_weather_backend(cx)),
+        ))
+        .child(row(
+            "settings-weather-place",
+            format!("Weather place: {place}"),
+            cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_place()),
+        ))
+        .child(row(
+            "settings-weather-location",
+            format!("Windows location: {windows}"),
+            cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_weather_location(cx)),
+        ));
+    if weather_key_id(&provider).is_some() {
+        column = column.child(row(
+            "settings-weather-key",
+            format!("{provider} key: {key_state}  ·  click to enter"),
+            cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_key()),
+        ));
     }
     for (index, monitor) in dialog.monitors.iter().enumerate() {
         let uuid = monitor.uuid.clone();
@@ -180,7 +313,9 @@ mod tests {
 
     use yunari_host::hosting::Hosting;
 
-    use super::set_lan;
+    use super::{
+        read_weather, read_weather_key_set, set_lan, set_weather_key, weather_key_id, write_weather,
+    };
 
     fn temp_settings(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -202,6 +337,40 @@ mod tests {
         assert!(set_lan(&settings, true));
         assert!(Hosting::load(&settings).lan);
         assert!(!set_lan(&settings, false));
+        std::fs::remove_dir_all(&settings).ok();
+    }
+
+    #[test]
+    fn a_weather_place_and_backend_survive_a_write() {
+        let settings = temp_settings("weather");
+        let mut weather = read_weather(&settings);
+        assert_eq!(weather.provider, "open-meteo");
+        weather.provider = "weatherapi".to_owned();
+        weather.label = "Berlin".to_owned();
+        weather.latitude = 52.52;
+        weather.longitude = 13.405;
+        weather.use_windows_location = false;
+        write_weather(&settings, &weather).expect("a written setting");
+        assert_eq!(read_weather(&settings), weather);
+        // A file this build refuses reads as the defaults, not a failed host.
+        std::fs::write(super::weather_path(&settings), "not json").unwrap();
+        assert_eq!(read_weather(&settings).provider, "open-meteo");
+        std::fs::remove_dir_all(&settings).ok();
+    }
+
+    #[test]
+    fn a_backend_key_goes_to_the_protected_store() {
+        let settings = temp_settings("weather-key");
+        let mut weather = read_weather(&settings);
+        assert!(!read_weather_key_set(&settings, &weather));
+        set_weather_key(&settings, "weatherapi", "secret").expect("a stored key");
+        weather.provider = "weatherapi".to_owned();
+        assert!(read_weather_key_set(&settings, &weather));
+        // The keyless backend needs none, and the key itself never reaches the
+        // dialog's own file.
+        assert!(weather_key_id("open-meteo").is_none());
+        set_weather_key(&settings, "weatherapi", "").expect("a forgotten key");
+        assert!(!read_weather_key_set(&settings, &weather));
         std::fs::remove_dir_all(&settings).ok();
     }
 }

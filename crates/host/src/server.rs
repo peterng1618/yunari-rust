@@ -172,7 +172,9 @@ fn weather(settings_dir: &std::path::Path) -> yunari_providers::weather::Weather
             .unwrap_or(serde_json::Value::Null);
         yunari_providers::weather::WeatherSettings::from_json(&stored)
     });
-    yunari_providers::weather::WeatherProvider::new(settings)
+    let credentials = crate::credentials::Credentials::at(settings_dir);
+    let keys: yunari_providers::weather::KeysLoader = Arc::new(move |id| credentials.get(id));
+    yunari_providers::weather::WeatherProvider::new(settings).with_credentials(keys)
 }
 
 /// Custom sources read `sources.json` on every poll, so a settings write is

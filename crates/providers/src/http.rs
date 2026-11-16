@@ -22,6 +22,21 @@ pub fn refusal(url: &str) -> Option<String> {
     }
 }
 
+/// Percent-encodes everything outside the unreserved set, so a query value
+/// cannot add a parameter of its own. A credential read from this PC's store
+/// goes through it too: the key never becomes part of the URL's grammar.
+pub fn encode(text: &str) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
 /// One GET with the headers a user-authored source names. The headers are the
 /// same ones the source app kept in plain text beside the source's address; no
 /// credential is stored here.
