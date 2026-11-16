@@ -468,6 +468,34 @@ impl Provider for WeatherProvider {
     }
 }
 
+/// Rewrites the two readings whose words a display reads in its own language.
+/// Acquisition is language-independent, so this runs per display on the shared
+/// readings rather than fetching once per language.
+pub fn localize(readings: &mut [Reading], language: Option<&str>) {
+    let Some(code) = readings
+        .iter()
+        .find(|reading| reading.semantic_key == "weather.conditionCode")
+        .and_then(|reading| reading.value)
+    else {
+        return;
+    };
+    for reading in readings.iter_mut() {
+        match reading.semantic_key.as_str() {
+            "weather.condition" if reading.text.is_some() => {
+                reading.text =
+                    Some(conditions::condition_text_in(language, code as i64).to_owned());
+            }
+            // The place the author chose is their own words and stays as
+            // written; only the host's own name for the Windows fix is
+            // translated.
+            "weather.location" if reading.text.as_deref() == Some(conditions::location_text()) => {
+                reading.text = Some(conditions::location_text_in(language).to_owned());
+            }
+            _ => {}
+        }
+    }
+}
+
 /// One key's reading, from the cache the refetcher fills.
 fn reading_of(state: &State, settings: &WeatherSettings, key: &str, now_ms: u64) -> Reading {
     if settings.label.is_empty() && !settings.use_windows_location {
@@ -644,6 +672,25 @@ mod tests {
             readings[4].text.as_deref(),
             Some("Weather data by Open-Meteo.com")
         );
+    }
+
+    #[test]
+    fn a_display_s_language_rewrites_only_the_words() {
+        let mut readings = vec![
+            Reading::number("weather.conditionCode", 61.0, "°C"),
+            Reading::text("weather.condition", "Slight rain"),
+            Reading::text("weather.location", "Windows location"),
+            Reading::text("weather.windDirection.compass", "SW"),
+        ];
+        localize(&mut readings, Some("vi-VN"));
+        assert_eq!(readings[1].text.as_deref(), Some("Mưa nhẹ"));
+        assert_eq!(readings[2].text.as_deref(), Some("Vị trí Windows"));
+        assert_eq!(readings[3].text.as_deref(), Some("SW"));
+
+        // A place the author chose is their data and is never translated.
+        let mut named = vec![Reading::text("weather.location", "Berlin")];
+        localize(&mut named, Some("de"));
+        assert_eq!(named[0].text.as_deref(), Some("Berlin"));
     }
 
     #[test]

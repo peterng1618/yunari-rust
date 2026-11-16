@@ -3,49 +3,145 @@
 //! WMO 4677 present-weather codes, the set Open-Meteo reports. An unknown code
 //! says "Unknown" rather than putting a number where prose belongs.
 //!
-//! ponytail: English only. The host has no language setting yet; the upgraded
-//! form carries the language through `Provider::sample` and adds the German and
-//! Vietnamese tables beside this one.
+//! A closed vocabulary, not a translation platform: English, German and
+//! Vietnamese tables, and anything else reads in English.
 
 /// The words a code reads as, or `Unknown` for a code outside the table.
 pub fn condition_text(code: i64) -> &'static str {
-    match code {
-        0 => "Clear sky",
-        1 => "Mainly clear",
-        2 => "Partly cloudy",
-        3 => "Overcast",
-        45 => "Fog",
-        48 => "Depositing rime fog",
-        51 => "Light drizzle",
-        53 => "Moderate drizzle",
-        55 => "Dense drizzle",
-        56 => "Light freezing drizzle",
-        57 => "Dense freezing drizzle",
-        61 => "Slight rain",
-        63 => "Moderate rain",
-        65 => "Heavy rain",
-        66 => "Light freezing rain",
-        67 => "Heavy freezing rain",
-        71 => "Slight snow",
-        73 => "Moderate snow",
-        75 => "Heavy snow",
-        77 => "Snow grains",
-        80 => "Slight rain showers",
-        81 => "Moderate rain showers",
-        82 => "Violent rain showers",
-        85 => "Slight snow showers",
-        86 => "Heavy snow showers",
-        95 => "Thunderstorm",
-        96 => "Thunderstorm with slight hail",
-        99 => "Thunderstorm with heavy hail",
-        _ => "Unknown",
-    }
+    condition_text_in(None, code)
 }
+
+/// The words a code reads as in one language, falling back to English.
+pub fn condition_text_in(language: Option<&str>, code: i64) -> &'static str {
+    let table: &'static [(i64, &'static str)] = match primary_subtag(language).as_str() {
+        "de" => DE_CONDITIONS,
+        "vi" => VI_CONDITIONS,
+        _ => EN_CONDITIONS,
+    };
+    table
+        .iter()
+        .find(|(key, _)| *key == code)
+        .map(|(_, text)| *text)
+        .unwrap_or("Unknown")
+}
+
+/// `de-DE` reads the German table: a region tag differs from its language only.
+fn primary_subtag(language: Option<&str>) -> String {
+    language
+        .unwrap_or_default()
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+const EN_CONDITIONS: &[(i64, &str)] = &[
+    (0, "Clear sky"),
+    (1, "Mainly clear"),
+    (2, "Partly cloudy"),
+    (3, "Overcast"),
+    (45, "Fog"),
+    (48, "Depositing rime fog"),
+    (51, "Light drizzle"),
+    (53, "Moderate drizzle"),
+    (55, "Dense drizzle"),
+    (56, "Light freezing drizzle"),
+    (57, "Dense freezing drizzle"),
+    (61, "Slight rain"),
+    (63, "Moderate rain"),
+    (65, "Heavy rain"),
+    (66, "Light freezing rain"),
+    (67, "Heavy freezing rain"),
+    (71, "Slight snow"),
+    (73, "Moderate snow"),
+    (75, "Heavy snow"),
+    (77, "Snow grains"),
+    (80, "Slight rain showers"),
+    (81, "Moderate rain showers"),
+    (82, "Violent rain showers"),
+    (85, "Slight snow showers"),
+    (86, "Heavy snow showers"),
+    (95, "Thunderstorm"),
+    (96, "Thunderstorm with slight hail"),
+    (99, "Thunderstorm with heavy hail"),
+];
+
+/// Kept beside the source vocabulary rather than translated at runtime: a
+/// table is what a reviewer can check.
+const DE_CONDITIONS: &[(i64, &str)] = &[
+    (0, "Klarer Himmel"),
+    (1, "Überwiegend klar"),
+    (2, "Teilweise bewölkt"),
+    (3, "Bedeckt"),
+    (45, "Nebel"),
+    (48, "Reifnebel"),
+    (51, "Leichter Nieselregen"),
+    (53, "Mäßiger Nieselregen"),
+    (55, "Dichter Nieselregen"),
+    (56, "Leichter gefrierender Nieselregen"),
+    (57, "Dichter gefrierender Nieselregen"),
+    (61, "Leichter Regen"),
+    (63, "Mäßiger Regen"),
+    (65, "Starker Regen"),
+    (66, "Leichter gefrierender Regen"),
+    (67, "Starker gefrierender Regen"),
+    (71, "Leichter Schneefall"),
+    (73, "Mäßiger Schneefall"),
+    (75, "Starker Schneefall"),
+    (77, "Schneegriesel"),
+    (80, "Leichte Regenschauer"),
+    (81, "Mäßige Regenschauer"),
+    (82, "Heftige Regenschauer"),
+    (85, "Leichte Schneeschauer"),
+    (86, "Starke Schneeschauer"),
+    (95, "Gewitter"),
+    (96, "Gewitter mit leichtem Hagel"),
+    (99, "Gewitter mit starkem Hagel"),
+];
+
+const VI_CONDITIONS: &[(i64, &str)] = &[
+    (0, "Trời quang"),
+    (1, "Chủ yếu quang"),
+    (2, "Có mây rải rác"),
+    (3, "U ám"),
+    (45, "Sương mù"),
+    (48, "Sương mù đọng giá"),
+    (51, "Mưa phùn nhẹ"),
+    (53, "Mưa phùn vừa"),
+    (55, "Mưa phùn dày"),
+    (56, "Mưa phùn đóng băng nhẹ"),
+    (57, "Mưa phùn đóng băng dày"),
+    (61, "Mưa nhẹ"),
+    (63, "Mưa vừa"),
+    (65, "Mưa to"),
+    (66, "Mưa đóng băng nhẹ"),
+    (67, "Mưa đóng băng to"),
+    (71, "Tuyết rơi nhẹ"),
+    (73, "Tuyết rơi vừa"),
+    (75, "Tuyết rơi dày"),
+    (77, "Hạt tuyết"),
+    (80, "Mưa rào nhẹ"),
+    (81, "Mưa rào vừa"),
+    (82, "Mưa rào mạnh"),
+    (85, "Mưa tuyết nhẹ"),
+    (86, "Mưa tuyết mạnh"),
+    (95, "Dông"),
+    (96, "Dông kèm mưa đá nhẹ"),
+    (99, "Dông kèm mưa đá mạnh"),
+];
 
 /// The words a place the host located itself reads as. A place the author chose
 /// is their data and is shown as written.
 pub fn location_text() -> &'static str {
-    "Windows location"
+    location_text_in(None)
+}
+
+pub fn location_text_in(language: Option<&str>) -> &'static str {
+    match primary_subtag(language).as_str() {
+        "de" => "Windows-Standort",
+        "vi" => "Vị trí Windows",
+        _ => "Windows location",
+    }
 }
 
 /// Sixteen points, beginning at north.
@@ -129,6 +225,19 @@ mod tests {
         assert_eq!(condition_text(3), "Overcast");
         assert_eq!(condition_text(61), "Slight rain");
         assert_eq!(condition_text(1234), "Unknown");
+    }
+
+    #[test]
+    fn a_language_reads_its_own_table_and_anything_else_reads_english() {
+        assert_eq!(condition_text_in(Some("de-DE"), 3), "Bedeckt");
+        assert_eq!(condition_text_in(Some("vi"), 61), "Mưa nhẹ");
+        assert_eq!(condition_text_in(Some("fr"), 3), "Overcast");
+        assert_eq!(condition_text_in(None, 3), "Overcast");
+        // An absent code is still unknown in every table.
+        assert_eq!(condition_text_in(Some("de"), 1234), "Unknown");
+        assert_eq!(location_text_in(Some("vi-VN")), "Vị trí Windows");
+        assert_eq!(location_text_in(Some("de")), "Windows-Standort");
+        assert_eq!(location_text_in(None), "Windows location");
     }
 
     #[test]

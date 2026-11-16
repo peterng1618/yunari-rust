@@ -48,7 +48,6 @@ struct Connection {
     id: u64,
     display: String,
     keys: Vec<String>,
-    #[allow(dead_code)]
     lang: Option<String>,
     sender: mpsc::Sender<String>,
 }
@@ -138,21 +137,30 @@ impl Streams {
     }
 }
 
-/// Every distinct display's ask for this tick.
-fn groups(app: &crate::http::App) -> Vec<(String, Vec<String>)> {
+/// Every distinct display's ask for this tick, with the language its first
+/// connection asked for.
+fn groups(app: &crate::http::App) -> Vec<(String, Vec<String>, Option<String>)> {
     let Ok(connections) = app.streams.connections.lock() else {
         return Vec::new();
     };
-    let mut by_display: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut by_display: BTreeMap<String, (Vec<String>, Option<String>)> = BTreeMap::new();
     for connection in connections.iter() {
-        let keys = by_display.entry(connection.display.clone()).or_default();
+        let (keys, language) = by_display
+            .entry(connection.display.clone())
+            .or_insert_with(|| (Vec::new(), None));
+        if language.is_none() {
+            *language = connection.lang.clone();
+        }
         for key in &connection.keys {
             if !keys.contains(key) {
                 keys.push(key.clone());
             }
         }
     }
-    by_display.into_iter().collect()
+    by_display
+        .into_iter()
+        .map(|(display, (keys, language))| (display, keys, language))
+        .collect()
 }
 
 /// Start the one tick that samples every display and publishes its frame.
@@ -174,7 +182,7 @@ pub fn spawn(app: Shared) {
             }
             let asks: Vec<yunari_providers::registry::Ask> = groups
                 .iter()
-                .map(|(display, keys)| {
+                .map(|(display, keys, _)| {
                     yunari_providers::registry::Ask::new(display.clone(), keys.clone())
                 })
                 .collect();
@@ -183,8 +191,12 @@ pub fn spawn(app: Shared) {
                 .registry
                 .sample(&asks, u64::try_from(now).unwrap_or_default());
             let assignment = crate::assignment::Assignment::load(&app.config.settings_dir());
-            for (display, keys) in groups {
-                let readings = crate::frame::readings_for(&cycle, &keys);
+            for (display, keys, language) in groups {
+                // The acquisition is language-independent; only the words a
+                // display reads are rewritten, in that display's language.
+                let mut samples = crate::frame::readings(&cycle, &keys);
+                yunari_providers::weather::localize(&mut samples, language.as_deref());
+                let readings = yunari_render::Readings::new(samples);
                 let theme = assignment.resolve(&app.library, &display, None);
                 let frame_json = theme.and_then(|id| {
                     if !documents.contains_key(&id)
@@ -350,5 +362,27 @@ mod tests {
         assert_eq!(streams.live(), 1);
         streams.unregister(id);
         assert_eq!(streams.live(), 0);
+    }
+
+    #[test]
+    fn a_display_s_language_travels_with_its_ask() {
+        let dir = std::env::temp_dir().join(format!(
+            "yunari-stream-lang-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        let config = crate::config::HostConfig::resolve(Some(dir.clone()), Some(0), false);
+        let app = crate::server::app(config);
+        app.streams
+            .register(
+                "phone".to_owned(),
+                vec!["weather.condition".to_owned()],
+                Some("de-DE".to_owned()),
+            )
+            .unwrap();
+        let groups = groups(&app);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].2.as_deref(), Some("de-DE"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

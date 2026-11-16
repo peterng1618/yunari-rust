@@ -10,7 +10,7 @@ pub const MISSING_MESSAGE: &str = "no provider on this PC reports that sensor; c
 
 /// The readings a display needs: every key it asked for, with a gap that says
 /// why when nothing on this PC reads it.
-pub fn readings_for(cycle: &Cycle, keys: &[String]) -> Readings {
+pub fn readings(cycle: &Cycle, keys: &[String]) -> Vec<Reading> {
     let mut readings = Vec::with_capacity(keys.len());
     for key in keys {
         match cycle.reading(key) {
@@ -18,7 +18,11 @@ pub fn readings_for(cycle: &Cycle, keys: &[String]) -> Readings {
             None => readings.push(Reading::missing(key.clone(), MISSING_MESSAGE)),
         }
     }
-    Readings::new(readings)
+    readings
+}
+
+pub fn readings_for(cycle: &Cycle, keys: &[String]) -> Readings {
+    Readings::new(readings(cycle, keys))
 }
 
 /// The geometry a phone draws, built by the same planner the window and the
