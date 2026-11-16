@@ -471,6 +471,10 @@ impl<B: Bulk + 'static> PanelDevice for TurUsbPanel<B> {
         StillFormat::Jpeg
     }
 
+    fn plays_video(&self) -> bool {
+        true
+    }
+
     fn accepts(&self, kind: CommandKind) -> bool {
         matches!(
             kind,

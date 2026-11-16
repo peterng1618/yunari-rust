@@ -354,6 +354,10 @@ impl<S: Serial> PanelDevice for TurzxPanel<S> {
         StillFormat::Rgba
     }
 
+    fn plays_video(&self) -> bool {
+        true
+    }
+
     /// Uploads a clip the panel does not already hold, plays it, and
     /// initializes the transparent overlay a UI is drawn over.
     fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {

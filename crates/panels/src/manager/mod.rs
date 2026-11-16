@@ -16,7 +16,15 @@ use crate::family::{
     StillFormat, Telemetry, for_device,
 };
 use crate::open_device;
-use crate::runner::{Capture, Runner};
+use crate::runner::{Capture, Runner, VideoClip};
+
+/// The clip a display's theme plays itself; `None` is a still panel.
+pub type VideoSource =
+    Arc<dyn Fn(&DisplayRecord) -> Result<Option<VideoClip>, String> + Send + Sync>;
+
+/// The UI-only capture that rides over a playing clip, as a transparent PNG.
+pub type OverlaySource =
+    Arc<dyn Fn(&DisplayRecord, u32, u32) -> Result<Vec<u8>, String> + Send + Sync>;
 
 /// What identifies one physical panel, for a record and for finding it again
 /// after a reboot. A bus address moves; the serial does not.
@@ -140,6 +148,9 @@ pub struct Manager {
     inner: Mutex<Inner>,
     open: OpenDevice,
     frame_source: FrameSource,
+    /// The video theme's clip and overlay, when the host can encode one.
+    video_source: Option<VideoSource>,
+    overlay_source: Option<OverlaySource>,
     on_error: Report,
 }
 
@@ -176,8 +187,19 @@ impl Manager {
             }),
             open,
             frame_source,
+            video_source: None,
+            overlay_source: None,
             on_error: Box::new(|_, _| {}),
         }
+    }
+
+    /// Teaches the manager a video theme: where a display's clip comes from and
+    /// how the UI over it is captured. Both are required — a clip with no
+    /// overlay would hide the theme's readings behind the video.
+    pub fn with_video(mut self, video: VideoSource, overlay: OverlaySource) -> Self {
+        self.video_source = Some(video);
+        self.overlay_source = Some(overlay);
+        self
     }
 
     pub fn on_error(mut self, report: impl Fn(&str, &str) + Send + Sync + 'static) -> Self {
@@ -255,10 +277,18 @@ impl Manager {
             let record = record.clone();
             Box::new(move |width, height| source(&record, width, height, format))
         };
-        let entry = Arc::new(Entry {
-            runner: Runner::new(panel, capture, interval),
-            device,
-        });
+        let mut runner = Runner::new(panel, capture, interval);
+        if let (Some(video), Some(overlay)) = (&self.video_source, &self.overlay_source) {
+            let video = Arc::clone(video);
+            let overlay = Arc::clone(overlay);
+            let video_record = record.clone();
+            let overlay_record = record.clone();
+            runner = runner.with_video(
+                Box::new(move || video(&video_record)),
+                Box::new(move |width, height| overlay(&overlay_record, width, height)),
+            );
+        }
+        let entry = Arc::new(Entry { runner, device });
 
         let mut inner = self.inner.lock().expect("the manager");
         // A stop or shutdown that landed while the device was opening owns it

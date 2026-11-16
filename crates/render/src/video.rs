@@ -82,6 +82,30 @@ impl Placement {
     }
 }
 
+/// The placement a document's background media asks of its clip: the authored
+/// pan and zoom, the flips, the composition an advanced background keeps, and
+/// the paint it fades into. `fill` is the caller's resolved
+/// [`crate::plan::media_fill`], because only a theme with a palette can say
+/// what a colour token means.
+pub fn placement_of(
+    document: &yunari_model::document::ThemeDocument,
+    shape: PanelShape,
+    fill: Option<Paint>,
+) -> Placement {
+    let media = document.background.media.as_ref();
+    let geometry = background::Geometry::of(media);
+    Placement {
+        offset_x: geometry.offset_x,
+        offset_y: geometry.offset_y,
+        scale: geometry.scale,
+        flip_x: media.is_some_and(|media| media.flip_x),
+        flip_y: media.is_some_and(|media| media.flip_y),
+        composition: background::active(&document.background).cloned(),
+        fill,
+        shape,
+    }
+}
+
 /// The turn a whole angle asks for, or `None` for one no panel composes.
 pub fn video_turn(rotation: u16) -> Option<PanelTurn> {
     match rotation {
@@ -788,5 +812,59 @@ mod tests {
         let filter = filter_for((800.0, 480.0), &placement(), 0, PanelShape::Rect);
         assert!(!filter.complex);
         assert!(filter.duration_seconds.is_none());
+    }
+
+    fn document(background: serde_json::Value) -> yunari_model::document::ThemeDocument {
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": "1.0",
+            "id": "theme",
+            "artboard": { "width": 800.0, "height": 480.0 },
+            "background": background,
+        }))
+        .expect("a readable document")
+    }
+
+    #[test]
+    fn a_documents_placement_is_what_its_media_authored() {
+        let document = document(serde_json::json!({
+            "media": {
+                "assetId": "clip",
+                "bounds": "theme",
+                "offsetX": 5.0,
+                "offsetY": -4.0,
+                "scale": 1.4,
+                "flipX": true
+            }
+        }));
+        let placement = placement_of(&document, PanelShape::Rect, None);
+        assert_eq!(placement.offset_x, 5.0);
+        assert_eq!(placement.offset_y, -4.0);
+        assert_eq!(placement.scale, 1.4);
+        assert!(placement.flip_x);
+        assert!(!placement.flip_y);
+        // A simple background covers its box: no composition.
+        assert!(placement.composition.is_none());
+        assert!(placement.fill.is_none());
+    }
+
+    #[test]
+    fn an_advanced_background_carries_its_composition_and_fill() {
+        let document = document(serde_json::json!({
+            "mode": "advanced",
+            "media": {
+                "assetId": "clip",
+                "bounds": "theme",
+                "color": { "value": "#123456" },
+                "composition": { "anchor": "left", "extent": 0.4, "fade": 0.2 }
+            }
+        }));
+        let fill = crate::plan::media_fill(&document, 800.0, 480.0);
+        let placement = placement_of(&document, PanelShape::Circle, fill);
+        assert_eq!(
+            placement.composition.unwrap().anchor,
+            BackgroundAnchor::Left
+        );
+        assert_eq!(placement.shape, PanelShape::Circle);
+        assert!(matches!(placement.fill, Some(Paint::Solid(_))));
     }
 }

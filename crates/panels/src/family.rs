@@ -106,7 +106,15 @@ pub enum PanelShape {
     Circle,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// The clip form a family's decoder takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoForm {
+    /// An MP4 the panel stores and decodes itself.
+    StoredMp4,
+    /// A raw H.264 elementary stream fed in blocks.
+    StreamH264,
+}
+
 pub struct PanelFamily {
     pub id: &'static str,
     pub label: &'static str,
@@ -118,6 +126,8 @@ pub struct PanelFamily {
     pub shape: PanelShape,
     /// The frame layouts this panel's driver can write.
     pub render_modes: &'static [RenderMode],
+    /// The clip form the panel decodes itself, when it plays video at all.
+    pub video: Option<VideoForm>,
 }
 
 impl PanelFamily {
@@ -170,6 +180,7 @@ static FAMILIES: [PanelFamily; 4] = [
         },
         shape: PanelShape::Rect,
         render_modes: &[RenderMode::ModeA],
+        video: Some(VideoForm::StreamH264),
     },
     PanelFamily {
         id: "lianli-8-8",
@@ -193,6 +204,7 @@ static FAMILIES: [PanelFamily; 4] = [
         },
         shape: PanelShape::Rect,
         render_modes: &[RenderMode::ModeA],
+        video: Some(VideoForm::StreamH264),
     },
     PanelFamily {
         id: "turzx-5",
@@ -219,6 +231,7 @@ static FAMILIES: [PanelFamily; 4] = [
         },
         shape: PanelShape::Rect,
         render_modes: &[RenderMode::ModeA],
+        video: Some(VideoForm::StoredMp4),
     },
     PanelFamily {
         id: "kraken-z3",
@@ -242,6 +255,7 @@ static FAMILIES: [PanelFamily; 4] = [
         },
         shape: PanelShape::Circle,
         render_modes: &[RenderMode::ModeA, RenderMode::ModeB],
+        video: None,
     },
 ];
 
@@ -323,6 +337,11 @@ pub trait PanelDevice: Send {
     fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {
         let _ = clip;
         Err("That device does not play video.".to_owned())
+    }
+
+    /// Whether this device decodes a clip itself, so the host can offer one.
+    fn plays_video(&self) -> bool {
+        false
     }
 
     /// Replaces the UI layer over the playing clip; a PNG whose alpha lets the
@@ -409,6 +428,10 @@ impl PanelDevice for Box<dyn PanelDevice> {
 
     fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {
         (**self).start_video(clip)
+    }
+
+    fn plays_video(&self) -> bool {
+        (**self).plays_video()
     }
 
     fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {

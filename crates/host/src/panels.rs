@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use yunari_library::Library;
-use yunari_model::document::ThemeDocument;
-use yunari_panels::manager::{DisplayRecord, FrameSource};
-use yunari_panels::{PanelShape, StillFormat, for_device};
+use yunari_model::document::{AssetKind, ThemeDocument};
+use yunari_panels::manager::{DisplayRecord, FrameSource, OverlaySource, VideoSource};
+use yunari_panels::runner::VideoClip;
+use yunari_panels::{PanelShape, StillFormat, VideoForm, for_device};
 use yunari_providers::registry::{Ask, Registry};
 use yunari_render::Fonts;
 use yunari_render_raster::{Images, Raster, fit_into};
@@ -50,6 +51,110 @@ impl PanelFrames {
         Arc::new(move |record, width, height, format| frames.frame(record, width, height, format))
     }
 
+    /// The clip resolver a manager hands each runner.
+    pub fn video_source(self: &Arc<Self>) -> VideoSource {
+        let frames = Arc::clone(self);
+        Arc::new(move |record| frames.video_clip(record))
+    }
+
+    /// The UI-only capture that rides over a playing clip.
+    pub fn overlay_source(self: &Arc<Self>) -> OverlaySource {
+        let frames = Arc::clone(self);
+        Arc::new(move |record, width, height| frames.overlay(record, width, height))
+    }
+
+    /// The encoded clip a display's theme plays itself, or `None` when the
+    /// theme has no video background. Anything that cannot be resolved is a
+    /// still panel rather than a failed one; only an encode failure is news.
+    pub fn video_clip(&self, record: &DisplayRecord) -> Result<Option<VideoClip>, String> {
+        let assignment = crate::assignment::Assignment::load(&self.settings_dir);
+        let Some(theme) = assignment.resolve(&self.library, &record.id, None) else {
+            return Ok(None);
+        };
+        let Some(document) = self.read_document(&theme) else {
+            return Ok(None);
+        };
+        let Some(media) = document.background.media.as_ref() else {
+            return Ok(None);
+        };
+        let Some(asset) = document
+            .assets
+            .iter()
+            .find(|asset| asset.id == media.asset_id)
+        else {
+            return Ok(None);
+        };
+        if asset.kind != AssetKind::Video {
+            return Ok(None);
+        }
+        let Some(bytes) = self
+            .library
+            .assets(&theme, &document)
+            .get(&asset.path)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let device = record
+            .device
+            .as_ref()
+            .ok_or_else(|| "That display names no panel.".to_owned())?;
+        let family = for_device(device.vendor_id, device.product_id)
+            .ok_or_else(|| "No driver on this host claims that panel.".to_owned())?;
+        let Some(form) = family.video else {
+            return Ok(None);
+        };
+
+        let shape = match family.shape {
+            PanelShape::Circle => yunari_render::video::PanelShape::Circle,
+            PanelShape::Rect => yunari_render::video::PanelShape::Rect,
+        };
+        let angle = record.rotation.unwrap_or(0);
+        let rotation = yunari_render::video::video_rotation(angle, shape)
+            .ok_or_else(|| yunari_render::video::turn_refusal(angle))?;
+        let box_ = (family.geometry.width as f32, family.geometry.height as f32);
+        let fill = yunari_render::plan::media_fill(&document, box_.0, box_.1);
+        let placement = yunari_render::video::placement_of(&document, shape, fill);
+        let encoder = crate::panel_video::Encoder::find()?;
+
+        let clip = match form {
+            VideoForm::StoredMp4 => VideoClip::Mp4(encoder.transcode_mp4(
+                &bytes,
+                &placement,
+                rotation,
+                &crate::panel_video::cache_dir(&self.settings_dir),
+            )?),
+            VideoForm::StreamH264 => {
+                let clip = encoder.encode_h264(&bytes, box_, &placement, rotation)?;
+                VideoClip::H264 {
+                    bytes: clip.h264,
+                    seconds: clip.seconds,
+                }
+            }
+        };
+        Ok(Some(clip))
+    }
+
+    /// The UI alone as a PNG, with the theme's background left out so the
+    /// playing clip shows through its transparency.
+    pub fn overlay(
+        &self,
+        record: &DisplayRecord,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, String> {
+        let Some(document) = self.document(record) else {
+            let plate = Raster {
+                width,
+                height,
+                rgba: vec![0; width as usize * height as usize * 4],
+            };
+            return encode(&plate, StillFormat::Png);
+        };
+        let raster = self.raster(&document, record, width, height, false)?;
+        encode(&raster, StillFormat::Png)
+    }
+
     /// One still for a record's panel.
     pub fn frame(
         &self,
@@ -79,6 +184,21 @@ impl PanelFrames {
         height: u32,
         format: StillFormat,
     ) -> Result<Vec<u8>, String> {
+        let raster = self.raster(document, record, width, height, true)?;
+        encode(&raster, format)
+    }
+
+    /// The document's pixels at the panel's size. `background` false leaves the
+    /// backdrop and its paint out, which is the UI a playing clip is seen
+    /// through.
+    fn raster(
+        &self,
+        document: &ThemeDocument,
+        record: &DisplayRecord,
+        width: u32,
+        height: u32,
+        background: bool,
+    ) -> Result<Raster, String> {
         let keys: Vec<String> = document
             .bindings
             .values()
@@ -102,7 +222,11 @@ impl PanelFrames {
             .fonts
             .lock()
             .map_err(|_| "The font cache is poisoned.")?;
-        let list = crate::frame::frame(document, &readings, &mut fonts);
+        let mut list = crate::frame::frame(document, &readings, &mut fonts);
+        if !background {
+            list.background = None;
+            list.backdrop = None;
+        }
         let round = record
             .device
             .as_ref()
@@ -113,7 +237,7 @@ impl PanelFrames {
             .images
             .lock()
             .map_err(|_| "The asset cache is poisoned.")?;
-        let raster = fit_into(
+        fit_into(
             &list,
             width,
             height,
@@ -121,8 +245,7 @@ impl PanelFrames {
             round,
             Some(&mut fonts),
             Some(&mut images),
-        )?;
-        encode(&raster, format)
+        )
     }
 
     /// One display's still as a PNG, the settings surface's preview.

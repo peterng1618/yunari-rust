@@ -25,6 +25,39 @@ pub const FAILURES_BEFORE_LOST: u32 = 3;
 /// One encoded still for the panel, from its own geometry.
 pub type Capture = Box<dyn Fn(u32, u32) -> Result<Vec<u8>, String> + Send + Sync>;
 
+/// The clip a device plays itself, in the form its decoder takes.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VideoClip {
+    Mp4(Vec<u8>),
+    H264 { bytes: Vec<u8>, seconds: f64 },
+}
+
+impl VideoClip {
+    fn borrowed(&self) -> crate::family::VideoClip<'_> {
+        match self {
+            Self::Mp4(bytes) => crate::family::VideoClip::Mp4(bytes),
+            Self::H264 { bytes, seconds } => crate::family::VideoClip::H264 {
+                bytes,
+                seconds: *seconds,
+            },
+        }
+    }
+}
+
+/// Resolves the clip a display's theme plays itself; `None` is a still panel.
+pub type ClipSource = Box<dyn Fn() -> Result<Option<VideoClip>, String> + Send + Sync>;
+
+/// One overlay capture: the UI alone, as a transparent PNG over the clip.
+pub type OverlaySource = Box<dyn Fn(u32, u32) -> Result<Vec<u8>, String> + Send + Sync>;
+
+/// Attempts at the device's video mode before the panel is a still panel.
+///
+/// A save of the assigned theme restarts the runner, and that race can make one
+/// clip start fail on a busy device. Three attempts span it and are bounded, so
+/// a clip the device really will not play costs three uploads, not an endless
+/// one.
+const VIDEO_ATTEMPTS_BEFORE_STILLS: u32 = 3;
+
 struct State {
     /// True while ticks are allowed; cleared the moment a stop is asked for.
     running: bool,
@@ -40,6 +73,16 @@ struct State {
     failures: u32,
     /// The frame the panel is holding, so an identical capture is not sent.
     last: Option<Vec<u8>>,
+    /// The clip not yet started, dropped once the device has it or refused it.
+    pending: Option<VideoClip>,
+    /// The device is playing the clip, so stop releases it.
+    playing: bool,
+    /// The overlay path still works; a refused overlay drops to stills.
+    overlay: bool,
+    start_failures: u32,
+    overlay_failures: u32,
+    /// The last overlay sent, so an unchanged UI is not sent again.
+    last_overlay: Option<Vec<u8>>,
 }
 
 pub struct Runner<D: PanelDevice> {
@@ -48,6 +91,10 @@ pub struct Runner<D: PanelDevice> {
     capture: Capture,
     interval_ms: u32,
     state: Mutex<State>,
+    /// The clip resolver and overlay capture, when this runner has a video
+    /// theme. Both are absent or both present.
+    video: Option<ClipSource>,
+    overlay: Option<OverlaySource>,
     /// Called for every failed capture or send.
     on_error: Box<dyn Fn(&str) + Send + Sync>,
     /// Called once when the device has refused three frames in a row — a lost
@@ -71,11 +118,27 @@ impl<D: PanelDevice> Runner<D> {
                 closed: false,
                 failures: 0,
                 last: None,
+                pending: None,
+                playing: false,
+                overlay: false,
+                start_failures: 0,
+                overlay_failures: 0,
+                last_overlay: None,
             }),
+            video: None,
+            overlay: None,
             on_error: Box::new(|_| {}),
             on_lost: Box::new(|_| {}),
             on_frame: Box::new(|| {}),
         }
+    }
+
+    /// Gives this runner a video theme: a clip it starts on the device and the
+    /// UI-only capture that rides over it.
+    pub fn with_video(mut self, video: ClipSource, overlay: OverlaySource) -> Self {
+        self.video = Some(video);
+        self.overlay = Some(overlay);
+        self
     }
 
     pub fn on_error(mut self, report: impl Fn(&str) + Send + Sync + 'static) -> Self {
@@ -171,7 +234,136 @@ impl<D: PanelDevice> Runner<D> {
     /// One capture, and one send only when the bytes moved.
     fn pass(&self) -> bool {
         let geometry = self.device.lock().expect("the panel").geometry();
-        let frame = match (self.capture)(geometry.width, geometry.height) {
+        if self.video.is_some() && self.device.lock().expect("the panel").plays_video() {
+            if self.video_pass(geometry.width, geometry.height) {
+                return true;
+            }
+            // While the overlay path is live an unchanged UI is the whole
+            // frame: a still would paint the theme's background over the clip.
+            // A failed start or a refused overlay has dropped out of it, and
+            // stills are then the honest fallback.
+            let active = {
+                let state = self.state.lock().expect("the runner state");
+                state.playing && state.overlay
+            };
+            if active {
+                return false;
+            }
+        }
+        self.still_pass(geometry.width, geometry.height)
+    }
+
+    /// Starts the clip when it is still pending, then sends only the UI over
+    /// it. Answers whether a frame went out; `false` falls through to stills.
+    fn video_pass(&self, width: u32, height: u32) -> bool {
+        let (playing, start_failures) = {
+            let state = self.state.lock().expect("the runner state");
+            (state.playing, state.start_failures)
+        };
+        let mut pending = self.state.lock().expect("the runner state").pending.take();
+        if pending.is_none() && !playing && start_failures < VIDEO_ATTEMPTS_BEFORE_STILLS {
+            match self.video.as_ref().map(|video| video()) {
+                Some(Ok(Some(clip))) => pending = Some(clip),
+                Some(Ok(None)) => {
+                    // No clip: the panel stays on stills and never retries.
+                    self.state.lock().expect("the runner state").start_failures =
+                        VIDEO_ATTEMPTS_BEFORE_STILLS;
+                    return false;
+                }
+                Some(Err(error)) => {
+                    (self.on_error)(&error);
+                    self.state.lock().expect("the runner state").start_failures =
+                        VIDEO_ATTEMPTS_BEFORE_STILLS;
+                    return false;
+                }
+                None => return false,
+            }
+        }
+        if let Some(clip) = pending {
+            match self
+                .device
+                .lock()
+                .expect("the panel")
+                .start_video(clip.borrowed())
+            {
+                Ok(()) => {
+                    let mut state = self.state.lock().expect("the runner state");
+                    state.playing = true;
+                    state.overlay = true;
+                    state.start_failures = 0;
+                    state.last_overlay = None;
+                }
+                Err(error) => {
+                    (self.on_error)(&error);
+                    let mut state = self.state.lock().expect("the runner state");
+                    state.start_failures += 1;
+                    // A refusal can be the restart the save just caused; only
+                    // a device that refuses every attempt lacks the mode.
+                    if state.start_failures < VIDEO_ATTEMPTS_BEFORE_STILLS {
+                        state.pending = Some(clip);
+                    }
+                }
+            }
+        }
+
+        let (playing, overlay) = {
+            let state = self.state.lock().expect("the runner state");
+            (state.playing, state.overlay)
+        };
+        if !playing || !overlay {
+            return false;
+        }
+        let Some(capture) = self.overlay.as_ref() else {
+            return false;
+        };
+        let frame = match capture(width, height) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.failed(&error);
+                return false;
+            }
+        };
+        if self
+            .state
+            .lock()
+            .expect("the runner state")
+            .last_overlay
+            .as_ref()
+            .is_some_and(|last| *last == frame)
+        {
+            return false;
+        }
+        match self
+            .device
+            .lock()
+            .expect("the panel")
+            .present_overlay(&frame)
+        {
+            Ok(()) => {
+                let mut state = self.state.lock().expect("the runner state");
+                state.failures = 0;
+                state.overlay_failures = 0;
+                state.last_overlay = Some(frame);
+                drop(state);
+                (self.on_frame)();
+                true
+            }
+            Err(error) => {
+                self.failed(&error);
+                let mut state = self.state.lock().expect("the runner state");
+                state.overlay_failures += 1;
+                // A video mode the device cannot compose: stills are the
+                // honest fallback, and the clip keeps playing underneath.
+                if state.overlay_failures >= VIDEO_ATTEMPTS_BEFORE_STILLS {
+                    state.overlay = false;
+                }
+                false
+            }
+        }
+    }
+
+    fn still_pass(&self, width: u32, height: u32) -> bool {
+        let frame = match (self.capture)(width, height) {
             Ok(frame) => frame,
             Err(error) => {
                 self.failed(&error);
@@ -258,14 +450,20 @@ impl<D: PanelDevice> Runner<D> {
             state.running = false;
         }
         self.wait_idle();
-        {
+        let playing = {
             let mut state = self.state.lock().expect("the runner state");
             if state.closed {
                 return Ok(());
             }
             state.closed = true;
-        }
+            state.playing
+        };
         let mut device = self.device.lock().expect("the panel");
+        // The clip belongs to the device, so it is stopped with it rather than
+        // left playing behind a port the next runner wants.
+        if playing {
+            device.stop_video();
+        }
         device.close()
     }
 }
@@ -284,6 +482,12 @@ mod tests {
         presents: Arc<Mutex<Vec<Vec<u8>>>>,
         closes: AtomicU32,
         fail_close: bool,
+        video: bool,
+        starts: Arc<Mutex<Vec<usize>>>,
+        overlays: Arc<Mutex<Vec<Vec<u8>>>>,
+        fail_starts: AtomicU32,
+        fail_overlays: AtomicU32,
+        stops: Arc<AtomicU32>,
     }
 
     impl FakePanel {
@@ -295,9 +499,25 @@ mod tests {
                     presents: Arc::clone(&presents),
                     closes: AtomicU32::new(0),
                     fail_close: false,
+                    video: false,
+                    starts: Arc::new(Mutex::new(Vec::new())),
+                    overlays: Arc::new(Mutex::new(Vec::new())),
+                    fail_starts: AtomicU32::new(0),
+                    fail_overlays: AtomicU32::new(0),
+                    stops: Arc::new(AtomicU32::new(0)),
                 },
                 presents,
             )
+        }
+
+        /// A panel whose decoder takes video, with what it was handed.
+        #[allow(clippy::type_complexity)]
+        fn video_panel() -> (Self, Arc<Mutex<Vec<usize>>>, Arc<Mutex<Vec<Vec<u8>>>>) {
+            let (mut panel, _) = Self::new();
+            panel.video = true;
+            let starts = Arc::clone(&panel.starts);
+            let overlays = Arc::clone(&panel.overlays);
+            (panel, starts, overlays)
         }
     }
 
@@ -321,6 +541,38 @@ mod tests {
 
         fn still_format(&self) -> StillFormat {
             StillFormat::Rgba
+        }
+
+        fn plays_video(&self) -> bool {
+            self.video
+        }
+
+        fn start_video(&mut self, clip: crate::family::VideoClip<'_>) -> Result<(), String> {
+            let bytes = match clip {
+                crate::family::VideoClip::Mp4(bytes) => bytes.len(),
+                crate::family::VideoClip::H264 { bytes, .. } => bytes.len(),
+            };
+            self.starts.lock().unwrap().push(bytes);
+            let left = self.fail_starts.load(Ordering::SeqCst);
+            if left > 0 {
+                self.fail_starts.store(left - 1, Ordering::SeqCst);
+                return Err("The panel refused the clip.".to_owned());
+            }
+            Ok(())
+        }
+
+        fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {
+            let left = self.fail_overlays.load(Ordering::SeqCst);
+            if left > 0 {
+                self.fail_overlays.store(left - 1, Ordering::SeqCst);
+                return Err("The panel refused the overlay.".to_owned());
+            }
+            self.overlays.lock().unwrap().push(png.to_vec());
+            Ok(())
+        }
+
+        fn stop_video(&mut self) {
+            self.stops.fetch_add(1, Ordering::SeqCst);
         }
 
         fn accepts(&self, kind: CommandKind) -> bool {
@@ -461,5 +713,62 @@ mod tests {
         // A control neither sends nor suppresses a frame.
         assert!(runner.tick());
         assert_eq!(presents.lock().unwrap().len(), 1);
+    }
+
+    fn video_runner(panel: FakePanel, overlay: Vec<u8>) -> Runner<FakePanel> {
+        Runner::new(panel, fixed(vec![9, 9]), DEFAULT_INTERVAL_MS).with_video(
+            Box::new(|| Ok(Some(VideoClip::Mp4(vec![1, 2, 3])))),
+            Box::new(move |_, _| Ok(overlay.clone())),
+        )
+    }
+
+    #[test]
+    fn a_clip_starts_once_and_an_unchanged_overlay_is_not_sent_twice() {
+        let (panel, starts, overlays) = FakePanel::video_panel();
+        let runner = video_runner(panel, vec![4, 5]);
+        // One tick resolves the clip, starts it and paints the UI over it.
+        assert!(runner.tick());
+        // The UI has not moved, so there is nothing left to send over it.
+        assert!(!runner.tick());
+        assert_eq!(*starts.lock().unwrap(), vec![3]);
+        assert_eq!(overlays.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_start_is_retried_three_times_then_left_to_stills() {
+        let (panel, starts, overlays) = FakePanel::video_panel();
+        panel.fail_starts.store(3, Ordering::SeqCst);
+        let runner = video_runner(panel, vec![4, 5]);
+        for _ in 0..5 {
+            runner.tick();
+        }
+        assert_eq!(starts.lock().unwrap().len(), 3);
+        assert!(overlays.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_refused_overlay_falls_back_to_stills_over_the_playing_clip() {
+        let (panel, starts, overlays) = FakePanel::video_panel();
+        panel.fail_overlays.store(3, Ordering::SeqCst);
+        let presents = Arc::clone(&panel.presents);
+        let runner = video_runner(panel, vec![4, 5]);
+        runner.tick();
+        runner.tick();
+        runner.tick();
+        runner.tick();
+        assert_eq!(starts.lock().unwrap().len(), 1);
+        assert!(overlays.lock().unwrap().is_empty());
+        assert!(!presents.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stopping_the_runner_stops_the_clip_before_it_closes() {
+        let (panel, _, _) = FakePanel::video_panel();
+        let stops = Arc::clone(&panel.stops);
+        let runner = video_runner(panel, vec![4]);
+        runner.tick();
+        runner.tick();
+        runner.stop().unwrap();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
     }
 }

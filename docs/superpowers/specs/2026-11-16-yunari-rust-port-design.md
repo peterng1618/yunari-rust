@@ -320,9 +320,9 @@ Recorded as each phase's exit is met, with the evidence that met it.
 - Deviation: phase 1 has no separate implementation plan document. The spec's
   phase table was used as the plan; tasks were scoped per render concern.
 - Deferred: video decode. The node and background report
-  `UnsupportedContent` rather than drawing a still without saying so. It lands
-  with the panel baking in phase 5, which needs the decoder first; the `media`
-  crate's seam is a frame-at-time reader so window and panel share it.
+  `UnsupportedContent` rather than drawing a still without saying so. Panel
+  baking (phase 5) took the `ffmpeg` sidecar route instead; in-window video
+  still wants the frame-at-time reader the `media` crate's seam describes.
 - Deferred: packed font faces (woff2) — system faces and TTF/OTF registration
   cover the fixture and the editor; woff2 needs a decompressor dependency.
 
@@ -583,9 +583,13 @@ Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-5-panels.md`.
 - One runner per display, newest-frame coalescing, three consecutive failures
   mark it lost and the manager retries; a command to a stopped display is the
   source's 409 sentence. Host routes are loopback-only and a phone gets 403.
-- Panel video (Lian Li blocks, TURZX MP4 upload and cache, overlays, Kraken
-  paletted mode B, the Chromium page rasteriser), SignalRGB and device telemetry
-  stay deferred — recorded in the plan's header note and below.
+- Panel video landed with the USB families: a theme's video background is baked
+  into the family's clip form (`ffmpeg` sidecar), the runner plays it once and
+  captures the UI over it without the background, Lian Li takes paced H.264
+  blocks and TURZX a cached uploaded MP4 with its diffed overlay. Kraken
+  paletted mode B, the Chromium page rasteriser and SignalRGB were the remaining
+  deferrals and have since landed (SignalRGB in phase 6, mode B below); the
+  page rasteriser stays deferred.
 - Not exercised: real hardware. Driver contracts are covered by protocol tests
   and the serial/sink seams; plugging each family in is a manual check.
 
@@ -694,7 +698,7 @@ recorded product decision.
 | 19 | Several monitors each showing a chosen theme | Met | A supervisor opens one fullscreen window per local display record on its monitor, replacing it when its assignment or the theme's bytes change; windows read the host's own provider registry |
 | 20 | Choose one GPU and one disk for this PC; a theme may answer a slot itself | Partial | `devices.json` holds the assignment and the names beside it, read on every poll. LHM's `gpu.*`, `vram.*` and `disk.*` keys scope to the assigned card or drive, and an assigned device the PC no longer reports is a gap rather than another device's figures; the baseline provider answers `disk.used`/`disk.total`/`disk.used.percent`/`disk.name` from the system drive (first reported when unassigned) and `disk.data.*` only once a data drive is assigned. Settings cycles the GPU, system disk and data drive from the devices the providers report. Ids are minted from the name each provider reports, as the source does; a stored choice also resolves by the name written beside it, so a file written under an older id still names its device |
 | 21 | USB panels: Lian Li 9.2"/8.8", TURZX 5", Kraken Z53/Z63/Z73 | Met | Still frames and controls (brightness, screen, restart, status, reset-device), one runner per display (phase 5) |
-| 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
+| 22 | Panel video, overlays, TURZX MP4 cache | Met | A theme whose background is a video is baked once into the family's clip form: the Lian Li panels take an H.264 elementary stream fed in 202,752-byte blocks with the device's own buffer-level check, and the TURZX takes an MP4 uploaded to `/mnt/SDCARD/video` and cached by the encoder's own key. The runner starts the clip once per display, retries a refused start three times, then leaves the panel on stills; while the clip plays it captures the UI with the theme's background left out, sends it as the panel's overlay layer (TURZX diffed against its own trailer, full repaint after a re-init) and sends nothing when the UI did not move. A refused overlay falls back to stills over the playing clip. The TURZX MP4 cache keys on the encoded bytes, so an unchanged theme is one file write and an edited one replaces its file. Deviation: encoding and transcoding use an `ffmpeg` sidecar found through `YUNARI_FFMPEG`, beside the executable, or on PATH (the source bundles its own); no bundled binary and no hash check |
 | 23 | Kraken paletted mode B | Met | A panel display stores the frame layout it is written in and the manager refuses one its family does not advertise. Mode B sends CAM's paletted stream: each frame is quantized to a 256-entry RGBA palette (5-bit histogram, median cut, exact channel means) plus one index per pixel, with Floyd–Steinberg diffusion, and streamed as a 103,424-byte payload in 101 slots; the bucket ring widens to 16, the cadence is 110 ms, and every frame deletes twice as CAM does. Mode A keeps the two-bucket RGBA ring at 140 ms. Settings offers the layout on any panel that advertises both |
 | 24 | Wallpaper Engine Workshop library and previews | Partial | The install is found from `HKCU\Software\Valve\Steam` (or the Program Files fallbacks) and proven by `bin/wallpaperui.exe`; every Steam library's `steamapps/workshop/content/431960` and `projects/myprojects` are named. `GET /api/wallpaper-engine` scans each item's `project.json` with `bin/workshopcache.json` as the title/tags/author source, resolves `scene.pkg` over a stale `scene.json`, counts refusals, and hides web wallpapers; `GET /api/wallpaper-engine/item/{id}/(preview|asset)` serves bytes only for a scanned id, with both paths folded and proven inside the item's own directory. Both routes are loopback-only. A scene package is opened through its own table to say whether it holds still (`stillAtRest`) and draws text (`hasText`); a model member that cannot be parsed leaves the scene unclassified rather than assumed still. A video's header proves its container (`mp4`, `webm`, `matroska`) and its `moov` box gives its length, so the byte route serves the sniffed type. The listing is answered from a settings-folder cache keyed by a fingerprint of everything the scan read (install, workshop cache, libraries, each descriptor and scene package), so an unchanged library is one pass of stats and any change re-scans. `POST /api/wallpaper-engine/item/{id}/project` writes a subscribed scene's package members under the engine's own `myprojects/<id>`, refuses a member name that could leave the project, rewrites the descriptor to `scene.json` with a `[yunari] ` title, copies the workshop preview, reuses an existing project, and removes only a directory it created; a scene's row in the Asset finder performs this. Gap: the mobile `.mpkg` import needs a video normalizer, which this build does not carry |
 | 25 | Steam presence and metadata | Met | The foreground game is named from Steam's local library plus Epic manifests, GOG registry keys, itch app folders and Xbox packages. A game no catalogue claims is looked up by executable name on the Steam store (app-only results, edition-insensitive comparison, `game-metadata.json` cache with a ten-minute failure backoff and 500 entries); its portrait is downloaded once and served from the settings folder. `game.artwork` prefers Steam's cached box art, then the store cover |
@@ -724,10 +728,9 @@ recorded product decision.
 | 49 | Deployed store Worker, D1 and R2 | External | Unchanged; this host only proxies whatever origin is configured |
 
 What this sweep changes: nothing in the port's behaviour. It records the gaps
-most likely to surprise a user coming from the source — no panel video (22) and
-no mobile package import (24) — and the
-deliberate deviations (native schema 1.0.0 in 33,
-the WASM player not needed in 40).
+most likely to surprise a user coming from the source — no mobile package
+import (24) — and the deliberate deviations (native schema 1.0.0 in 33, the
+WASM player not needed in 40, and the `ffmpeg` sidecar in 22).
 
 ## Performance (2026-11-16)
 

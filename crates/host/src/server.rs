@@ -100,9 +100,11 @@ pub fn app(config: HostConfig) -> Shared {
         settings.clone(),
     ));
     let manager = Arc::new(
-        yunari_panels::manager::Manager::new(frames.source()).on_error(|display, message| {
-            eprintln!("Panel {display}: {message}");
-        }),
+        yunari_panels::manager::Manager::new(frames.source())
+            .with_video(frames.video_source(), frames.overlay_source())
+            .on_error(|display, message| {
+                eprintln!("Panel {display}: {message}");
+            }),
     );
     // Before any panel opens, so a sender finds the seam as soon as the host
     // answers; the descriptor fills in as each device runs. A port already in

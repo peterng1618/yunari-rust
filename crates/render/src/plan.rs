@@ -160,6 +160,16 @@ fn resolve_background(
     Some(place_paint(spec, width, height, 1.0))
 }
 
+/// The media's own colour, resolved the way a frame resolves it, as the paint
+/// a panel clip's uncovered area fades into. `None` when the media declares
+/// none — the bake then keeps its plain black fill.
+pub fn media_fill(document: &ThemeDocument, width: f32, height: f32) -> Option<Paint> {
+    let value = document.background.media.as_ref()?.color.as_ref()?;
+    let mut issues = Vec::new();
+    let spec = resolve_paint(document, value, None, "background/media/color", &mut issues)?;
+    Some(place_paint(spec, width, height, 1.0))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn walk(
     document: &ThemeDocument,
