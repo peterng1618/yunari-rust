@@ -6,3 +6,4 @@ pub mod document;
 pub mod presets;
 pub mod source;
 pub mod validate;
+pub mod video;
