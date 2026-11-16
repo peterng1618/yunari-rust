@@ -66,6 +66,39 @@ pub fn insert(editor: &mut Editor, unit: &Unit, offset: f64) -> Result<String, S
     inserted.ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())
 }
 
+/// A package holding the selected top-level nodes and what travels with them.
+/// The tokens come from the whole theme, because a unit that names one must
+/// carry it.
+pub fn selection_package(editor: &Editor, ids: &[String]) -> Result<Vec<u8>, String> {
+    let document = editor.document();
+    let clipboard = clipboard::pick(document, ids).ok_or_else(|| EMPTY_UNIT_MESSAGE.to_owned())?;
+    let mut assets = BTreeMap::new();
+    let mut missing = Vec::new();
+    for declaration in &document.assets {
+        if !clipboard.assets.contains(&declaration.id) {
+            continue;
+        }
+        match editor.assets().get(&declaration.path) {
+            Some(bytes) => {
+                assets.insert(declaration.path.clone(), bytes.clone());
+            }
+            None => missing.push(declaration.path.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "A declared picture has no bytes to export: {}",
+            missing.join(", ")
+        ));
+    }
+    let mut unit = document.clone();
+    unit.nodes = clipboard.nodes;
+    unit.bindings = clipboard.bindings;
+    unit.assets
+        .retain(|declaration| clipboard.assets.contains(&declaration.id));
+    yunari_packs::write(&unit, &assets)
+}
+
 /// The id each package asset takes in this document: the one already holding
 /// the same path, or a fresh id when the document has never seen it.
 fn asset_ids(editor: &Editor, unit: &Unit) -> BTreeMap<String, String> {
@@ -213,6 +246,60 @@ mod tests {
         // One undo takes the second insertion away again.
         editor.undo();
         assert_eq!(editor.document().nodes.len(), 1);
+    }
+
+    #[test]
+    fn a_selection_exports_as_a_package_its_own_reader_accepts() {
+        let mut scene = document(Vec::new());
+        scene.id = "lab".to_owned();
+        scene.metadata.name = Some("Lab".to_owned());
+        scene.nodes = vec![
+            picture_node("card", "photo"),
+            rect("other", 0.0, 0.0, 4.0, 4.0),
+        ];
+        scene.assets = vec![AssetReference {
+            id: "photo".to_owned(),
+            kind: AssetKind::Image,
+            path: "assets/photo.png".to_owned(),
+            sha256: None,
+            source_url: None,
+            license: None,
+            family: None,
+            weight: None,
+            style: None,
+            format: None,
+            subset: None,
+        }];
+        let mut editor = Editor::new(scene);
+        editor.put_asset("assets/photo.png".to_owned(), vec![9, 8, 7]);
+        let bytes = selection_package(&editor, &["card".to_owned()]).expect("an export");
+        let pack = yunari_packs::read(&bytes).expect("its own reader");
+        assert_eq!(pack.name.as_deref(), Some("Lab"));
+        assert_eq!(pack.units.len(), 1);
+        let unit = &pack.units[0];
+        assert_eq!(unit.document.nodes.len(), 1);
+        assert_eq!(unit.document.nodes[0].id, "card");
+        assert_eq!(unit.assets.get("assets/photo.png"), Some(&vec![9, 8, 7]));
+        // A declared picture with no bytes is refused rather than shipped bare.
+        let mut editor = Editor::new(document(Vec::new()));
+        editor.edit(|document| {
+            document.assets = vec![AssetReference {
+                id: "photo".to_owned(),
+                kind: AssetKind::Image,
+                path: "assets/photo.png".to_owned(),
+                sha256: None,
+                source_url: None,
+                license: None,
+                family: None,
+                weight: None,
+                style: None,
+                format: None,
+                subset: None,
+            }];
+            document.nodes = vec![picture_node("card", "photo")];
+        });
+        let error = selection_package(&editor, &["card".to_owned()]).unwrap_err();
+        assert!(error.contains("assets/photo.png"), "{error}");
     }
 
     #[test]

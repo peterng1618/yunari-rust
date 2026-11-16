@@ -677,7 +677,7 @@ recorded product decision.
 | 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C; glass is a display-list op resolved by the raster backend |
 | 6 | Rectangular or circular artboard, disc cropping | Met | Model validation refuses a non-square circle artboard; raster and GPUI crop to the disc |
 | 7 | New theme blank or from a bundled starter template | Met | A new document starts from the built-in starter: the blank theme's tokens, a title and a clock bound to `time.now` |
-| 8 | Export a selection as `yunari-widget-package` | Deferred | The reader and installer are met; nothing writes a package back out |
+| 8 | Export a selection as `yunari-widget-package` | Met | `Ctrl+Shift+E` writes the selected top-level nodes as a package beside the library: one unit, assets with their digests, and the writer runs its own reader before handing the bytes on. The document inside is this build's native shape, so another editor reads it only once it reads that shape; a source-editor package still imports here |
 | 9 | Host-owned widget packs and path-preset list, `user:`/`pack:` refs, one-time browser migration | Partial | Packs are host-owned and installed per PC; the path-preset store, `user:`/`pack:` refs and the browser migration are not ported |
 | 10 | Starter theme and default widget pack as committed packages | Met | `yunari_packs::STARTER` is a committed package the host installs on an empty folder; the starter theme is built in Rust beside `blank()` |
 | 11 | Local-first theme library | Met | `yunari-library` writes `themes/<id>/theme.json` + `assets/`; source themes are lifted on read |

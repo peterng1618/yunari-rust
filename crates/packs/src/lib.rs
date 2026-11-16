@@ -13,7 +13,7 @@ pub const STARTER: &[u8] = include_bytes!("../assets/starter-card.yunari-widget-
 
 pub use installed::{InstalledPack, directory, install, installed};
 pub use package::{
-    MAX_ARCHIVE_BYTES, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_EXPANDED_BYTES, Pack, Unit, read,
+    MAX_ARCHIVE_BYTES, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_EXPANDED_BYTES, Pack, Unit, read, write,
 };
 
 #[cfg(test)]

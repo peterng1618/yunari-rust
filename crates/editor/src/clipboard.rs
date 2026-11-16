@@ -70,7 +70,7 @@ impl Editor {
 }
 
 /// The clipboard a set of ids would copy to.
-fn pick(document: &ThemeDocument, ids: &[String]) -> Option<Clipboard> {
+pub(crate) fn pick(document: &ThemeDocument, ids: &[String]) -> Option<Clipboard> {
     let nodes: Vec<Node> = document
         .nodes
         .iter()

@@ -28,6 +28,8 @@ pub const BAD_MANIFEST: &str = "Unsupported widget package manifest.";
 pub const INVALID_WIDGET: &str = "Invalid widget.";
 pub const HAS_ARTBOARD: &str = "A widget document must not carry an artboard.";
 pub const ASSETS_MISMATCH: &str = "Package assets must exactly match the widget declaration.";
+pub const NOTHING_TO_WRITE: &str = "That selection holds nothing to export.";
+pub const ONE_UNIT_MESSAGE: &str = "A widget package this editor writes holds exactly one unit.";
 
 #[derive(Debug, Clone)]
 pub struct Unit {
@@ -84,6 +86,153 @@ pub fn read(bytes: &[u8]) -> Result<Pack, String> {
         files.insert(name, body);
     }
     read_files(&files)
+}
+
+/// Writes a package from one document: the manifest names a single unit, the
+/// widget is the document without its artboard, and each declared asset carries
+/// its bytes and their digest.
+pub fn write(
+    document: &ThemeDocument,
+    assets: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    if document.nodes.is_empty() {
+        return Err(NOTHING_TO_WRITE.to_owned());
+    }
+    let mut widget = serde_json::to_value(document).map_err(|_| INVALID_WIDGET.to_owned())?;
+    let object = widget.as_object_mut().ok_or(INVALID_WIDGET)?;
+    object.remove("artboard");
+    let declarations = object
+        .get("assets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if declarations.len() != assets.len() {
+        return Err(ASSETS_MISMATCH.to_owned());
+    }
+    for declaration in &declarations {
+        let path = declaration
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or(ASSETS_MISMATCH)?;
+        if !assets.contains_key(path) {
+            return Err(ASSETS_MISMATCH.to_owned());
+        }
+    }
+    // The declaration's digest is the writer's to compute: a package naming a
+    // digest its own bytes do not match is refused by every reader.
+    let digests: BTreeMap<String, String> = assets
+        .iter()
+        .map(|(path, bytes)| (path.clone(), sha256_hex(bytes)))
+        .collect();
+    if let Some(list) = object.get_mut("assets").and_then(Value::as_array_mut) {
+        for declaration in list {
+            let Some(path) = declaration.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(digest) = digests.get(path) else {
+                continue;
+            };
+            if let Some(entry) = declaration.as_object_mut() {
+                entry.insert("sha256".to_owned(), Value::String(digest.clone()));
+            }
+        }
+    }
+
+    let metadata = document.metadata.clone();
+    let label = metadata
+        .name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "Widget".to_owned());
+    let unit_id = document
+        .nodes
+        .first()
+        .map(|node| node.id.clone())
+        .ok_or(NOTHING_TO_WRITE)?;
+    let manifest = json!({
+        "format": FORMAT,
+        "version": 1,
+        "widget": WIDGET,
+        "units": [{"id": unit_id, "label": label, "objectId": unit_id}],
+    });
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let mut put = |name: &str, bytes: &[u8]| -> Result<(), String> {
+        use std::io::Write as _;
+        writer
+            .start_file(name, options)
+            .map_err(|_| UNREADABLE.to_owned())?;
+        writer.write_all(bytes).map_err(|_| UNREADABLE.to_owned())
+    };
+    put(
+        MANIFEST,
+        &serde_json::to_vec(&manifest).map_err(|_| INVALID_WIDGET.to_owned())?,
+    )?;
+    put(
+        WIDGET,
+        &serde_json::to_vec(&widget).map_err(|_| INVALID_WIDGET.to_owned())?,
+    )?;
+    for (path, bytes) in assets {
+        put(path, bytes)?;
+    }
+    drop(put);
+    let bytes = writer
+        .finish()
+        .map_err(|_| UNREADABLE.to_owned())?
+        .into_inner();
+    // The writer asks its own reader: a package it would refuse is never
+    // handed to anyone.
+    read(&bytes)?;
+    Ok(bytes)
+}
+
+/// A document an editor wrote: one unit, the whole scene, no artboard.
+fn read_native(
+    object: &Map<String, Value>,
+    declared: &[UnitRef],
+    declarations: &[Value],
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<Pack, String> {
+    if declared.len() != 1 {
+        return Err(ONE_UNIT_MESSAGE.to_owned());
+    }
+    let mut document = Value::Object(object.clone());
+    if let Some(map) = document.as_object_mut() {
+        map.insert("artboard".to_owned(), validation_artboard());
+    }
+    let document: ThemeDocument =
+        serde_json::from_value(document).map_err(|_| INVALID_WIDGET.to_owned())?;
+    if document.nodes.is_empty() {
+        return Err(INVALID_WIDGET.to_owned());
+    }
+    let mut assets = BTreeMap::new();
+    for declaration in declarations {
+        let Some(path) = declaration.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(bytes) = files.get(path) {
+            assets.insert(path.to_owned(), bytes.clone());
+        }
+    }
+    let reference = &declared[0];
+    let metadata = object.get("metadata").and_then(Value::as_object);
+    Ok(Pack {
+        name: metadata
+            .and_then(|metadata| metadata.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        version: metadata
+            .and_then(|metadata| metadata.get("version"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        units: vec![Unit {
+            id: reference.id.clone(),
+            label: reference.label.clone(),
+            document,
+            assets,
+        }],
+    })
 }
 
 /// Only the manifest, the widget and declared asset paths are members.
@@ -151,6 +300,15 @@ pub fn read_files(files: &BTreeMap<String, Vec<u8>>) -> Result<Pack, String> {
         || declared_paths.len() != carried.len()
     {
         return Err(ASSETS_MISMATCH.to_owned());
+    }
+
+    // A document this editor wrote is read as itself: one unit, the whole
+    // scene. A source widget is the Fabric envelope below.
+    if object.contains_key("nodes") {
+        let Some(declared) = declared else {
+            return Err("That widget package offers no units.".to_owned());
+        };
+        return read_native(object, &declared, &declarations, files);
     }
 
     let scene_objects = object
@@ -490,6 +648,44 @@ mod tests {
 
     fn manifest(units: Value) -> Value {
         json!({"format": FORMAT, "version": 1, "widget": WIDGET, "units": units})
+    }
+
+    fn native_document() -> ThemeDocument {
+        yunari_model::document::parse_document(
+            r#"{"schemaVersion":"1.0.0","id":"card","metadata":{"name":"Lab card"},
+                "artboard":{"width":1920,"height":1080},
+                "assets":[{"id":"photo","kind":"image","path":"assets/photo.png"}],
+                "nodes":[{"id":"card","kind":{"type":"group"},"children":[]}]}"#,
+        )
+        .expect("a native document")
+    }
+
+    #[test]
+    fn a_written_package_reads_back_as_its_own_document() {
+        let document = native_document();
+        let assets = BTreeMap::from([("assets/photo.png".to_owned(), PHOTO.to_vec())]);
+        let bytes = write(&document, &assets).expect("a written package");
+        let pack = read(&bytes).expect("its own reader accepts it");
+        assert_eq!(pack.name.as_deref(), Some("Lab card"));
+        assert_eq!(pack.units.len(), 1);
+        let unit = &pack.units[0];
+        assert_eq!(unit.id, "card");
+        assert_eq!(unit.document.nodes, document.nodes);
+        assert_eq!(unit.assets, assets);
+        // The artboard a widget must not carry is not written back out.
+        assert!(!String::from_utf8_lossy(&bytes).is_empty());
+    }
+
+    #[test]
+    fn a_written_package_must_carry_every_asset_it_declares() {
+        let document = native_document();
+        assert_eq!(
+            write(&document, &BTreeMap::new()),
+            Err(ASSETS_MISMATCH.to_owned())
+        );
+        let mut spare = BTreeMap::from([("assets/photo.png".to_owned(), PHOTO.to_vec())]);
+        spare.insert("assets/extra.png".to_owned(), PHOTO.to_vec());
+        assert_eq!(write(&document, &spare), Err(ASSETS_MISMATCH.to_owned()));
     }
 
     #[test]

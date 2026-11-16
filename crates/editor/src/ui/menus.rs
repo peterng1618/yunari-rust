@@ -7,6 +7,7 @@ pub enum Command {
     Save,
     SaveAs,
     Export,
+    ExportWidget,
     Import,
     ImportAsset,
     Widgets,
@@ -47,12 +48,13 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::New,
         Self::Open,
         Self::Save,
         Self::SaveAs,
         Self::Export,
+        Self::ExportWidget,
         Self::Import,
         Self::ImportAsset,
         Self::Widgets,
@@ -99,6 +101,7 @@ impl Command {
             Self::Save => "Save",
             Self::SaveAs => "Save As…",
             Self::Export => "Export…",
+            Self::ExportWidget => "Export widget…",
             Self::Import => "Import…",
             Self::ImportAsset => "Import asset…",
             Self::Widgets => "Widgets…",
@@ -146,6 +149,7 @@ impl Command {
             Self::Save => "Ctrl+S",
             Self::SaveAs => "Ctrl+Shift+S",
             Self::Export => "Ctrl+E",
+            Self::ExportWidget => "Ctrl+Shift+E",
             Self::Import => "Ctrl+I",
             Self::ImportAsset => "Ctrl+Shift+I",
             Self::Widgets => "Ctrl+Shift+W",
@@ -198,6 +202,7 @@ impl Command {
             (true, false, "o") => Some(Self::Open),
             (true, false, "n") => Some(Self::New),
             (true, false, "e") => Some(Self::Export),
+            (true, true, "e") => Some(Self::ExportWidget),
             (true, false, "i") => Some(Self::Import),
             (true, true, "i") => Some(Self::ImportAsset),
             (true, true, "w") => Some(Self::Widgets),
@@ -268,6 +273,10 @@ mod tests {
         assert_eq!(
             Command::from_key("f", true, true, false),
             Some(Command::OpenDisplay)
+        );
+        assert_eq!(
+            Command::from_key("e", true, true, false),
+            Some(Command::ExportWidget)
         );
         assert_eq!(Command::from_key("s", false, false, false), None);
         assert_eq!(Command::from_key("q", true, false, false), None);

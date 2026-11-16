@@ -300,6 +300,7 @@ impl EditorWindow {
                 )));
             }
             Command::Export => self.export(),
+            Command::ExportWidget => self.export_widget(),
             Command::Import => {
                 self.overlay = Some(Overlay::Import(Prompt::new(
                     "Import package",
@@ -588,6 +589,25 @@ impl EditorWindow {
             .and_then(|bytes| std::fs::write(&path, bytes).map_err(|error| error.to_string()))
         {
             Ok(()) => self.status = Some(Status::ok(format!("Exported {}", path.display()))),
+            Err(error) => self.status = Some(Status::error(error)),
+        }
+    }
+
+    /// Writes the selected top-level nodes as a widget package beside the
+    /// library, where the host's pack folder can take it.
+    fn export_widget(&mut self) {
+        let ids = self.selection.ids().to_vec();
+        if ids.is_empty() {
+            self.status = Some(Status::error("Select the nodes to export first"));
+            return;
+        }
+        let path = widget_path(self.library.root(), self.editor.document());
+        match crate::widgets::selection_package(&self.editor, &ids)
+            .and_then(|bytes| std::fs::write(&path, bytes).map_err(|error| error.to_string()))
+        {
+            Ok(()) => {
+                self.status = Some(Status::ok(format!("Exported {}", path.display())));
+            }
             Err(error) => self.status = Some(Status::error(error)),
         }
     }
@@ -2853,6 +2873,17 @@ fn export_path(root: &Path, document: &ThemeDocument) -> PathBuf {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
     home.unwrap_or(root).join(format!("{name}.yunari-theme"))
+}
+
+/// Where an exported widget goes: beside the library, named after the theme.
+fn widget_path(root: &Path, document: &ThemeDocument) -> PathBuf {
+    let name = slug(&document.metadata.name.clone().unwrap_or_default())
+        .unwrap_or_else(|| document.id.clone());
+    let home = root
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    home.unwrap_or(root)
+        .join(format!("{name}.yunari-widget-package"))
 }
 
 fn now_ms() -> u64 {
