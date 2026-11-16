@@ -17,6 +17,7 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::*;
+use yunari_host::http::Shared;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
     Artboard, ArtboardShape, Background, Binding, ChartContent, ChartFamily, ContentFit,
@@ -188,10 +189,12 @@ pub struct EditorWindow {
     /// How far the inspector's rows are pushed up, since gpui-kit has no
     /// scroll container of its own.
     inspector_scroll: f32,
+    /// The running host, when this editor is attached to one.
+    host: Option<Shared>,
 }
 
 impl EditorWindow {
-    fn new(library: Library, cx: &mut Context<Self>) -> Self {
+    fn new(library: Library, host: Option<Shared>, cx: &mut Context<Self>) -> Self {
         let document = starter();
         let mut fonts = Fonts::new();
         let (list, issues) = yunari_render::build(&document, &mut fonts);
@@ -234,6 +237,7 @@ impl EditorWindow {
             space_held: false,
             polling: false,
             inspector_scroll: 0.0,
+            host,
         }
     }
 
@@ -304,7 +308,11 @@ impl EditorWindow {
                 )));
             }
             Command::Settings => {
-                self.overlay = Some(Overlay::Settings(SettingsDialog::new(self.settings_dir())));
+                let monitors = settings_dialog::monitor_rows(self.host.as_ref(), cx);
+                self.overlay = Some(Overlay::Settings(SettingsDialog::new(
+                    self.settings_dir(),
+                    monitors,
+                )));
             }
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
@@ -601,6 +609,63 @@ impl EditorWindow {
     }
 
     /// Where the host keeps the widget packs this PC has installed.
+    /// Turns one monitor into a display record, or takes the record away. The
+    /// app's supervisor opens and closes the window; this only edits the state.
+    fn toggle_monitor(&mut self, uuid: &str, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
+                dialog.message = Some("This window is not attached to a host.".to_owned());
+            }
+            cx.notify();
+            return;
+        };
+        let Ok(mut displays) = host.displays.lock() else {
+            return;
+        };
+        let held = displays
+            .list()
+            .iter()
+            .find(|record| {
+                record.kind == yunari_host::displays::DisplayKind::Local
+                    && record.monitor.as_deref() == Some(uuid)
+            })
+            .map(|record| record.id.clone());
+        let message = match held {
+            Some(id) => {
+                displays.remove(&id);
+                "That monitor no longer shows a theme.".to_owned()
+            }
+            None => {
+                let label = self
+                    .overlay_settings_monitor_label(uuid)
+                    .unwrap_or_else(|| "Monitor".to_owned());
+                match displays.adopt_local(&label, Some(uuid.to_owned()), None, None) {
+                    Ok(record) => format!("That monitor shows theme {}.", record.label),
+                    Err(refusal) => refusal.0,
+                }
+            }
+        };
+        drop(displays);
+        let monitors = settings_dialog::monitor_rows(Some(&host), cx);
+        if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
+            dialog.monitors = monitors;
+            dialog.message = Some(message);
+        }
+        cx.notify();
+    }
+
+    /// The label the settings row shows for a monitor uuid.
+    fn overlay_settings_monitor_label(&self, uuid: &str) -> Option<String> {
+        let Overlay::Settings(dialog) = self.overlay.as_ref()? else {
+            return None;
+        };
+        dialog
+            .monitors
+            .iter()
+            .find(|monitor| monitor.uuid == uuid)
+            .map(|monitor| monitor.label.clone())
+    }
+
     /// Where this PC's host keeps its settings, which the app shares.
     fn settings_dir(&self) -> PathBuf {
         yunari_host::config::HostConfig::resolve(None, None, false).settings_dir()
@@ -2799,6 +2864,12 @@ fn now_ms() -> u64 {
 
 /// Opens the editor window on this PC's theme library.
 pub fn open(cx: &mut App) {
+    open_with(None, cx);
+}
+
+/// The editor attached to a running host, so its settings and display records
+/// are the ones the host serves.
+pub fn open_with(host: Option<Shared>, cx: &mut App) {
     let library = Library::new(default_root());
     open_window(
         WindowOptions {
@@ -2814,7 +2885,7 @@ pub fn open(cx: &mut App) {
             ..Default::default()
         },
         cx,
-        move |_, cx| cx.new(|cx| EditorWindow::new(library, cx)),
+        move |_, cx| cx.new(|cx| EditorWindow::new(library, host, cx)),
     )
     .expect("failed to open the editor window");
 }

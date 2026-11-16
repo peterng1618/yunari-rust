@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::*;
@@ -39,9 +40,30 @@ struct Stage {
     polling: bool,
 }
 
+/// The providers a window reads when nobody hands it a richer registry.
+fn base_registry() -> Arc<Registry> {
+    let mut registry = Registry::new();
+    registry.add(ClockProvider::new());
+    registry.add(SystemProvider::new());
+    Arc::new(registry)
+}
+
 impl Stage {
-    /// The theme at `path`, or the fixture.
+    /// The theme at `path`, or the fixture. A refused theme ends the process:
+    /// a window with nothing to paint is not what a launched player asked for.
     fn new(path: Option<&Path>) -> Self {
+        match Self::try_new(path, base_registry()) {
+            Ok(stage) => stage,
+            Err(error) => {
+                eprintln!("theme refused: {error}");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    /// The theme at `path` read through `registry`, so a monitor shows the same
+    /// readings the host serves rather than clock and system alone.
+    fn try_new(path: Option<&Path>, registry: Arc<Registry>) -> Result<Self, String> {
         let json = path
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_else(|| FIXTURE.to_owned());
@@ -50,16 +72,8 @@ impl Stage {
             None => Images::empty(),
         };
         let mut fonts = Fonts::new();
-        let document = match yunari_model::document::parse_document(&json) {
-            Ok(document) => document,
-            Err(error) => {
-                eprintln!("theme refused: {error}");
-                std::process::exit(2);
-            }
-        };
-        let mut registry = Registry::new();
-        registry.add(ClockProvider::new());
-        registry.add(SystemProvider::new());
+        let document =
+            yunari_model::document::parse_document(&json).map_err(|error| error.to_string())?;
         let mut sampler = Sampler::new(registry);
         // Ask once for exactly the keys this theme's value runs name.
         sampler.request("window", yunari_render::reading::wanted_keys(&document));
@@ -67,7 +81,7 @@ impl Stage {
         let (list, issues) =
             yunari_render::build_with(&document, &mut fonts, &Readings::default(), &preferences);
         report(&issues, &[]);
-        Self {
+        Ok(Self {
             document,
             list,
             images: Rc::new(RefCell::new(images)),
@@ -77,7 +91,7 @@ impl Stage {
             preferences,
             issues,
             polling: false,
-        }
+        })
     }
 
     /// Polls when the sampler says a poll is due, and rebuilds the frame.
@@ -159,16 +173,50 @@ impl Render for Stage {
 /// Opens the live window for a theme file, or for the fixture when no path is
 /// given.
 pub fn open(path: Option<&Path>, cx: &mut App) {
-    open_at(path, None, cx);
+    open_at(path, None, None, cx).unwrap_or_else(|| panic!("failed to open the Yunari window"));
 }
 
 /// Opens a live window fullscreen on `monitor` (a platform display uuid), or
 /// on the primary display when no monitor is named.
 pub fn open_fullscreen(path: Option<&Path>, monitor: Option<&str>, cx: &mut App) {
-    open_at(path, Some(monitor), cx);
+    open_at(path, Some(monitor), None, cx)
+        .unwrap_or_else(|| panic!("failed to open the Yunari window"));
 }
 
-fn open_at(path: Option<&Path>, monitor: Option<Option<&str>>, cx: &mut App) {
+/// A monitor window a host drives: its theme and the readings it names come
+/// from the host, and the handle is returned so a supervisor can close it when
+/// the display changes.
+pub fn open_supervised(
+    registry: Arc<Registry>,
+    path: Option<&Path>,
+    monitor: Option<&str>,
+    cx: &mut App,
+) -> Option<AnyWindowHandle> {
+    open_at(path, Some(monitor), Some(registry), cx)
+}
+
+/// Places the window on a monitor, or centres a small one when none is named.
+fn open_at(
+    path: Option<&Path>,
+    monitor: Option<Option<&str>>,
+    registry: Option<Arc<Registry>>,
+    cx: &mut App,
+) -> Option<AnyWindowHandle> {
+    // A monitored window that cannot read its theme says so and opens nothing:
+    // a fixture on a wall would be a lie the author cannot see.
+    if registry.is_some()
+        && let Some(path) = path
+        && let Err(error) = std::fs::read_to_string(path)
+            .map_err(|error| error.to_string())
+            .and_then(|json| {
+                yunari_model::document::parse_document(&json)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+    {
+        eprintln!("{}: {error}", path.display());
+        return None;
+    }
     let path: Option<PathBuf> = path.map(Path::to_path_buf);
     let bounds = match monitor {
         None => WindowBounds::Windowed(Bounds::centered(None, size(px(640.0), px(380.0)), cx)),
@@ -200,7 +248,15 @@ fn open_at(path: Option<&Path>, monitor: Option<Option<&str>>, cx: &mut App) {
             ..Default::default()
         },
         cx,
-        move |_, cx| cx.new(|_| Stage::new(path.as_deref())),
+        move |_, cx| {
+            cx.new(|_| match registry {
+                Some(registry) => {
+                    Stage::try_new(path.as_deref(), registry).unwrap_or_else(|_| Stage::new(None))
+                }
+                None => Stage::new(path.as_deref()),
+            })
+        },
     )
-    .expect("failed to open the Yunari window");
+    .ok()
+    .map(|(handle, _)| handle)
 }

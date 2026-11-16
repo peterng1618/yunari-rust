@@ -643,6 +643,24 @@ fresh so two insertions stay distinct and undo removes the second.
 Not ported: writing a package back out (row 8), the path-preset store and
 `user:`/`pack:` refs (row 9).
 
+## Monitor windows (2026-11-16)
+
+The host records a local display per monitor (`display-clients.json`); the app
+keeps one fullscreen player window per record, fullscreen on the monitor uuid
+the record names, painting the theme its assignment resolves to. The window is
+replaced when the assignment or the theme file's stamp changes, closed when the
+record goes, and reads through the host's provider registry rather than its own
+clock-and-system pair. Settings lists what GPUI sees and toggles a monitor's
+record, so the loop is reachable without editing files.
+
+The shared registry meant widening the seam: `Sampler::new` takes anything that
+converts into `Arc<Registry>`, and the player's `Stage` gained a registry-taking
+constructor with a fallible load, so a supervised window with an unreadable
+theme opens nothing instead of exiting the app.
+
+Not ported: the tray menu, and an HTTP endpoint that lists monitors (the
+enumeration lives in the editor shell, where GPUI owns it).
+
 ## Parity sweep against `product.md` (2026-11-16)
 
 Every capability `docs/product.md` names, with what this port does today. "Met"
@@ -670,7 +688,7 @@ recorded product decision.
 | 16 | Frame metrics from RTSS or PresentMon | Met | RTSS shared memory first, PresentMon ETW fallback, rolling 60 s window |
 | 17 | GPU counters and vendor APIs | Deferred | `gpu.*` is read from LHM only; no vendor SDK path |
 | 18 | Missing readings stay missing | Met | `Reading::missing` with a reason; the dash is never a zero |
-| 19 | Several monitors each showing a chosen theme | Met | Assignment + native player window per display, fullscreen, mixed-DPI fit |
+| 19 | Several monitors each showing a chosen theme | Met | A supervisor opens one fullscreen window per local display record on its monitor, replacing it when its assignment or the theme's bytes change; windows read the host's own provider registry |
 | 20 | Choose one GPU and one disk for this PC; a theme may answer a slot itself | Deferred | No device-choice settings surface yet; providers read what they find |
 | 21 | USB panels: Lian Li 9.2"/8.8", TURZX 5", Kraken Z53/Z63/Z73 | Met | Still frames and controls (brightness, screen, restart, status, reset-device), one runner per display (phase 5) |
 | 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
@@ -695,7 +713,7 @@ recorded product decision.
 | 41 | Editor at `/editor`, `/settings` forwarded to it | Dropped | The native editor replaces both served surfaces (this spec) |
 | 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
 | 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones and autostart. Publish, the store account, sensor-provider and display settings panels, and the asset finder are not ported |
-| 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Autostart is in Settings. There is no tray menu and no monitor enumeration API |
+| 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Settings lists this PC's monitors and turns each into a display record. Autostart is there too. There is no tray menu and no HTTP monitor enumeration |
 | 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the stdio launcher and skill installer are deferred |
 | 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |
 | 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |

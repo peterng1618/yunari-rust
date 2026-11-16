@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use gpui_kit::*;
 use yunari_host::config::HostConfig;
+use yunari_host::http::Shared;
 use yunari_host::lock::HostLock;
+
+mod displays;
 
 /// How often the host looks for a changed phone setting. A flip rebinds the
 /// listener, so the switch takes effect without restarting the app.
@@ -13,16 +16,20 @@ const SETTING_CHECK: Duration = Duration::from_secs(1);
 
 /// The host runs on its own thread for as long as the app does. A second app
 /// over the same folder keeps its editor and prints why its host did not start.
-fn start_host() {
+fn start_host() -> Option<Shared> {
     let config = HostConfig::resolve(None, None, false);
     let settings = config.settings_dir();
     let lock = match HostLock::acquire(&settings, config.port) {
         Ok(lock) => lock,
         Err(held) => {
             eprintln!("{}", held.message());
-            return;
+            return None;
         }
     };
+    // The app is built once and shared with the main thread, so the records a
+    // monitor window follows are the same records the host writes.
+    let app = yunari_host::server::app(config);
+    let shared = app.clone();
     std::thread::spawn(move || {
         let _lock = lock;
         let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -38,10 +45,7 @@ fn start_host() {
         runtime.block_on(async move {
             let mut lan = yunari_host::hosting::Hosting::load(&settings).lan;
             loop {
-                let mut config = config.clone();
-                config.lan = lan;
-                let app = yunari_host::server::app(config);
-                let server = match yunari_host::server::start(app, lan).await {
+                let server = match yunari_host::server::start(app.clone(), lan).await {
                     Ok(server) => server,
                     Err(error) => {
                         eprintln!("{error}");
@@ -69,6 +73,7 @@ fn start_host() {
             }
         });
     });
+    Some(shared)
 }
 
 /// `yunari-app [theme.json]` plays a theme; with no theme it opens the editor.
@@ -78,10 +83,13 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             init(cx);
-            start_host();
+            let host = start_host();
+            if let Some(app) = &host {
+                displays::supervise(app.clone(), cx);
+            }
             match path.as_deref() {
                 Some(path) => yunari_player::open(Some(path), cx),
-                None => yunari_editor::open(cx),
+                None => yunari_editor::open_with(host, cx),
             }
         });
 }

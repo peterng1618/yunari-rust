@@ -1,6 +1,7 @@
 //! When a poll happens: on a cadence, for the union of what displays asked.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::registry::{Ask, Cycle, Registry};
 
@@ -13,7 +14,9 @@ pub const DEFAULT_CADENCE_MS: u64 = 1_000;
 /// running: the borrow of `&mut self` ends only when the poll does. A caller
 /// that wants polls off its own thread drives one sampler from one thread.
 pub struct Sampler {
-    registry: Registry,
+    /// Shared, so one window's sampler and the host read the same providers
+    /// rather than each opening its own copy of the machine.
+    registry: Arc<Registry>,
     cadence_ms: u64,
     requests: BTreeMap<String, BTreeSet<String>>,
     last_poll_ms: Option<u64>,
@@ -22,9 +25,9 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: impl Into<Arc<Registry>>) -> Self {
         Self {
-            registry,
+            registry: registry.into(),
             cadence_ms: DEFAULT_CADENCE_MS,
             requests: BTreeMap::new(),
             last_poll_ms: None,
