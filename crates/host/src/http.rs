@@ -45,6 +45,8 @@ pub struct App {
     pub account: crate::store_routes::Account,
     /// Provider credentials, sealed by the OS protector.
     pub credentials: crate::credentials::Credentials,
+    /// Theme drafts the agent surface composes before a save.
+    pub drafts: Mutex<crate::drafts::Drafts>,
 }
 
 pub type Shared = Arc<App>;

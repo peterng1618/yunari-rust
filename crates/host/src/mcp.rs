@@ -23,7 +23,7 @@ pub const NO_AGENTS: &str = "The agent surface is available on this PC only.";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 fn tools() -> Value {
-    json!([
+    let mut list = json!([
         {
             "name": "themes_list",
             "description": "List the themes in this host's library.",
@@ -64,7 +64,12 @@ fn tools() -> Value {
             "description": "List the sensor providers and why any of them is unavailable.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         }
-    ])
+    ]);
+    if let (Some(list), Value::Array(compose)) = (list.as_array_mut(), crate::mcp_compose::tools())
+    {
+        list.extend(compose);
+    }
+    list
 }
 
 pub async fn post(
@@ -115,6 +120,12 @@ fn call(app: &Shared, params: &Value) -> Result<Value, (i64, &'static str)> {
         return Err((-32602, "Invalid params."));
     };
     let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+    if let Some(result) = crate::mcp_compose::call(app, name, &arguments) {
+        return Ok(match result {
+            Ok(value) => text(&value.to_string(), false),
+            Err(message) => text(&message, true),
+        });
+    }
     let answer = match name {
         "themes_list" => {
             let themes: Vec<Value> = app
@@ -237,6 +248,12 @@ mod tests {
             "monitors_list",
             "path_presets_list",
             "providers_list",
+            "create_theme",
+            "save_theme",
+            "add_text",
+            "add_shape",
+            "import_asset",
+            "list_objects",
         ] {
             assert!(declared.contains(name), "{name} is not declared");
         }

@@ -22,11 +22,11 @@ use gpui_kit::*;
 use yunari_host::http::Shared;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
-    Artboard, ArtboardShape, Background, Binding, ChartContent, ChartFamily, ContentFit,
-    ImageContent, ImageFit, Metadata, Node, NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap,
+    ChartContent, ChartFamily, ImageContent, ImageFit, Node, NodeKind, StyleLiteral, StyleMap,
     StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform,
-    TypeToken, TypeWeight, VerticalAlign,
+    VerticalAlign,
 };
+use yunari_model::presets::starter;
 use yunari_providers::clock::ClockProvider;
 use yunari_providers::registry::Registry;
 use yunari_providers::sampler::Sampler;
@@ -2859,136 +2859,6 @@ impl Render for EditorWindow {
     }
 }
 
-/// The theme a new document starts from: a title and a clock reading live, so
-/// the first frame shows a working value rather than an empty board. The tokens
-/// are the source editor's blank theme.
-fn starter() -> ThemeDocument {
-    let mut document = blank();
-    let mut title = text_node(&document);
-    title.id = free_id(&document, "title");
-    title.transform = Transform {
-        x: 96.0,
-        y: 88.0,
-        width: 720.0,
-        height: 80.0,
-        ..Transform::default()
-    };
-    if let NodeKind::Text { content } = &mut title.kind {
-        content.runs = vec![TextRun::Literal {
-            text: "Untitled".to_owned(),
-            type_token: "typeTokens.heading".to_owned(),
-            style: style_with_fill("#e8e8ea"),
-        }];
-    }
-    document.nodes.push(title);
-
-    let mut clock = text_node(&document);
-    clock.id = free_id(&document, "clock");
-    clock.transform = Transform {
-        x: 96.0,
-        y: 176.0,
-        width: 360.0,
-        height: 96.0,
-        ..Transform::default()
-    };
-    if let NodeKind::Text { content } = &mut clock.kind {
-        content.runs = vec![TextRun::Value {
-            binding_id: "clock-value".to_owned(),
-            precision: None,
-            unit_display: None,
-            type_token: "typeTokens.heading".to_owned(),
-            style: style_with_fill("#ecf5ff"),
-        }];
-    }
-    let clock_id = clock.id.clone();
-    document.nodes.push(clock);
-    document.bindings.insert(
-        clock_id,
-        vec![Binding {
-            id: "clock-value".to_owned(),
-            semantic_key: "time.now".to_owned(),
-            precision: None,
-            unit_display: None,
-            scale: None,
-            offset: None,
-            unit: None,
-            auto_scale: None,
-            format: None,
-            time_zone: None,
-        }],
-    );
-    document
-}
-
-/// The tokens and artboard a new document shares, matching the source editor's
-/// blank theme: the three role tokens and the eight paint tokens every card
-/// expects, on a 1920 x 1080 artboard.
-fn blank() -> ThemeDocument {
-    let mut type_tokens = BTreeMap::new();
-    for (id, family, weight) in [
-        ("heading", "Segoe UI, sans-serif", 600.0),
-        ("body", "Segoe UI, sans-serif", 400.0),
-        ("mono", "Consolas, monospace", 400.0),
-    ] {
-        type_tokens.insert(
-            id.to_owned(),
-            TypeToken {
-                family: family.to_owned(),
-                weight: Some(TypeWeight::Number(weight)),
-                face: None,
-            },
-        );
-    }
-    let mut palette = BTreeMap::new();
-    for (id, name, colour) in [
-        ("none", "None", "#00000000"),
-        ("text", "Text", "#ecf5ff"),
-        ("dim", "Muted text", "#a8bed0"),
-        ("panel", "Panel", "#081523d9"),
-        ("frost", "Frosted panel", "#0815234d"),
-        ("panelStroke", "Panel outline", "#9fc7e52b"),
-        ("rule", "Rule", "#7dbde0"),
-        ("chartTrack", "Chart track", "#223047"),
-    ] {
-        palette.insert(
-            id.to_owned(),
-            PaletteEntry {
-                name: name.to_owned(),
-                value: Paint::Solid {
-                    color: colour.to_owned(),
-                },
-            },
-        );
-    }
-    ThemeDocument {
-        schema_version: "1.0.0".to_owned(),
-        id: "untitled".to_owned(),
-        metadata: Metadata {
-            name: Some("Untitled".to_owned()),
-            ..Metadata::default()
-        },
-        artboard: Artboard {
-            width: 1920.0,
-            height: 1080.0,
-            content_fit: ContentFit::Contain,
-            shape: ArtboardShape::Rect,
-        },
-        background: Background {
-            mode: Default::default(),
-            color: Some(StyleValue::Ref(StyleRef {
-                r#ref: "palette.chartTrack".to_owned(),
-            })),
-            media: None,
-        },
-        palette,
-        type_tokens,
-        assets: Vec::new(),
-        nodes: Vec::new(),
-        bindings: BTreeMap::new(),
-        editor_metadata: BTreeMap::new(),
-    }
-}
-
 /// Where a new node goes: inset from the edge, each add stepping further so a
 /// second node is visible rather than hidden under the first.
 fn place(document: &ThemeDocument, width: f64, height: f64) -> Transform {
@@ -3505,10 +3375,12 @@ fn window_for(host: Option<Shared>, command: Option<Command>, cx: &mut App) -> A
 mod tests {
     // Named imports, not the module glob: GPUI exports its own `test`
     // attribute, and a glob would shadow the built-in one.
+    use yunari_model::presets::blank;
+
     use super::{
-        INSET, Node, NodeKind, Path, STEP, StyleMap, TextRun, ThemeDocument, Transform, blank,
-        chart_node, export_path, free_id, image_node, images_for, line_node, place, rectangle_node,
-        slug, starter, suggested_id,
+        INSET, Node, NodeKind, Path, STEP, StyleMap, TextRun, ThemeDocument, Transform, chart_node,
+        export_path, free_id, image_node, images_for, line_node, place, rectangle_node, slug,
+        starter, suggested_id,
     };
 
     #[test]

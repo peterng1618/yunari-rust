@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 #![forbid(unsafe_code)]
 //! The display host: TLS, pairing, samples and displays.
 
@@ -6,12 +7,14 @@ pub mod autostart;
 pub mod config;
 pub mod credentials;
 pub mod displays;
+pub mod drafts;
 pub mod frame;
 pub mod hosting;
 pub mod http;
 pub mod identity;
 pub mod lock;
 pub mod mcp;
+pub mod mcp_compose;
 pub mod monitors;
 pub mod origins;
 pub mod packs_routes;

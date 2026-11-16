@@ -109,6 +109,7 @@ pub fn app(config: HostConfig) -> Shared {
         store,
         account,
         credentials: crate::credentials::Credentials::at(&settings),
+        drafts: std::sync::Mutex::new(crate::drafts::Drafts::default()),
         identity: crate::identity::HostIdentity::load_or_mint(&settings),
         displays: std::sync::Mutex::new(crate::displays::DisplayStore::load(&settings)),
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),
