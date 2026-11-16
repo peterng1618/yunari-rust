@@ -114,15 +114,17 @@
 ### Task 7: Game catalogue (Steam)
 
 **Files:**
-- Create: `crates/providers/src/game/{mod.rs,steam.rs,catalogue.rs}`
+- Create: `crates/providers/src/game/{mod.rs,script.rs,steam.rs,vdf.rs}`, `crates/providers/src/winps.rs` (the one PowerShell runner both helpers use)
+- Modify: `crates/host/src/{server.rs,pages.rs,http.rs}`
 - Test: same files
 
 **Interfaces:**
-- Produces: `game.name`, `game.appid`, `game.started` from the foreground executable matched against `libraryfolders.vdf` + app manifests; box art is a library asset path, never a network fetch.
+- Produces: `game.name`, `game.artwork`, `game.running`, `game.app`; the source's foreground-window PowerShell script; a Valve KeyValues reader (`vdf::parse`); `steam::{root, libraries, apps, manifest, app_for, box_art}` from `libraryfolders.vdf` + `appmanifest_*.acf`; `GET /api/game/artwork/{app_id}` serving only a cover Steam cached locally.
+- Deferred: the launcher catalogues (Epic/GOG/Itch/Xbox/AppX), the engine-window classifier and the store metadata lookup — so a game Steam did not install is `missing`, and `game.running` falls back to the D3D-fullscreen signal only.
 
-- [ ] Test: the manifest parse finds `appid` and `name` from a fixture `appmanifest_*.acf`.
-- [ ] Test: an unknown foreground executable answers `missing`, not the last game.
-- [ ] Commit.
+- [x] Test: the manifest parse finds `appid` and `name` from a fixture `appmanifest_*.acf`.
+- [x] Test: an unknown foreground executable answers `missing`, not the last game.
+- [x] Commit.
 
 ### Task 8: Store client, MCP and SignalRGB bridge
 

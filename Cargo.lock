@@ -8963,6 +8963,7 @@ dependencies = [
  "sha2 0.11.1",
  "sysinfo 0.40.3",
  "ureq",
+ "winreg",
  "yunari-rtss",
 ]
 

@@ -9,6 +9,7 @@
 pub mod clock;
 pub mod custom;
 pub mod frame;
+pub mod game;
 pub mod http;
 pub mod lhm;
 pub mod media;
@@ -20,3 +21,4 @@ pub mod system;
 pub mod units;
 pub mod vocabulary;
 pub mod weather;
+pub mod winps;

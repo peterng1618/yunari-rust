@@ -11,10 +11,7 @@
 
 /// The largest raw image whose base64 JSON line still fits the line buffer:
 /// 4/3 expansion plus room for the envelope, derived rather than guessed.
-pub const ARTWORK_RAW_BYTES: usize = 786_048;
-
-/// A helper line is bounded so a wedged script cannot stream forever.
-pub const LINE_CAP: usize = 1_048_576;
+pub const ARTWORK_RAW_BYTES: usize = (crate::winps::LINE_CAP - 512) * 3 / 4;
 
 const HEADER: &str = r##"
 $ErrorActionPreference = 'Stop'

@@ -141,6 +141,8 @@ fn providers(
     // User-authored HTTP sources: each is fetched only while a display asks for
     // one of its keys.
     registry.add(custom(settings_dir));
+    // The game being played, identified from Steam's own installed-app files.
+    registry.add(yunari_providers::game::GameProvider::new());
     registry
 }
 

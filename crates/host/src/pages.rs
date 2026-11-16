@@ -171,6 +171,39 @@ pub fn favicon() -> Response {
     response
 }
 
+/// The cover Steam cached for an installed app. The app id is the whole
+/// allow-list, and the file is only ever read from Steam's own cache.
+pub fn game_artwork(app_id: &str) -> Response {
+    let Some(root) = yunari_providers::game::steam::root() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(path) = yunari_providers::game::steam::box_art(&root, app_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let content_type = if path.extension().is_some_and(|extension| extension == "png") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    let mut response = bytes.into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    // The name is not the bytes' digest, so a display re-checks it.
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    response
+}
+
 fn html(body: &'static str) -> Response {
     let mut response = body.into_response();
     response.headers_mut().insert(
