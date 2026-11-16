@@ -249,6 +249,15 @@ impl Library {
         let nonce = nonce();
         let staging = self.root.join(format!(".staging-{nonce}.{}", request.id));
         write_theme(&staging, &bytes, request.assets)?;
+        // A theme read from the source editor's envelope is saved in this
+        // model's shape. Keep its original bytes beside the native copy: a save
+        // must not cost the author the file the other editor still reads.
+        if let Some(stored) = existing
+            .as_ref()
+            .filter(|stored| is_source_envelope(stored))
+        {
+            let _ = fs::write(staging.join(SOURCE_COPY), stored);
+        }
         let retired = self.root.join(format!(".retired-{nonce}.{}", request.id));
         if target.exists() {
             rename(&target, &retired)?;
@@ -403,6 +412,15 @@ fn asset_path_is_safe(path: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
 }
 
+/// The source editor's own file, kept when a theme first saved by it is written
+/// again in this model's shape. Nothing reads it back automatically.
+pub const SOURCE_COPY: &str = "theme.fabric.json";
+
+fn is_source_envelope(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .is_ok_and(|value| yunari_model::source::looks_like_source(&value))
+}
+
 /// A stored theme, lifted from the source app's envelope when it is one. A
 /// theme written by the TypeScript editor carries the same palette, tokens,
 /// assets and bindings but a different envelope and flat scene objects, so it
@@ -536,6 +554,23 @@ mod tests {
         assert_eq!(stored.document.nodes.len(), 1);
         assert_eq!(stored.document.palette["bg"].name, "Backdrop");
         assert_eq!(validate_document(&stored.document), Ok(()));
+    }
+
+    #[test]
+    fn saving_over_a_source_theme_keeps_the_stored_file() {
+        let temp = TempLibrary::new();
+        let directory = temp.library.root().join("alpha");
+        fs::create_dir_all(&directory).unwrap();
+        let source = r##"{"schemaVersion":"3.0.0","fabricVersion":"7.4.0","id":"alpha",
+            "metadata":{"name":"Stored"},"artboard":{"width":10,"height":10},
+            "globals":{"palette":{}},"assets":[],"bindings":{},
+            "scene":{"version":"7.4.0","objects":[]}}"##;
+        fs::write(directory.join("theme.json"), source).unwrap();
+        save(&temp.library, &document("alpha"), None, true).expect("a save over it");
+        let kept = fs::read_to_string(directory.join(SOURCE_COPY)).expect("the source file");
+        assert_eq!(kept, source);
+        let stored = temp.library.read("alpha").expect("the native copy");
+        assert_eq!(stored.document, document("alpha"));
     }
 
     #[test]
