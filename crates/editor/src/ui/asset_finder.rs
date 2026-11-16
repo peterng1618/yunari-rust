@@ -1,6 +1,10 @@
-//! The asset finder: pictures this PC already holds, and the wallpaper
-//! library's previews. Picking a row puts the bytes in the theme through the
-//! editor's own import, so the same sniffing and SVG refusal apply.
+//! The asset finder: pictures this PC already holds, the wallpaper library's
+//! previews, and the stock sources this host serves. Picking a row puts the
+//! bytes in the theme through the editor's own import, so the same sniffing
+//! and SVG refusal apply.
+//!
+//! A stock search runs off the UI thread: a slow catalogue must not freeze the
+//! window it is answering into.
 
 use std::path::PathBuf;
 
@@ -8,6 +12,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::*;
 
 use crate::ui::EditorWindow;
+use crate::ui::prompt::Prompt;
 
 /// One row's source. The bytes are read on the click, not when the dialog
 /// opens: a library of wallpapers can be much larger than its listing.
@@ -18,6 +23,11 @@ pub enum Pick {
     Wallpaper(String),
     /// A subscribed scene to write out as an editable project.
     Project(String),
+    /// One stock row: the source it came from and its own id within it.
+    Stock {
+        source: String,
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +38,13 @@ pub struct Choice {
 
 pub struct AssetFinder {
     pub choices: Vec<Choice>,
+    /// Rows a stock search returned. Replaced by each answer, so a stale page
+    /// cannot outlive the question that asked for it.
+    pub remote: Vec<Choice>,
+    /// The search box. Enter asks; Escape closes the finder from the shell.
+    pub query: Prompt,
+    pub searched: bool,
+    pub busy: bool,
     pub note: Option<String>,
 }
 
@@ -36,6 +53,9 @@ pub struct AssetFinder {
 const PICTURES: [&str; 7] = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"];
 /// A listing is a picker, not a filesystem walk.
 const MAX_LOCAL: usize = 200;
+/// The stock sources whose rows are pictures this finder can place. A font or
+/// a gradient belongs to the typography and palette surfaces, not here.
+const PICTURE_SOURCES: [&str; 4] = ["lucide", "lineicons", "fontawesome-free", "unsplash"];
 
 impl Default for AssetFinder {
     fn default() -> Self {
@@ -86,7 +106,14 @@ impl AssetFinder {
                 }
             }
         }
-        Self { choices, note }
+        Self {
+            choices,
+            remote: Vec::new(),
+            query: Prompt::new("Search", "Search the stock sources", ""),
+            searched: false,
+            busy: false,
+            note,
+        }
     }
 }
 
@@ -116,8 +143,44 @@ fn local_pictures() -> Vec<PathBuf> {
     paths
 }
 
+/// Asks every picture source. One source that cannot answer is a sentence
+/// beside the others' rows, never an empty finder.
+pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, Option<String>) {
+    let mut choices = Vec::new();
+    let mut notes = Vec::new();
+    for id in PICTURE_SOURCES {
+        let Some(stock) = yunari_host::assets::stock(id) else {
+            continue;
+        };
+        let key = stock.requires.and(credential);
+        match yunari_host::assets::search_with(id, query, 1, key) {
+            Ok(page) => {
+                for result in page.results {
+                    let kind = result["kind"].as_str().unwrap_or_default();
+                    if !matches!(kind, "image" | "svg" | "gif") {
+                        continue;
+                    }
+                    let Some(id) = result["id"].as_str() else {
+                        continue;
+                    };
+                    let name = result["name"].as_str().unwrap_or(id);
+                    choices.push(Choice {
+                        label: format!("{name}  ·  {}", stock.label),
+                        pick: Pick::Stock {
+                            source: stock.id.to_owned(),
+                            id: id.to_owned(),
+                        },
+                    });
+                }
+            }
+            Err(message) => notes.push(format!("{}: {message}", stock.label)),
+        }
+    }
+    (choices, (!notes.is_empty()).then(|| notes.join("\n")))
+}
+
 /// The bytes a picked row stands for, or a sentence saying why not.
-pub fn bytes_of(pick: &Pick) -> Result<(String, Vec<u8>), String> {
+pub fn bytes_of(pick: &Pick, credential: Option<&str>) -> Result<(String, Vec<u8>), String> {
     match pick {
         Pick::File(path) => {
             let name = path
@@ -134,6 +197,14 @@ pub fn bytes_of(pick: &Pick) -> Result<(String, Vec<u8>), String> {
                 .ok_or_else(|| "That wallpaper has no preview to place.".to_owned())?;
             Ok((format!("wallpaper-{id}.jpg"), bytes))
         }
+        Pick::Stock { source, id } => {
+            let keyed =
+                yunari_host::assets::stock(source).is_some_and(|stock| stock.requires.is_some());
+            let key = keyed.then_some(credential).flatten();
+            let (bytes, _, name) = yunari_host::assets::bytes_with(source, id, key)
+                .ok_or_else(|| "That row has no file to place.".to_owned())??;
+            Ok((name, bytes))
+        }
     }
 }
 
@@ -141,6 +212,7 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     let rows: Vec<_> = dialog
         .choices
         .iter()
+        .chain(dialog.remote.iter())
         .enumerate()
         .map(|(index, choice)| {
             let choice = choice.clone();
@@ -158,6 +230,11 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 }))
         })
         .collect();
+    let search_text = if dialog.query.value.is_empty() {
+        dialog.query.hint.clone()
+    } else {
+        dialog.query.value.clone()
+    };
     let body: AnyElement = if rows.is_empty() {
         div()
             .p_3()
@@ -180,6 +257,15 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
             .children(rows)
             .into_any_element()
     };
+    let status = if dialog.busy {
+        "Searching…".to_owned()
+    } else if let Some(note) = &dialog.note {
+        note.clone()
+    } else if dialog.searched {
+        format!("{} stock rows", dialog.remote.len())
+    } else {
+        "Type a search and press Enter.".to_owned()
+    };
     div()
         .flex()
         .flex_col()
@@ -188,8 +274,21 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
             div()
                 .px_3()
                 .pt_3()
-                .text_color(rgb(0xe8e8ea))
-                .child("Place a picture"),
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_color(rgb(0xe8e8ea)).child("Place a picture"))
+                .child(
+                    div()
+                        .id("asset-finder-search")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(rgb(0x191920))
+                        .text_color(rgb(0x8a8a94))
+                        .child(search_text),
+                )
+                .child(div().text_color(rgb(0x8a8a94)).child(status)),
         )
         .child(body)
         .child(
@@ -206,12 +305,34 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
 
 #[cfg(test)]
 mod tests {
-    use super::PICTURES;
+    use super::{PICTURE_SOURCES, PICTURES, Pick, bytes_of};
 
     #[test]
     fn only_picture_extensions_are_listed() {
         assert!(PICTURES.contains(&"PNG".to_ascii_lowercase().as_str()));
         assert!(!PICTURES.contains(&"exe"));
         assert!(!PICTURES.contains(&"mp4"));
+    }
+
+    #[test]
+    fn a_preset_row_has_no_file_to_place() {
+        let refused = bytes_of(
+            &Pick::Stock {
+                source: "colorhunt".to_owned(),
+                id: "1234".to_owned(),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(refused.contains("no file"), "{refused}");
+    }
+
+    #[test]
+    fn the_picture_sources_are_the_picture_bodies() {
+        for id in PICTURE_SOURCES {
+            let stock = yunari_host::assets::stock(id).expect("a stock");
+            assert_ne!(stock.category, "colour", "{id}");
+            assert_eq!(stock.body, "grid", "{id}");
+        }
     }
 }

@@ -1157,6 +1157,37 @@ impl EditorWindow {
 
     /// Places the picture an asset-finder row names, through the editor's own
     /// import so the same sniffing and SVG refusal apply.
+    /// Asks the picture sources off the UI thread: a slow catalogue must not
+    /// freeze the window, and the answer lands in the finder only if it is
+    /// still open.
+    fn search_stock_assets(&mut self, query: String, cx: &mut Context<Self>) {
+        if let Some(Overlay::AssetFinder(dialog)) = &mut self.overlay {
+            dialog.busy = true;
+            dialog.note = None;
+        }
+        let credential = self
+            .host
+            .as_ref()
+            .and_then(|host| host.credentials.get("unsplash"));
+        cx.spawn(async move |this, cx| {
+            let (rows, note) = cx
+                .background_executor()
+                .spawn(async move { asset_finder::search_pictures(&query, credential.as_deref()) })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(Overlay::AssetFinder(dialog)) = &mut this.overlay {
+                    dialog.busy = false;
+                    dialog.searched = true;
+                    dialog.remote = rows;
+                    dialog.note = note;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn place_asset(&mut self, choice: &asset_finder::Choice, cx: &mut Context<Self>) {
         self.overlay = None;
         if let asset_finder::Pick::Project(id) = &choice.pick {
@@ -1177,7 +1208,11 @@ impl EditorWindow {
             cx.notify();
             return;
         }
-        match asset_finder::bytes_of(&choice.pick) {
+        let credential = self
+            .host
+            .as_ref()
+            .and_then(|host| host.credentials.get("unsplash"));
+        match asset_finder::bytes_of(&choice.pick, credential.as_deref()) {
             Ok((name, bytes)) => match self.editor.import_asset(&name, bytes) {
                 Ok(id) => {
                     self.point_images();
@@ -2406,8 +2441,20 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
+            Overlay::AssetFinder(mut dialog) => {
+                match dialog
+                    .query
+                    .key(&keystroke.key, keystroke.key_char.as_deref())
+                {
+                    Outcome::Pending => self.overlay = Some(Overlay::AssetFinder(dialog)),
+                    Outcome::Cancel => {}
+                    Outcome::Submit(query) => {
+                        self.overlay = Some(Overlay::AssetFinder(dialog));
+                        self.search_stock_assets(query, cx);
+                    }
+                }
+            }
             Overlay::Widgets(_)
-            | Overlay::AssetFinder(_)
             | Overlay::PathPresets(_)
             | Overlay::Typography(_)
             | Overlay::Mcp(_)
