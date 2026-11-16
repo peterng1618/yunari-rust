@@ -741,6 +741,101 @@ fn rounded_rect(width: f32, height: f32, radius: f32) -> Path {
     })
 }
 
+/// A display list fitted into a device's own pixel box, then turned.
+///
+/// Panels are not artboards: a 480×120 theme on a 464×1920 strip is contained
+/// and centred, never cropped, and the strip's own quarter turn is applied
+/// last. A round panel takes any integer angle and clips to its disc; a
+/// rectangular one takes quarter turns only, because that is what its glass
+/// shows without resampling the edges.
+pub fn fit_into(
+    list: &DisplayList,
+    width: u32,
+    height: u32,
+    rotation: u16,
+    round: bool,
+    fonts: Option<&mut Fonts>,
+    images: Option<&mut Images>,
+) -> Result<Raster, String> {
+    if round {
+        if rotation > 359 {
+            return Err(format!(
+                "A panel turn is 0 to 359 degrees; {rotation} is not one."
+            ));
+        }
+    } else if !rotation.is_multiple_of(90) || rotation > 270 {
+        return Err(format!(
+            "The panel turns its picture by quarter turns only; {rotation}° is not one."
+        ));
+    }
+    let source = render(list, 1.0, fonts, images);
+    if source.width == 0 || source.height == 0 || width == 0 || height == 0 {
+        return Ok(Raster {
+            width,
+            height,
+            rgba: vec![0; (width as usize) * (height as usize) * 4],
+        });
+    }
+    let pixels = Decoded {
+        width: source.width,
+        height: source.height,
+        rgba: source.rgba,
+    };
+    let mut pixmap = match Pixmap::new(width, height) {
+        Some(pixmap) => pixmap,
+        None => {
+            return Err(format!("A {width}×{height} frame could not be allocated."));
+        }
+    };
+    pixmap.fill(SkiaColor::TRANSPARENT);
+
+    let angle = (f32::from(rotation) * std::f32::consts::PI / 180.0);
+    let (sin, cos) = angle.sin_cos();
+    let (source_width, source_height) = (pixels.width as f32, pixels.height as f32);
+    // The box the turned picture needs, so the fit contains the turn rather
+    // than cropping whatever the corners sweep into.
+    let turned_width = source_width * cos.abs() + source_height * sin.abs();
+    let turned_height = source_width * sin.abs() + source_height * cos.abs();
+    let scale = (width as f32 / turned_width).min(height as f32 / turned_height);
+    let (centre_x, centre_y) = (width as f32 / 2.0, height as f32 / 2.0);
+    let (source_x, source_y) = (source_width / 2.0, source_height / 2.0);
+    let radius = width.min(height) as f32 / 2.0;
+
+    for y in 0..height {
+        for x in 0..width {
+            let (target_x, target_y) = (x as f32 + 0.5, y as f32 + 0.5);
+            if round {
+                let dx = target_x - centre_x;
+                let dy = target_y - centre_y;
+                if dx * dx + dy * dy > radius * radius {
+                    continue;
+                }
+            }
+            let dx = (target_x - centre_x) / scale;
+            let dy = (target_y - centre_y) / scale;
+            // Undo the turn, then the scale: the source point that lands on
+            // this pixel, measured from the picture's own centre.
+            let u = (dx * cos + dy * sin + source_x) / source_width;
+            let v = (-dx * sin + dy * cos + source_y) / source_height;
+            if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+                continue;
+            }
+            let texel = sample(&pixels, u, v);
+            blend(
+                &mut pixmap,
+                x as i32,
+                y as i32,
+                TextColor::rgba(texel[0], texel[1], texel[2], texel[3]),
+            );
+        }
+    }
+    Ok(Raster {
+        width,
+        height,
+        rgba: straight_rgba(&pixmap),
+    })
+}
+
 /// tiny-skia paints in premultiplied alpha; a golden file and a device both
 /// want the colour the author wrote.
 fn straight_rgba(pixmap: &Pixmap) -> Vec<u8> {
@@ -770,6 +865,71 @@ mod tests {
             raster.rgba[index + 2],
             raster.rgba[index + 3],
         ]
+    }
+
+    #[test]
+    fn a_landscape_theme_is_contained_in_a_portrait_panel() {
+        let raster = fit_into(
+            &list(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":480,"height":120},
+                    "nodes":[{"id":"n","kind":{"type":"rectangle"},
+                        "transform":{"x":0,"y":0,"width":240,"height":120},
+                        "style":{"fill":{"value":"#ff0000"}}}]}"##,
+            ),
+            120,
+            320,
+            0,
+            false,
+            None,
+            None,
+        )
+        .expect("a contained frame");
+        assert_eq!((raster.width, raster.height), (120, 320));
+        // The strip is 120×30 inside the tall box: margins above and below, no
+        // cropping of the picture's own edges.
+        assert_eq!(pixel(&raster, 10, 10)[3], 0);
+        assert_eq!(pixel(&raster, 10, 160)[3], 255);
+        assert_eq!(pixel(&raster, 115, 310)[3], 0);
+        // The source's left half is the red one, so the left of the panel is.
+        assert_eq!(pixel(&raster, 10, 160), [255, 0, 0, 255]);
+        assert_eq!(pixel(&raster, 110, 160)[3], 0);
+    }
+
+    #[test]
+    fn a_quarter_turn_moves_the_picture_clockwise() {
+        let drawn = list(
+            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                "nodes":[{"id":"n","kind":{"type":"rectangle"},
+                    "transform":{"x":0,"y":0,"width":5,"height":10},
+                    "style":{"fill":{"value":"#00ff00"}}}]}"##,
+        );
+        let plain = fit_into(&drawn, 100, 100, 0, false, None, None).unwrap();
+        // Left half painted before the turn.
+        assert_eq!(pixel(&plain, 10, 50), [0, 255, 0, 255]);
+        assert_eq!(pixel(&plain, 90, 50)[3], 0);
+        let turned = fit_into(&drawn, 100, 100, 90, false, None, None).unwrap();
+        // Clockwise: what was on the left is now on the top.
+        assert_eq!(pixel(&turned, 50, 10), [0, 255, 0, 255]);
+        assert_eq!(pixel(&turned, 50, 90)[3], 0);
+    }
+
+    #[test]
+    fn a_square_panel_takes_any_angle_and_clips_its_disc() {
+        let drawn = list(
+            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                "nodes":[{"id":"n","kind":{"type":"rectangle"},
+                    "transform":{"x":0,"y":0,"width":10,"height":10},
+                    "style":{"fill":{"value":"#00ff00"}}}]}"##,
+        );
+        let refused = fit_into(&drawn, 100, 100, 45, false, None, None).unwrap_err();
+        assert_eq!(
+            refused,
+            "The panel turns its picture by quarter turns only; 45° is not one."
+        );
+        let disc = fit_into(&drawn, 100, 100, 45, true, None, None).expect("a disc");
+        // The corner of the box is outside the round glass.
+        assert_eq!(pixel(&disc, 1, 1)[3], 0);
+        assert_eq!(pixel(&disc, 50, 50)[3], 255);
     }
 
     #[test]
