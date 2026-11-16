@@ -23,8 +23,6 @@ pub const STALE_MESSAGE: &str = "The last reading is out of date.";
 pub const NO_SOURCES_MESSAGE: &str = "No custom sources are configured.";
 pub const NOT_JSON_MESSAGE: &str = "The source answered something that is not JSON.";
 
-/// One request's deadline, as the source's own default.
-pub const TIMEOUT_MS: u64 = 2_000;
 /// Missed intervals after which a last good value is stale rather than fresh.
 const STALE_INTERVALS: u64 = 3;
 /// The same grace bounds how long a source keeps polling with no demand.
@@ -37,7 +35,7 @@ const MAX_POINTER_CHARS: usize = 64;
 const MESSAGE_MAX_CHARS: usize = 120;
 
 /// One GET performed for a source. A seam so a test never reaches the network.
-pub type Fetch = Arc<dyn Fn(&str, u64) -> Result<String, String> + Send + Sync>;
+pub type Fetch = Arc<dyn Fn(&crate::http::Get) -> Result<String, String> + Send + Sync>;
 
 /// What `sources.json` said: the sources that can be read, and one line per
 /// entry that was skipped.
@@ -98,7 +96,12 @@ pub struct CustomProvider {
 
 impl CustomProvider {
     pub fn new(settings: SettingsLoader) -> Self {
-        Self::with_fetch(settings, Arc::new(crate::http::get), Arc::new(now_ms), true)
+        Self::with_fetch(
+            settings,
+            Arc::new(crate::http::get_with),
+            Arc::new(now_ms),
+            true,
+        )
     }
 
     pub fn with_fetch(
@@ -289,7 +292,7 @@ fn sync(state: &mut State, loaded: Loaded) {
 
 /// Fetches every source that is due. One source's failure is its own keys'.
 fn refresh(state: &Mutex<State>, fetch: &Fetch, now_ms: u64) -> usize {
-    let due: Vec<(usize, String, u64)> = {
+    let due: Vec<(usize, crate::http::Get, u64)> = {
         let state = state.lock().expect("the custom state");
         state
             .runtimes
@@ -299,17 +302,21 @@ fn refresh(state: &Mutex<State>, fetch: &Fetch, now_ms: u64) -> usize {
             .map(|(index, runtime)| {
                 (
                     index,
-                    runtime.source.url.clone(),
+                    crate::http::Get {
+                        url: runtime.source.request_url(),
+                        headers: runtime.source.headers.clone(),
+                        timeout_ms: runtime.source.timeout_ms,
+                    },
                     runtime.source.interval_ms,
                 )
             })
             .collect()
     };
 
-    for (index, url, interval_ms) in &due {
-        let outcome = match crate::http::refusal(url) {
+    for (index, request, interval_ms) in &due {
+        let outcome = match crate::http::refusal(&request.url) {
             Some(refusal) => Err(refusal),
-            None => fetch(url, TIMEOUT_MS).and_then(|body| {
+            None => fetch(request).and_then(|body| {
                 serde_json::from_str::<Value>(&body).map_err(|_| NOT_JSON_MESSAGE.to_owned())
             }),
         };
@@ -490,16 +497,16 @@ mod tests {
 
     fn provider(
         loaded: Loaded,
-        fetch: impl Fn(&str, u64) -> Result<String, String> + Send + Sync + 'static,
+        fetch: impl Fn(&crate::http::Get) -> Result<String, String> + Send + Sync + 'static,
     ) -> (CustomProvider, Arc<AtomicUsize>, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(AtomicUsize::new(0));
         let urls = Arc::new(Mutex::new(Vec::new()));
         let counted = Arc::clone(&calls);
         let recorded = Arc::clone(&urls);
-        let fetch: Fetch = Arc::new(move |url, timeout| {
+        let fetch: Fetch = Arc::new(move |request| {
             counted.fetch_add(1, Ordering::SeqCst);
-            recorded.lock().unwrap().push(url.to_owned());
-            fetch(url, timeout)
+            recorded.lock().unwrap().push(request.url.clone());
+            fetch(request)
         });
         let source = loaded.clone();
         let provider = CustomProvider::with_fetch(
@@ -524,7 +531,7 @@ mod tests {
 
     #[test]
     fn a_pointer_reads_the_first_array_element_and_the_field_types_map() {
-        let (provider, calls, urls) = provider(loaded(), |_url, _timeout| Ok(body()));
+        let (provider, calls, urls) = provider(loaded(), |_request| Ok(body()));
         let asked = keys(&[
             "custom.lab.temp",
             "custom.lab.name",
@@ -561,7 +568,7 @@ mod tests {
 
     #[test]
     fn a_value_of_the_wrong_type_is_a_reason_not_a_zero() {
-        let (provider, ..) = provider(loaded(), |_url, _timeout| {
+        let (provider, ..) = provider(loaded(), |_request| {
             Ok(serde_json::json!({"a": {"b": ["hot"]}, "up": "yes"}).to_string())
         });
         let asked = keys(&["custom.lab.temp", "custom.lab.up"]);
@@ -593,6 +600,9 @@ mod tests {
             name: "Files".to_owned(),
             url: url.to_owned(),
             interval_ms: 60_000,
+            timeout_ms: sources::TIMEOUT_DEFAULT_MS,
+            headers: Vec::new(),
+            query: Vec::new(),
             fields: vec![CustomField {
                 id: "x".to_owned(),
                 label: "X".to_owned(),
@@ -608,7 +618,7 @@ mod tests {
                 sources: vec![source],
                 issues: Vec::new(),
             },
-            |_url, _timeout| Ok("{}".to_owned()),
+            |_request| Ok("{}".to_owned()),
         );
         provider.sample(&keys(&["custom.files.x"]), 1_000).unwrap();
         provider.refresh(1_000);
@@ -627,7 +637,7 @@ mod tests {
 
     #[test]
     fn a_last_good_value_goes_stale_after_three_intervals() {
-        let (provider, calls, _) = provider(loaded(), |_url, _timeout| Ok(body()));
+        let (provider, calls, _) = provider(loaded(), |_request| Ok(body()));
         provider.sample(&keys(&["custom.lab.temp"]), 1_000).unwrap();
         provider.refresh(1_000);
         let fresh = provider.sample(&keys(&["custom.lab.temp"]), 2_000).unwrap();
@@ -643,9 +653,8 @@ mod tests {
 
     #[test]
     fn a_failed_fetch_is_its_own_keys_reason_and_the_next_one_waits_for_the_interval() {
-        let (provider, calls, _) = provider(loaded(), |_url, _timeout| {
-            Err("connection refused".to_owned())
-        });
+        let (provider, calls, _) =
+            provider(loaded(), |_request| Err("connection refused".to_owned()));
         provider.sample(&keys(&["custom.lab.temp"]), 1_000).unwrap();
         assert_eq!(provider.refresh(1_000), 1);
         let readings = provider.sample(&keys(&["custom.lab.temp"]), 1_100).unwrap();
@@ -659,8 +668,67 @@ mod tests {
     }
 
     #[test]
+    fn a_sources_headers_query_and_deadline_reach_the_request() {
+        let loaded = Loaded {
+            sources: sources::parse(&serde_json::json!({
+                "sources": [{
+                    "id": "lab",
+                    "url": "http://127.0.0.1:9000/status",
+                    "timeoutMs": 5000,
+                    "headers": {"accept": "application/json"},
+                    "query": {"place": "a b&c=d"},
+                    "fields": [{"id": "x", "pointer": "", "type": "number"}]
+                }]
+            }))
+            .0,
+            issues: Vec::new(),
+        };
+        let (provider, _, urls) = provider(loaded, |request| {
+            assert_eq!(request.timeout_ms, 5_000);
+            assert_eq!(
+                request.headers,
+                vec![("accept".to_owned(), "application/json".to_owned())]
+            );
+            Ok(serde_json::json!({"x": 1}).to_string())
+        });
+        provider.sample(&keys(&["custom.lab.x"]), 1_000).unwrap();
+        provider.refresh(1_000);
+        assert_eq!(
+            urls.lock().unwrap().as_slice(),
+            ["http://127.0.0.1:9000/status?place=a%20b%26c%3Dd"]
+        );
+    }
+
+    #[test]
+    fn a_header_that_could_split_the_request_is_refused_at_parse() {
+        let (sources, issues) = sources::parse(&serde_json::json!({
+            "sources": [{
+                "id": "lab",
+                "url": "http://127.0.0.1:9000/status",
+                "headers": {"x-bad": "a b"},
+                "fields": [{"id": "x", "pointer": "", "type": "number"}]
+            }]
+        }));
+        // A space is fine in a value; a control character is not.
+        assert_eq!(sources.len(), 1, "{issues:?}");
+        let (sources, issues) = sources::parse(&serde_json::json!({
+            "sources": [{
+                "id": "lab",
+                "url": "http://127.0.0.1:9000/status",
+                "headers": {"bad name": "value"},
+                "fields": [{"id": "x", "pointer": "", "type": "number"}]
+            }]
+        }));
+        assert!(sources.is_empty());
+        assert!(
+            issues.iter().any(|issue| issue.contains("header name")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
     fn an_unconfigured_key_starts_no_fetch() {
-        let (provider, calls, _) = provider(loaded(), |_url, _timeout| Ok(body()));
+        let (provider, calls, _) = provider(loaded(), |_request| Ok(body()));
         let readings = provider
             .sample(&keys(&["custom.other.temp", "cpu.load"]), 1_000)
             .unwrap();
@@ -675,7 +743,7 @@ mod tests {
             sources: Vec::new(),
             issues: vec!["The source x: file is not an http address.".to_owned()],
         };
-        let (provider, ..) = provider(loaded, |_url, _timeout| Ok(body()));
+        let (provider, ..) = provider(loaded, |_request| Ok(body()));
         assert!(matches!(provider.health(), Health::Unavailable(_)));
         assert!(provider.describe().is_empty());
     }

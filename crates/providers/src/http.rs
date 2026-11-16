@@ -22,13 +22,33 @@ pub fn refusal(url: &str) -> Option<String> {
     }
 }
 
+/// One GET with the headers a user-authored source names. The headers are the
+/// same ones the source app kept in plain text beside the source's address; no
+/// credential is stored here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Get {
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub timeout_ms: u64,
+}
+
 /// One GET, as its body text.
 pub fn get(url: &str, timeout_ms: u64) -> Result<String, String> {
+    get_with(&Get {
+        url: url.to_owned(),
+        headers: Vec::new(),
+        timeout_ms,
+    })
+}
+
+/// One GET, with the source's own headers.
+pub fn get_with(request: &Get) -> Result<String, String> {
+    let url = request.url.as_str();
     if let Some(refusal) = refusal(url) {
         return Err(refusal);
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .timeout_global(Some(Duration::from_millis(request.timeout_ms)))
         // A redirect is not the address this host asked.
         .max_redirects(0)
         // The status is read here, so a 404 says what it was rather than
@@ -37,7 +57,11 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<String, String> {
         .build()
         .into();
 
-    let mut response = agent.get(url).call().map_err(|error| error.to_string())?;
+    let mut call = agent.get(url);
+    for (name, value) in &request.headers {
+        call = call.header(name.as_str(), value.as_str());
+    }
+    let mut response = call.call().map_err(|error| error.to_string())?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
         return Err(format!("the server answered {status}"));

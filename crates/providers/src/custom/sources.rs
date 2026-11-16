@@ -12,6 +12,12 @@ pub const MAX_SOURCES: usize = 32;
 pub const MAX_FIELDS: usize = 64;
 
 pub const INTERVAL_DEFAULT_MS: u64 = 60_000;
+pub const TIMEOUT_DEFAULT_MS: u64 = 2_000;
+const TIMEOUT_MIN_MS: u64 = 500;
+const TIMEOUT_MAX_MS: u64 = 30_000;
+pub const MAX_HEADERS: usize = 16;
+const MAX_HEADER_NAME: usize = 64;
+const MAX_HEADER_VALUE: usize = 1024;
 const INTERVAL_MIN_MS: u64 = 10_000;
 const INTERVAL_MAX_MS: u64 = 86_400_000;
 
@@ -50,6 +56,12 @@ pub struct CustomSource {
     pub name: String,
     pub url: String,
     pub interval_ms: u64,
+    /// The source's own request deadline.
+    pub timeout_ms: u64,
+    /// Headers sent with the request, as the file names them.
+    pub headers: Vec<(String, String)>,
+    /// Query parameters added to the address, already encoded.
+    pub query: Vec<(String, String)>,
     pub fields: Vec<CustomField>,
 }
 
@@ -58,6 +70,102 @@ impl CustomSource {
     pub fn key(&self, field: &CustomField) -> String {
         format!("custom.{}.{}", self.id, field.id)
     }
+
+    /// The address the request goes to, with the source's query parameters.
+    pub fn request_url(&self) -> String {
+        if self.query.is_empty() {
+            return self.url.clone();
+        }
+        let separator = if self.url.contains('?') { '&' } else { '?' };
+        let pairs: Vec<String> = self
+            .query
+            .iter()
+            .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
+            .collect();
+        format!("{}{separator}{}", self.url, pairs.join("&"))
+    }
+}
+
+/// Percent-encodes everything outside the unreserved set, so a query value
+/// cannot add a parameter of its own.
+fn encode(text: &str) -> String {
+    let mut encoded = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+/// The headers a source sends. A name is a header token and a value is one
+/// line: a pair that could split the request is refused rather than sent.
+fn parse_headers(id: &str, value: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(record) = value.as_object() else {
+        return Err(format!(
+            "The source {id} has a headers list that is not an object."
+        ));
+    };
+    if record.len() > MAX_HEADERS {
+        return Err(format!(
+            "The source {id} names more than {MAX_HEADERS} headers."
+        ));
+    }
+    let mut headers = Vec::with_capacity(record.len());
+    for (name, value) in record {
+        let Some(value) = value.as_str() else {
+            return Err(format!("The source {id} has a header that is not text."));
+        };
+        let usable = !name.is_empty()
+            && name.len() <= MAX_HEADER_NAME
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        if !usable {
+            return Err(format!(
+                "The source {id} has a header name that is not usable."
+            ));
+        }
+        if value.len() > MAX_HEADER_VALUE || value.chars().any(char::is_control) {
+            return Err(format!(
+                "The source {id} has a value for {name} that cannot be sent."
+            ));
+        }
+        headers.push((name.clone(), value.to_owned()));
+    }
+    Ok(headers)
+}
+
+/// The query parameters a source adds to its own address.
+fn parse_query(id: &str, value: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let Some(record) = value.as_object() else {
+        return Err(format!(
+            "The source {id} has a query that is not an object."
+        ));
+    };
+    let mut query = Vec::with_capacity(record.len());
+    for (name, value) in record {
+        let Some(value) = value.as_str() else {
+            return Err(format!(
+                "The source {id} has a query value that is not text."
+            ));
+        };
+        if name.is_empty() || name.len() > MAX_HEADER_NAME || value.len() > MAX_HEADER_VALUE {
+            return Err(format!(
+                "The source {id} has a query pair that is not usable."
+            ));
+        }
+        query.push((name.clone(), value.to_owned()));
+    }
+    Ok(query)
 }
 
 /// The sources this build can read, and one line per entry it skipped.
@@ -85,6 +193,29 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
             issues.push(format!("The source {id}: {refusal}"));
             continue;
         }
+        let headers = match parse_headers(id, record.get("headers")) {
+            Ok(headers) => headers,
+            Err(issue) => {
+                issues.push(issue);
+                continue;
+            }
+        };
+        let query = match parse_query(id, record.get("query")) {
+            Ok(query) => query,
+            Err(issue) => {
+                issues.push(issue);
+                continue;
+            }
+        };
+        let timeout_ms = record
+            .get("timeoutMs")
+            .and_then(Value::as_f64)
+            .filter(|value| {
+                value.is_finite()
+                    && *value >= TIMEOUT_MIN_MS as f64
+                    && *value <= TIMEOUT_MAX_MS as f64
+            })
+            .map_or(TIMEOUT_DEFAULT_MS, |value| value as u64);
         let interval_ms = record
             .get("intervalMs")
             .and_then(Value::as_f64)
@@ -118,6 +249,9 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
                 .to_owned(),
             url: url.to_owned(),
             interval_ms,
+            timeout_ms,
+            headers,
+            query,
             fields,
         });
     }
