@@ -412,10 +412,25 @@ pub static BINDINGS: &[Binding] = &[
 /// A key with no matching sensor is `None`: LHM simply does not have it on this
 /// machine, which is a gap rather than a zero.
 pub fn read(sensors: &[LhmSensor], key: &str) -> Option<f64> {
+    read_in(sensors, key, None)
+}
+
+/// The value `key` would read from one hardware node, or from every node when
+/// `node` is absent. An assigned device is scoped here so a two-card machine
+/// answers the theme's single `gpu.*` keys from the card a person chose.
+pub fn read_in(sensors: &[LhmSensor], key: &str, node: Option<&str>) -> Option<f64> {
+    let scoped: Vec<&LhmSensor> = sensors
+        .iter()
+        .filter(|sensor| node.is_none_or(|node| sensor.hardware_id == node))
+        .collect();
+    read_scoped(&scoped, key)
+}
+
+fn read_scoped(sensors: &[&LhmSensor], key: &str) -> Option<f64> {
     // `disk.used` has no direct LHM sensor: LHM's `Used Space` is a percentage.
     if key == "disk.used" {
-        let total = read(sensors, "disk.total")?;
-        let free = read(sensors, "disk.free")?;
+        let total = read_scoped(sensors, "disk.total")?;
+        let free = read_scoped(sensors, "disk.free")?;
         return Some(total - free);
     }
 

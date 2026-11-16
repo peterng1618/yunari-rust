@@ -34,6 +34,11 @@ pub struct SettingsDialog {
     /// The credential ids the configured custom sources name, and whether each
     /// one is stored. Never the secrets.
     pub source_credentials: Vec<(String, bool)>,
+    /// Which drive answers a theme's abstract disk slots, and the names beside
+    /// that choice.
+    pub devices: yunari_providers::devices::Assignment,
+    /// The drives this PC reports, as (device id, detected name).
+    pub disks: Vec<(String, String)>,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
@@ -43,6 +48,7 @@ impl SettingsDialog {
         let weather = read_weather(&settings);
         let weather_key_set = read_weather_key_set(&settings, &weather);
         let source_credentials = read_source_credentials(&settings);
+        let disks = detected_disks();
         Self {
             lan: Hosting::load(&settings).lan,
             autostart: yunari_host::autostart::enabled(),
@@ -50,10 +56,38 @@ impl SettingsDialog {
             weather,
             weather_key_set,
             source_credentials,
+            devices: yunari_providers::devices::Assignment::load(&settings),
+            disks,
             settings,
             message: None,
         }
     }
+}
+
+/// The drives this PC reports, with the id a saved choice names them by.
+pub fn detected_disks() -> Vec<(String, String)> {
+    use yunari_providers::system::Snapshot;
+    let snapshot = yunari_providers::system::SysinfoSnapshot::new();
+    yunari_providers::devices::ids_for(snapshot.disks().into_iter().map(|disk| disk.name))
+}
+
+/// Writes which drive answers a slot (`system-disk` or `data-disk`) and reports
+/// the assignment as stored. `None` clears the slot.
+pub fn set_device_slot(
+    settings: &Path,
+    slot: &str,
+    device_id: Option<&str>,
+) -> Result<yunari_providers::devices::Assignment, String> {
+    let mut devices = yunari_providers::devices::Assignment::load(settings);
+    let target = match slot {
+        "system-disk" => &mut devices.system_disk,
+        "data-disk" => &mut devices.data_disk,
+        "gpu" => &mut devices.gpu,
+        _ => return Err(format!("{slot} is not a device slot.")),
+    };
+    *target = device_id.map(str::to_owned);
+    devices.save(settings)?;
+    Ok(yunari_providers::devices::Assignment::load(settings))
 }
 
 /// The three backends this host reads, in the order the row cycles them.
@@ -281,6 +315,40 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
             cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_key()),
         ));
     }
+    for (index, (slot, label)) in [("system-disk", "System disk"), ("data-disk", "Data disk")]
+        .into_iter()
+        .enumerate()
+    {
+        let chosen = match slot {
+            "system-disk" => dialog.devices.system_disk.as_deref(),
+            _ => dialog.devices.data_disk.as_deref(),
+        };
+        let state = match chosen {
+            None if slot == "data-disk" => "not assigned".to_owned(),
+            None => "first drive this PC reports".to_owned(),
+            Some(id) => dialog
+                .disks
+                .iter()
+                .find(|(disk_id, _)| disk_id == id)
+                .map(|(_, name)| dialog.devices.name_of(id, name).to_owned())
+                .unwrap_or_else(|| format!("{id} (not present)")),
+        };
+        column = column.child(
+            div()
+                .id(("settings-device-slot", index))
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(rgb(0xe8e8ea))
+                .bg(rgb(0x22222a))
+                .child(format!("{label}: {state}  ·  click to change"))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.cycle_device_slot(slot, cx);
+                })),
+        );
+    }
     for (index, (id, set)) in dialog.source_credentials.iter().enumerate() {
         let state = if *set { "stored" } else { "not set" };
         let label = format!("Source credential {id}: {state}  ·  click to enter");
@@ -368,7 +436,8 @@ mod tests {
     use yunari_host::hosting::Hosting;
 
     use super::{
-        read_weather, read_weather_key_set, set_lan, set_weather_key, weather_key_id, write_weather,
+        read_weather, read_weather_key_set, set_device_slot, set_lan, set_weather_key,
+        weather_key_id, write_weather,
     };
 
     fn temp_settings(name: &str) -> PathBuf {
@@ -460,6 +529,33 @@ mod tests {
         assert_eq!(
             super::read_source_credentials(&settings),
             vec![("lab_key".to_owned(), false)]
+        );
+        std::fs::remove_dir_all(&settings).ok();
+    }
+
+    #[test]
+    fn a_device_slot_round_trips_and_refuses_an_unknown_slot() {
+        let settings = temp_settings("device-slot");
+        let devices =
+            set_device_slot(&settings, "system-disk", Some("wd-blue")).expect("a saved choice");
+        assert_eq!(devices.system_disk.as_deref(), Some("wd-blue"));
+        assert_eq!(
+            yunari_providers::devices::Assignment::load(&settings)
+                .system_disk
+                .as_deref(),
+            Some("wd-blue")
+        );
+        // The next slot is untouched by the first.
+        let devices =
+            set_device_slot(&settings, "data-disk", Some("samsung-ssd")).expect("a saved choice");
+        assert_eq!(devices.system_disk.as_deref(), Some("wd-blue"));
+        assert_eq!(devices.data_disk.as_deref(), Some("samsung-ssd"));
+        // Clearing a slot writes it as unassigned.
+        let devices = set_device_slot(&settings, "data-disk", None).expect("a cleared slot");
+        assert_eq!(devices.data_disk, None);
+        assert!(
+            set_device_slot(&settings, "gpu-cooler", None).is_err(),
+            "an unknown slot"
         );
         std::fs::remove_dir_all(&settings).ok();
     }

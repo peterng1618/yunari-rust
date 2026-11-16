@@ -8,6 +8,7 @@
 
 pub mod clock;
 pub mod custom;
+pub mod devices;
 pub mod frame;
 pub mod game;
 pub mod http;

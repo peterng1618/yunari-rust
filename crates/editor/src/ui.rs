@@ -101,7 +101,7 @@ enum Overlay {
     ImportAsset(Prompt),
     Library(LibraryDialog),
     Widgets(WidgetDialog),
-    Settings(SettingsDialog),
+    Settings(Box<SettingsDialog>),
     Store(StoreDialog),
     Rename(Prompt),
     Field(Prompt),
@@ -326,10 +326,10 @@ impl EditorWindow {
             }
             Command::Settings => {
                 let monitors = settings_dialog::monitor_rows(self.host.as_ref(), cx);
-                self.overlay = Some(Overlay::Settings(SettingsDialog::new(
+                self.overlay = Some(Overlay::Settings(Box::new(SettingsDialog::new(
                     self.settings_dir(),
                     monitors,
-                )));
+                ))));
             }
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
@@ -791,7 +791,7 @@ impl EditorWindow {
             dialog.weather.label, dialog.weather.latitude, dialog.weather.longitude
         );
         self.overlay = Some(Overlay::WeatherPlace {
-            dialog: Box::new(dialog),
+            dialog,
             prompt: Prompt::new(
                 "Weather place",
                 "Label|latitude|longitude, e.g. Berlin|52.52|13.405",
@@ -829,7 +829,41 @@ impl EditorWindow {
             }
             None => "A place needs Label|latitude|longitude, with the numbers in range.".to_owned(),
         });
+        self.overlay = Some(Overlay::Settings(Box::new(dialog)));
+    }
+
+    /// Cycles a disk slot through "not assigned" and each drive this PC
+    /// reports, writing the choice where the providers read it.
+    pub fn cycle_device_slot(&mut self, slot: &'static str, cx: &mut Context<Self>) {
+        let Some(Overlay::Settings(mut dialog)) = self.overlay.take() else {
+            return;
+        };
+        let settings = self.settings_dir();
+        let current = match slot {
+            "system-disk" => dialog.devices.system_disk.clone(),
+            _ => dialog.devices.data_disk.clone(),
+        };
+        let mut options: Vec<Option<String>> = vec![None];
+        options.extend(dialog.disks.iter().map(|(id, _)| Some(id.clone())));
+        let next = match current.as_ref().and_then(|id| {
+            options
+                .iter()
+                .position(|option| option.as_deref() == Some(id.as_str()))
+        }) {
+            Some(index) => options[(index + 1) % options.len()].clone(),
+            None => options[1 % options.len()].clone(),
+        };
+        dialog.message = Some(
+            match settings_dialog::set_device_slot(&settings, slot, next.as_deref()) {
+                Ok(devices) => {
+                    dialog.devices = devices;
+                    "The device choice is saved.".to_owned()
+                }
+                Err(error) => error,
+            },
+        );
         self.overlay = Some(Overlay::Settings(dialog));
+        cx.notify();
     }
 
     /// Asks for the selected backend's key; it is stored under the OS protector
@@ -842,7 +876,7 @@ impl EditorWindow {
             return;
         };
         self.overlay = Some(Overlay::Credential {
-            dialog: Box::new(dialog),
+            dialog,
             id: id.to_owned(),
             prompt: Prompt::new("Weather key", "The key this backend issued to you", ""),
         });
@@ -854,7 +888,7 @@ impl EditorWindow {
             return;
         };
         self.overlay = Some(Overlay::Credential {
-            dialog: Box::new(dialog),
+            dialog,
             prompt: Prompt::new(
                 format!("Credential {id}"),
                 "The value this source's auth expects",
@@ -875,7 +909,7 @@ impl EditorWindow {
         );
         dialog.weather_key_set = settings_dialog::read_weather_key_set(&settings, &dialog.weather);
         dialog.source_credentials = settings_dialog::read_source_credentials(&settings);
-        self.overlay = Some(Overlay::Settings(dialog));
+        self.overlay = Some(Overlay::Settings(Box::new(dialog)));
     }
 
     fn packs_directory(&self) -> PathBuf {
@@ -2171,7 +2205,7 @@ impl EditorWindow {
                     Outcome::Pending => {
                         self.overlay = Some(Overlay::WeatherPlace { dialog, prompt });
                     }
-                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
+                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(dialog)),
                     Outcome::Submit(value) => {
                         self.save_weather_place(*dialog, &value);
                     }
@@ -2185,7 +2219,7 @@ impl EditorWindow {
                 Outcome::Pending => {
                     self.overlay = Some(Overlay::Credential { dialog, id, prompt });
                 }
-                Outcome::Cancel => self.overlay = Some(Overlay::Settings(*dialog)),
+                Outcome::Cancel => self.overlay = Some(Overlay::Settings(dialog)),
                 Outcome::Submit(value) => {
                     self.save_credential(*dialog, &id, &value);
                 }

@@ -69,6 +69,9 @@ pub type Fetch = Box<dyn Fn(&str, u64) -> Result<String, String> + Send + Sync>;
 pub struct LhmProvider {
     base_url: String,
     fetch: Fetch,
+    /// Which card and drive answer the unsuffixed keys. Empty until the host
+    /// hands this provider the settings file.
+    devices: crate::devices::Loader,
     failure: std::sync::Mutex<Option<String>>,
 }
 
@@ -81,8 +84,14 @@ impl LhmProvider {
         Self {
             base_url: base_url.into(),
             fetch,
+            devices: std::sync::Arc::new(crate::devices::Assignment::default),
             failure: std::sync::Mutex::new(None),
         }
+    }
+
+    pub fn with_devices(mut self, devices: crate::devices::Loader) -> Self {
+        self.devices = devices;
+        self
     }
 
     fn sensors(&self) -> Result<Vec<LhmSensor>, String> {
@@ -133,9 +142,10 @@ impl Provider for LhmProvider {
             }
         };
 
+        let assignment = (self.devices)();
         Ok(owned
             .into_iter()
-            .map(|key| reading_of(&sensors, key))
+            .map(|key| reading_of(&sensors, key, &assignment))
             .collect())
     }
 
@@ -148,21 +158,61 @@ impl Provider for LhmProvider {
 }
 
 /// One key's reading from an already-flattened tree.
-fn reading_of(sensors: &[LhmSensor], key: &str) -> Reading {
-    if key == "gpu.name" {
-        return gpu_name(sensors).map_or_else(
-            || Reading::missing(key, "LibreHardwareMonitor reports no GPU."),
-            |name| Reading::text(key, name),
-        );
+fn reading_of(sensors: &[LhmSensor], key: &str, devices: &crate::devices::Assignment) -> Reading {
+    let group = if key.starts_with("gpu.") || key.starts_with("vram.") {
+        Group::Gpu
+    } else if key.starts_with("disk.") {
+        Group::Storage
+    } else {
+        return numeric(sensors, key, None);
+    };
+    let assigned = match (group, key.starts_with("disk.data.")) {
+        (Group::Gpu, _) => devices.gpu.as_deref(),
+        // The second slot answers only once a drive is assigned to it.
+        (_, true) => devices.data_disk.as_deref(),
+        (_, false) => devices.system_disk.as_deref(),
+    };
+    let lookup = device_of(sensors, group, assigned, devices);
+    if key.starts_with("disk.data.") && assigned.is_none() {
+        return Reading::missing(key, "Assign a data disk in Settings.");
     }
-    if key == "disk.name" {
-        return disk_name(sensors).map_or_else(
-            || Reading::missing(key, "LibreHardwareMonitor reports no drive."),
-            |name| Reading::text(key, name),
-        );
+    if key == "gpu.name" || key == "disk.name" {
+        return match lookup {
+            Lookup::Found(device) => Reading::text(key, device.name),
+            Lookup::Gone => Reading::missing(key, assigned_gone(group)),
+            Lookup::NoneDetected => Reading::missing(
+                key,
+                match group {
+                    Group::Storage if assigned.is_none() => {
+                        "Assign a system disk in Settings so a drive can be named."
+                    }
+                    Group::Storage => "LibreHardwareMonitor reports no drive.",
+                    _ => "LibreHardwareMonitor reports no GPU.",
+                },
+            ),
+        };
     }
+    let node = match lookup {
+        Lookup::Found(device) => Some(device.hardware_id),
+        Lookup::Gone => return Reading::missing(key, assigned_gone(group)),
+        // An unassigned storage group is the machine's total across drives — a
+        // legitimate figure no single drive's name describes. An unassigned GPU
+        // is still one card, and nothing has to be scoped for that.
+        Lookup::NoneDetected => None,
+    };
+    numeric(sensors, key, node.as_deref())
+}
 
-    let Some(value) = bindings::read(sensors, key) else {
+fn assigned_gone(group: Group) -> String {
+    match group {
+        Group::Storage => "The assigned drive is not present on this machine.".to_owned(),
+        _ => "The assigned GPU is not present on this machine.".to_owned(),
+    }
+}
+
+/// One key's number, from the scoped sensors.
+fn numeric(sensors: &[LhmSensor], key: &str, node: Option<&str>) -> Reading {
+    let Some(value) = bindings::read_in(sensors, key, node) else {
         return Reading::missing(
             key,
             format!("LibreHardwareMonitor has no sensor for {key} on this machine."),
@@ -180,24 +230,66 @@ fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
-fn gpu_name(sensors: &[LhmSensor]) -> Option<String> {
-    sensors
-        .iter()
-        .find(|sensor| group_of(&sensor.hardware_name, &sensor.hardware_id) == Some(Group::Gpu))
-        .map(|sensor| sensor.hardware_name.clone())
+/// A hardware node the machine reports.
+struct Found {
+    hardware_id: String,
+    name: String,
 }
 
-fn disk_name(sensors: &[LhmSensor]) -> Option<String> {
-    sensors
-        .iter()
-        .find(|sensor| group_of(&sensor.hardware_name, &sensor.hardware_id) == Some(Group::Storage))
-        .map(|sensor| sensor.hardware_name.clone())
+enum Lookup {
+    Found(Found),
+    /// This machine reports no device of that group at all.
+    NoneDetected,
+    /// An assignment names a device the machine no longer reports: a gap, never
+    /// another device's figures.
+    Gone,
+}
+
+/// The hardware node a group's unsuffixed keys describe: the assigned one when
+/// the settings name it, else the first the machine reports — never "the
+/// busiest", because a caption that changes text every sample cannot be read.
+fn device_of(
+    sensors: &[LhmSensor],
+    group: Group,
+    assigned: Option<&str>,
+    devices: &crate::devices::Assignment,
+) -> Lookup {
+    let mut nodes: Vec<(String, String)> = Vec::new();
+    for sensor in sensors {
+        if group_of(&sensor.hardware_name, &sensor.hardware_id) != Some(group) {
+            continue;
+        }
+        if !nodes
+            .iter()
+            .any(|(hardware_id, _)| hardware_id == &sensor.hardware_id)
+        {
+            nodes.push((sensor.hardware_id.clone(), sensor.hardware_name.clone()));
+        }
+    }
+    if nodes.is_empty() {
+        return Lookup::NoneDetected;
+    }
+    let ids: Vec<String> = crate::devices::ids_for(nodes.iter().map(|(_, name)| name.clone()))
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    let chosen = match assigned {
+        Some(assigned) => match ids.iter().position(|id| id == assigned) {
+            Some(index) => index,
+            None => return Lookup::Gone,
+        },
+        None => 0,
+    };
+    let (hardware_id, detected) = &nodes[chosen];
+    Lookup::Found(Found {
+        hardware_id: hardware_id.clone(),
+        name: devices.name_of(&ids[chosen], detected).to_owned(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::Mutex;
 
     use super::*;
     use crate::sample::Status;
@@ -303,7 +395,80 @@ mod tests {
             .sample(&["gpu.name".to_owned(), "disk.name".to_owned()], 0)
             .expect("a cycle");
         assert_eq!(readings[0].text.as_deref(), Some("NVIDIA GeForce RTX 4090"));
+        // A drive's name follows its assignment; an unassigned storage group is
+        // a total across drives, which no drive's name describes.
         assert_eq!(readings[1].status, Status::Missing);
-        let _ = Mutex::new(());
+    }
+
+    #[test]
+    fn an_assigned_card_and_drive_answer_the_unsuffixed_keys() {
+        let body = || {
+            Ok(serde_json::json!({
+                "Children": [{
+                    "Text": "NVIDIA GeForce RTX 4090",
+                    "HardwareId": "/gpu-nvidia/0",
+                    "Children": [{
+                        "Text": "GPU Core", "SensorId": "/gpu-nvidia/0/load/0",
+                        "Type": "Load", "RawValue": "45.0 %"
+                    }]
+                }, {
+                    "Text": "AMD Radeon RX 6800",
+                    "HardwareId": "/gpu-amd/0",
+                    "Children": [{
+                        "Text": "GPU Core", "SensorId": "/gpu-amd/0/load/0",
+                        "Type": "Load", "RawValue": "10.0 %"
+                    }]
+                }, {
+                    "Text": "Samsung SSD 990 PRO",
+                    "HardwareId": "/hdd/0",
+                    "Children": [{
+                        "Text": "Total Space", "SensorId": "/hdd/0/data/0",
+                        "Type": "Data", "RawValue": "1000.0 GB"
+                    }, {
+                        "Text": "Free Space", "SensorId": "/hdd/0/data/1",
+                        "Type": "Data", "RawValue": "400.0 GB"
+                    }]
+                }]
+            })
+            .to_string())
+        };
+        let assignment = crate::devices::Assignment {
+            gpu: Some("amd-radeon-rx-6800".to_owned()),
+            system_disk: Some("samsung-ssd-990-pro".to_owned()),
+            names: [("amd-radeon-rx-6800".to_owned(), "Gaming".to_owned())]
+                .into_iter()
+                .collect(),
+            ..crate::devices::Assignment::default()
+        };
+        let provider = provider(body).with_devices(Arc::new(move || assignment.clone()));
+        let readings = provider
+            .sample(
+                &[
+                    "gpu.load".to_owned(),
+                    "gpu.name".to_owned(),
+                    "disk.used".to_owned(),
+                    "disk.name".to_owned(),
+                ],
+                0,
+            )
+            .expect("a cycle");
+        assert_eq!(readings[0].value, Some(10.0));
+        assert_eq!(readings[1].text.as_deref(), Some("Gaming"));
+        assert_eq!(readings[2].value, Some(600.0));
+        assert_eq!(readings[3].text.as_deref(), Some("Samsung SSD 990 PRO"));
+    }
+
+    #[test]
+    fn an_assigned_device_the_machine_lost_is_a_gap_not_another_device() {
+        let assignment = crate::devices::Assignment {
+            gpu: Some("a-card-this-pc-does-not-have".to_owned()),
+            ..crate::devices::Assignment::default()
+        };
+        let provider = provider(payload).with_devices(Arc::new(move || assignment.clone()));
+        let readings = provider
+            .sample(&["gpu.load".to_owned(), "gpu.name".to_owned()], 0)
+            .expect("a cycle");
+        assert_eq!(readings[0].status, Status::Missing);
+        assert_eq!(readings[1].status, Status::Missing);
     }
 }

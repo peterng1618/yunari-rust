@@ -134,11 +134,18 @@ fn providers(
     settings_dir: &std::path::Path,
 ) -> yunari_providers::registry::Registry {
     let mut registry = yunari_providers::registry::Registry::new();
+    // `devices.json` is read on every poll, so a saved choice reaches the next
+    // sample without a restart.
+    let devices: yunari_providers::devices::Loader = Arc::new({
+        let directory = settings_dir.to_path_buf();
+        move || yunari_providers::devices::Assignment::load(&directory)
+    });
     registry.add(yunari_providers::clock::ClockProvider::new());
-    registry.add(yunari_providers::system::SystemProvider::new());
+    registry
+        .add(yunari_providers::system::SystemProvider::new().with_devices(Arc::clone(&devices)));
     // LHM is an external program: absent, every key it owns is a gap with the
     // reason rather than a poll failure.
-    registry.add(yunari_providers::lhm::LhmProvider::new(lhm_url));
+    registry.add(yunari_providers::lhm::LhmProvider::new(lhm_url).with_devices(devices));
     // RTSS first, PresentMon when RTSS cannot report; both only run while a
     // display binds `frame.*`.
     registry.add(yunari_providers::frame::FrameProvider::new(vec![

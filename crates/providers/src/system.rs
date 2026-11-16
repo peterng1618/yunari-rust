@@ -139,6 +139,9 @@ struct Counters {
 pub struct SystemProvider {
     snapshot: Box<dyn Snapshot>,
     previous: Mutex<BTreeMap<String, Counters>>,
+    /// Which drive answers the abstract `disk.*` slots. Empty until the host
+    /// hands this provider the settings file.
+    devices: crate::devices::Loader,
 }
 
 impl SystemProvider {
@@ -146,6 +149,7 @@ impl SystemProvider {
         Self {
             snapshot: Box::new(SysinfoSnapshot::new()),
             previous: Mutex::new(BTreeMap::new()),
+            devices: std::sync::Arc::new(crate::devices::Assignment::default),
         }
     }
 
@@ -153,7 +157,13 @@ impl SystemProvider {
         Self {
             snapshot: Box::new(snapshot),
             previous: Mutex::new(BTreeMap::new()),
+            devices: std::sync::Arc::new(crate::devices::Assignment::default),
         }
+    }
+
+    pub fn with_devices(mut self, devices: crate::devices::Loader) -> Self {
+        self.devices = devices;
+        self
     }
 }
 
@@ -169,6 +179,35 @@ fn offered_keys(disks: &[Disk], networks: &[Network]) -> Vec<(Descriptor, Key)> 
                 Key::RamPercent,
             ),
         ];
+        // The abstract disk slots: a theme asks `disk.used` and the host says
+        // which drive that is. They exist whenever any drive does, so a theme
+        // written on one PC reads on another.
+        if !disks.is_empty() {
+            keys.push((Descriptor::new("disk.name", None), Key::DiskName));
+            for (slot, prefix) in [(Slot::System, "disk"), (Slot::Data, "disk.data")] {
+                keys.push((
+                    Descriptor::new(format!("{prefix}.used"), Some("GB")),
+                    Key::DiskSlot {
+                        slot,
+                        quantity: "used".to_owned(),
+                    },
+                ));
+                keys.push((
+                    Descriptor::new(format!("{prefix}.total"), Some("GB")),
+                    Key::DiskSlot {
+                        slot,
+                        quantity: "total".to_owned(),
+                    },
+                ));
+                keys.push((
+                    Descriptor::new(format!("{prefix}.used.percent"), Some("%")),
+                    Key::DiskSlot {
+                        slot,
+                        quantity: "percent".to_owned(),
+                    },
+                ));
+            }
+        }
         for disk in disks {
             let slug = semantic_id(&disk.name);
             if slug.is_empty() {
@@ -222,8 +261,51 @@ enum Key {
     RamUsed,
     RamTotal,
     RamPercent,
-    Disk { name: String, quantity: String },
-    Network { name: String, download: bool },
+    Disk {
+        name: String,
+        quantity: String,
+    },
+    /// One of the abstract slots a theme binds without knowing this machine's
+    /// drives: the assigned drive, or the first one reported.
+    DiskSlot {
+        slot: Slot,
+        quantity: String,
+    },
+    DiskName,
+    Network {
+        name: String,
+        download: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    System,
+    Data,
+}
+
+/// The drive an abstract slot answers with, and the id the settings name it by.
+/// The system slot falls back to the first drive reported, the way a theme with
+/// no choice shows the machine's main disk; the data slot answers only once a
+/// drive is assigned to it.
+fn slot_disk<'a>(
+    disks: &'a [Disk],
+    devices: &crate::devices::Assignment,
+    slot: Slot,
+) -> Option<(String, &'a Disk)> {
+    let ids: Vec<String> = crate::devices::ids_for(disks.iter().map(|disk| disk.name.clone()))
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    let assigned = match slot {
+        Slot::System => devices.system_disk.as_deref(),
+        Slot::Data => Some(devices.data_disk.as_deref()?),
+    };
+    let index = match assigned {
+        Some(assigned) => ids.iter().position(|id| id == assigned)?,
+        None => 0,
+    };
+    Some((ids.get(index)?.clone(), disks.get(index)?))
 }
 
 impl Provider for SystemProvider {
@@ -260,8 +342,44 @@ impl Provider for SystemProvider {
             return Ok(Vec::new());
         }
         let mut readings = Vec::with_capacity(wanted.len());
+        let devices = (self.devices)();
         for (semantic_key, key) in wanted {
             let reading = match key {
+                Key::DiskSlot { slot, quantity } => match slot_disk(&disks, &devices, *slot) {
+                    Some((_, disk)) => {
+                        let percent = |disk: &Disk| {
+                            if disk.total_bytes == 0 {
+                                0.0
+                            } else {
+                                disk.used_bytes as f64 / disk.total_bytes as f64 * 100.0
+                            }
+                        };
+                        match quantity.as_str() {
+                            "used" => Reading::number(
+                                semantic_key.clone(),
+                                disk.used_bytes as f64 / GIB,
+                                "GB",
+                            ),
+                            "total" => Reading::number(
+                                semantic_key.clone(),
+                                disk.total_bytes as f64 / GIB,
+                                "GB",
+                            ),
+                            _ => Reading::number(semantic_key.clone(), percent(disk), "%"),
+                        }
+                    }
+                    None if *slot == Slot::Data => {
+                        Reading::missing(semantic_key.clone(), "Assign a data disk in Settings.")
+                    }
+                    None => Reading::missing(semantic_key.clone(), "this machine reports no disk"),
+                },
+                Key::DiskName => match slot_disk(&disks, &devices, Slot::System) {
+                    Some((id, disk)) => Reading::text(
+                        semantic_key.clone(),
+                        devices.name_of(&id, &disk.name).to_owned(),
+                    ),
+                    None => Reading::missing(semantic_key.clone(), "this machine reports no disk"),
+                },
                 Key::CpuLoad => match self.snapshot.cpu_load() {
                     Some(load) => Reading::number(semantic_key.clone(), load, "%"),
                     None => {
@@ -408,10 +526,67 @@ mod tests {
         let keys: Vec<&str> = described.iter().map(|d| d.semantic_key.as_str()).collect();
         assert!(keys.contains(&"disk.samsung-ssd-990-pro.used"));
         assert!(keys.contains(&"disk.wd-blue.free"));
+        // Six per-device keys plus the abstract slots a theme may bind instead.
+        assert!(keys.contains(&"disk.used"));
+        assert!(keys.contains(&"disk.used.percent"));
+        assert!(keys.contains(&"disk.total"));
+        assert!(keys.contains(&"disk.name"));
+        assert!(keys.contains(&"disk.data.used"));
         assert_eq!(
             keys.iter().filter(|key| key.starts_with("disk.")).count(),
-            6
+            13
         );
+    }
+
+    #[test]
+    fn the_abstract_slots_answer_the_assigned_drive() {
+        let assignment = crate::devices::Assignment {
+            system_disk: Some("wd-blue".to_owned()),
+            data_disk: Some("samsung-ssd-990-pro".to_owned()),
+            names: [("wd-blue".to_owned(), "Data drive".to_owned())]
+                .into_iter()
+                .collect(),
+            ..crate::devices::Assignment::default()
+        };
+        let provider = SystemProvider::with_snapshot(two_disks())
+            .with_devices(Arc::new(move || assignment.clone()));
+        let readings = provider
+            .sample(
+                &[
+                    "disk.used".to_owned(),
+                    "disk.total".to_owned(),
+                    "disk.name".to_owned(),
+                    "disk.data.total".to_owned(),
+                    "disk.data.used.percent".to_owned(),
+                ],
+                1_000,
+            )
+            .expect("a poll");
+        // The assigned system drive, by its saved name.
+        assert_eq!(readings[0].value, Some(1.0));
+        assert_eq!(readings[1].value, Some(2.0));
+        assert_eq!(readings[2].text.as_deref(), Some("Data drive"));
+        // The data slot is the other drive.
+        assert_eq!(readings[3].value, Some(500.0));
+        assert!((readings[4].value.unwrap() - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn an_unassigned_data_slot_is_a_reason_not_the_wrong_drive() {
+        let provider = SystemProvider::with_snapshot(two_disks());
+        let readings = provider
+            .sample(
+                &["disk.data.used".to_owned(), "disk.used".to_owned()],
+                1_000,
+            )
+            .expect("a poll");
+        assert_eq!(readings[0].status, crate::sample::Status::Missing);
+        assert_eq!(
+            readings[0].message.as_deref(),
+            Some("Assign a data disk in Settings.")
+        );
+        // Unassigned, the system slot is the first drive the machine reports.
+        assert_eq!(readings[1].value, Some(100.0));
     }
 
     #[test]
