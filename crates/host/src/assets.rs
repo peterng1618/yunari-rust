@@ -25,6 +25,8 @@ pub struct Stock {
     pub preset: Option<&'static str>,
     /// The credential id a search needs, when the source is keyed.
     pub requires: Option<&'static str>,
+    /// "grid" answers a search; "font-picker" answers the font tab's shape.
+    pub body: &'static str,
 }
 
 pub const STOCKS: &[Stock] = &[
@@ -34,12 +36,14 @@ pub const STOCKS: &[Stock] = &[
         category: "icon",
         preset: None,
         requires: None,
+        body: "grid",
     },
     Stock {
         id: "lucide",
         label: "Lucide",
         category: "icon",
         preset: None,
+        body: "grid",
         requires: None,
     },
     Stock {
@@ -47,6 +51,7 @@ pub const STOCKS: &[Stock] = &[
         label: "Lineicons",
         category: "icon",
         preset: None,
+        body: "grid",
         requires: None,
     },
     Stock {
@@ -54,6 +59,7 @@ pub const STOCKS: &[Stock] = &[
         label: "WebGradients",
         category: "colour",
         preset: Some("gradient"),
+        body: "grid",
         requires: None,
     },
     Stock {
@@ -61,6 +67,7 @@ pub const STOCKS: &[Stock] = &[
         label: "UI Gradients",
         category: "colour",
         preset: Some("gradient"),
+        body: "grid",
         requires: None,
     },
     Stock {
@@ -68,13 +75,23 @@ pub const STOCKS: &[Stock] = &[
         label: "ColorSwoop",
         category: "colour",
         preset: Some("palette"),
+        body: "grid",
         requires: None,
+    },
+    Stock {
+        id: "google-fonts",
+        label: "Google Fonts",
+        category: "font",
+        preset: None,
+        requires: None,
+        body: "font-picker",
     },
     Stock {
         id: "unsplash",
         label: "Unsplash",
         category: "image",
         preset: None,
+        body: "grid",
         requires: Some("unsplash"),
     },
     Stock {
@@ -82,6 +99,7 @@ pub const STOCKS: &[Stock] = &[
         label: "Color Hunt",
         category: "colour",
         preset: Some("palette"),
+        body: "grid",
         requires: None,
     },
 ];
@@ -897,6 +915,217 @@ fn unsplash_bytes(result: &str, key: &str) -> Option<AssetBytes> {
     )
 }
 
+const FONTSOURCE: &str = "https://api.fontsource.org/v1/fonts";
+const FONTSOURCE_CDN: &str = "https://cdn.jsdelivr.net/fontsource/fonts";
+/// One page of family results; the registry holds about two thousand.
+const FONT_PAGE: usize = 24;
+
+fn plain_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn npm_version(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_digit())
+        && bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'+' | b'-')
+        })
+}
+
+/// One cut's id names the pinned artifact path, so the bytes can be rebuilt
+/// without holding the registry open between two calls.
+fn font_cut_id(id: &str, version: &str, subset: &str, weight: u32, style: &str) -> String {
+    format!("cut:{id}@{version}/{subset}-{weight}-{style}")
+}
+
+fn font_cut_url(cut: &str) -> Option<String> {
+    let rest = cut.strip_prefix("cut:")?;
+    let (id, rest) = rest.split_once('@')?;
+    let (version, file) = rest.split_once('/')?;
+    if !plain_segment(id) || !npm_version(version) {
+        return None;
+    }
+    let (subset, weight, style) = split_cut_file(file)?;
+    Some(format!(
+        "{FONTSOURCE_CDN}/{id}@{version}/{subset}-{weight}-{style}.woff2"
+    ))
+}
+
+/// `subset-weight-style`, read from the right: a subset may carry hyphens.
+fn split_cut_file(file: &str) -> Option<(&str, &str, &str)> {
+    let (head, style) = file.rsplit_once('-')?;
+    if style != "normal" && style != "italic" {
+        return None;
+    }
+    let (subset, weight) = head.rsplit_once('-')?;
+    if !plain_segment(subset) || weight.is_empty() || !weight.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((subset, weight, style))
+}
+
+/// A family's published cuts, rebuilt from validated keys so an upstream
+/// `@latest` or a foreign origin never reaches the wire.
+fn fontsource_cuts(detail: &Value) -> Vec<Value> {
+    let id = detail.get("id").and_then(Value::as_str).unwrap_or_default();
+    let family = detail
+        .get("family")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let version = detail
+        .get("npmVersion")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let licence = detail
+        .get("license")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if !plain_segment(id) || !npm_version(version) {
+        return Vec::new();
+    }
+    let Some(variants) = detail.get("variants").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut cuts = Vec::new();
+    for (weight_key, styles) in variants {
+        let Ok(weight) = weight_key.parse::<u32>() else {
+            continue;
+        };
+        if weight == 0 {
+            continue;
+        }
+        let Some(subsets) = styles.get("normal").and_then(Value::as_object) else {
+            continue;
+        };
+        for (subset, face) in subsets {
+            if !plain_segment(subset) {
+                continue;
+            }
+            let Some(url) = face
+                .get("url")
+                .and_then(|url| url.get("woff2"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            // The row's id advertises subset/weight/style and the fetch uses
+            // the path those keys name; a published path that disagrees would
+            // serve a different cut, so the pairing is not offered at all.
+            let file = url.rsplit('/').next().unwrap_or_default();
+            if file != format!("{subset}-{weight}-normal.woff2") {
+                continue;
+            }
+            let cut = font_cut_id(id, version, subset, weight, "normal");
+            let pinned = format!("{FONTSOURCE_CDN}/{id}@{version}/{subset}-{weight}-normal.woff2");
+            cuts.push(json!({
+                "id": cut,
+                "source": "google-fonts",
+                "family": family,
+                "weight": weight,
+                "style": "normal",
+                "subset": subset,
+                "format": "woff2",
+                "previewUrl": pinned,
+                "licence": licence,
+                "sourceUrl": pinned,
+            }));
+        }
+    }
+    cuts
+}
+
+/// A family row is addressed by its first cut, preferring the default subset
+/// at weight 400 so the row's own bytes are the face authors expect.
+fn fontsource_result(detail: &Value) -> Option<Value> {
+    let family = detail.get("family").and_then(Value::as_str)?;
+    let category = detail
+        .get("category")
+        .and_then(Value::as_str)
+        .unwrap_or("font");
+    let default_subset = detail
+        .get("defSubset")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let licence = detail
+        .get("license")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let cuts = fontsource_cuts(detail);
+    let lead = cuts
+        .iter()
+        .find(|cut| cut["subset"] == default_subset && cut["weight"] == 400)
+        .or_else(|| cuts.iter().find(|cut| cut["weight"] == 400))
+        .or_else(|| cuts.iter().find(|cut| cut["subset"] == default_subset))
+        .or_else(|| cuts.first())?;
+    Some(json!({
+        "id": lead["id"],
+        "name": family,
+        "kind": "font",
+        "preview": "",
+        "subtitle": format!("{category} · {} cuts", cuts.len()),
+        "licence": licence,
+        "sourceUrl": lead["sourceUrl"],
+        "font": {"cuts": cuts},
+    }))
+}
+
+fn fontsource_search(query: &str, page: u32) -> Result<Page, String> {
+    let body = yunari_providers::http::get(&format!("{FONTSOURCE}?type=google"), TIMEOUT_MS)?;
+    let Value::Array(entries) = serde_json::from_str(&body)
+        .map_err(|_| "Fontsource's registry is not a list.".to_owned())?
+    else {
+        return Err("Fontsource's registry is not a list.".to_owned());
+    };
+    let wanted = icon_fold(query.trim());
+    let matches: Vec<(String, String)> = entries
+        .iter()
+        .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("google"))
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str)?;
+            let family = entry.get("family").and_then(Value::as_str)?;
+            Some((id.to_owned(), family.to_owned()))
+        })
+        .filter(|(_, family)| wanted.is_empty() || icon_fold(family).contains(&wanted))
+        .collect();
+    let start = (page_of(page) - 1) * FONT_PAGE;
+    let asked = &matches[start.min(matches.len())..(start + FONT_PAGE).min(matches.len())];
+    let mut results = Vec::new();
+    for (id, _) in asked {
+        // One unread or malformed family is one missing row, not a failed
+        // page: the others this page asked for still reach the picker.
+        let Ok(body) = yunari_providers::http::get(
+            &format!("{FONTSOURCE}/{}", yunari_providers::http::encode(id)),
+            TIMEOUT_MS,
+        ) else {
+            continue;
+        };
+        let Ok(detail) = serde_json::from_str::<Value>(&body) else {
+            continue;
+        };
+        if let Some(result) = fontsource_result(&detail) {
+            results.push(result);
+        }
+    }
+    Ok(Page {
+        results,
+        total_pages: u32::try_from(matches.len().div_ceil(FONT_PAGE))
+            .unwrap_or(u32::MAX)
+            .max(1),
+    })
+}
+
+fn fontsource_bytes(result: &str) -> Option<AssetBytes> {
+    let url = font_cut_url(result)?;
+    let name = result.trim_start_matches("cut:").replace(['@', '/'], "-");
+    Some(
+        yunari_providers::http::get_bytes(&url, TIMEOUT_MS, 16 * 1024 * 1024)
+            .map(|bytes| (bytes, "font/woff2", format!("{name}.woff2"))),
+    )
+}
+
 /// Searches one stock source with the host's own HTTP client.
 pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
     search_with(id, query, page, None)
@@ -918,6 +1147,9 @@ pub fn search_with(
     if id == "unsplash" {
         let key = credential.ok_or_else(|| "Unsplash needs an access key.".to_owned())?;
         return unsplash_search(query, page, key);
+    }
+    if id == "google-fonts" {
+        return fontsource_search(query, page);
     }
     if id == "fontawesome-free" {
         let catalogue = fontawesome()?;
@@ -1011,6 +1243,9 @@ pub fn bytes_with(id: &str, result: &str, credential: Option<&str>) -> Option<As
         };
         return unsplash_bytes(result, key);
     }
+    if id == "google-fonts" {
+        return fontsource_bytes(result);
+    }
     if id == "fontawesome-free" {
         return fontawesome_bytes(result);
     }
@@ -1075,6 +1310,41 @@ mod tests {
         let next = r#"<https://api.unsplash.com/photos?page=3>; rel="next""#;
         assert_eq!(unsplash_feed_pages(next, 2, 4), 3);
         assert_eq!(unsplash_feed_pages("", 2, 4), 2);
+    }
+
+    #[test]
+    fn a_google_family_offers_only_cuts_whose_published_path_agrees() {
+        let detail = serde_json::json!({
+            "id": "roboto",
+            "family": "Roboto",
+            "defSubset": "latin",
+            "category": "sans-serif",
+            "license": "OFL-1.1",
+            "npmVersion": "5.0.0",
+            "variants": {
+                "400": {"normal": {
+                    "latin": {"url": {"woff2": "https://cdn.jsdelivr.net/fontsource/fonts/roboto@5.0.0/latin-400-normal.woff2"}},
+                    "cyrillic": {"url": {"woff2": "https://cdn.jsdelivr.net/fontsource/fonts/roboto@5.0.0/cyrillic-400-normal.woff2"}},
+                }},
+                "700": {"normal": {
+                    // A path that disagrees with its own keys is not offered.
+                    "latin": {"url": {"woff2": "https://cdn.jsdelivr.net/fontsource/fonts/roboto@5.0.0/latin-500-normal.woff2"}},
+                }},
+            },
+        });
+        let result = fontsource_result(&detail).expect("a family row");
+        assert_eq!(result["id"], "cut:roboto@5.0.0/latin-400-normal");
+        assert_eq!(result["name"], "Roboto");
+        assert_eq!(result["subtitle"], "sans-serif · 2 cuts");
+        assert_eq!(result["licence"], "OFL-1.1");
+        let url = font_cut_url("cut:roboto@5.0.0/latin-400-normal").expect("a URL");
+        assert_eq!(
+            url,
+            "https://cdn.jsdelivr.net/fontsource/fonts/roboto@5.0.0/latin-400-normal.woff2"
+        );
+        assert!(font_cut_url("cut:roboto@latest/latin-400-normal").is_none());
+        assert!(font_cut_url("cut:roboto@5.0.0/latin-400-medium").is_none());
+        assert!(font_cut_url("https://example.com/x.woff2").is_none());
     }
 
     #[test]
