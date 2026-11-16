@@ -185,9 +185,9 @@ gpui-kit shell preserving today's structure and rules:
   packs.
 - Assets: finder grid, import, place, crop, background framing; Wallpaper Engine
   source kept.
-- Modes: `Themes` local library + store catalogue; `Settings` This PC (machine,
-  displays, panels, sensor providers, store account) and Editor (preferences,
-  shortcuts).
+- Modes: `Themes` local library plus a `Store…` dialog that lists the catalogue
+  and this account's items; `Settings` This PC (machine, displays, panels,
+  sensor providers, store account) and Editor (preferences, shortcuts).
 - Persistence: `%USERPROFILE%\.yunari\themes\<id>\theme.json` plus `assets/`;
   `.yunari-theme` ZIP import/export with manifest, theme, optional thumbnail,
   declared assets and credits; validation before write.
@@ -682,8 +682,8 @@ recorded product decision.
 | 9 | Host-owned widget packs and path-preset list, `user:`/`pack:` refs, one-time browser migration | Partial | Packs are host-owned and installed per PC; the path-preset store, `user:`/`pack:` refs and the browser migration are not ported |
 | 10 | Starter theme and default widget pack as committed packages | Met | `yunari_packs::STARTER` is a committed package the host installs on an empty folder; the starter theme is built in Rust beside `blank()` |
 | 11 | Local-first theme library | Met | `yunari-library` writes `themes/<id>/theme.json` + `assets/`; source themes are lifted on read |
-| 12 | Browse the store catalogue | Partial | `GET /api/store/themes` proxies and caches the configured origin; no catalogue UI, versions or thumbnails |
-| 13 | Install a package, sign in, submit a theme, see own submissions | Deferred | Store account and install path are not ported (phase 6 note) |
+| 12 | Browse the store catalogue | Partial | `GET /api/store/themes` proxies and caches the configured origin; the editor's `Store…` dialog lists name, kind, version and publisher. Listing thumbnails are not drawn, and the browser-side catalogue pages are not ported |
+| 13 | Install a package, sign in, submit a theme, see own submissions | Done | Sign-in is the Worker's social flow through a one-use loopback state, with the session sealed by DPAPI and never shown to the browser. The `Store…` dialog installs a listing after the host checks its address, size and SHA-256, submits a stored theme through the version ladder, and lists this account's items with publish and unpublish |
 | 14 | CPU, memory, disks, network, clock | Met | `system` + `clock` providers via `sysinfo`/`jiff` |
 | 15 | Temperatures, fans, power, per-GPU detail through LHM | Met | Caption table with a generated binding list; absent LHM is one sentence per key |
 | 16 | Frame metrics from RTSS or PresentMon | Met | RTSS shared memory first, PresentMon ETW fallback, rolling 60 s window |
@@ -700,7 +700,7 @@ recorded product decision.
 | 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
 | 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | GET sources with pointers, plain-text `headers` and `query` (both validated, a query value percent-encoded so it cannot add a parameter), and a per-source `timeoutMs` (500 ms–30 s). Paged sources fetch every page in order and merge them, failing whole when one page fails. `auth` is deferred: it needs the encrypted credential store |
 | 29 | Extension platform | Dropped | Out of scope for v1 (this spec) |
-| 30 | Store: five kinds, version ladder, verified download, staged refusals, kill list, publisher rules, consent | Deferred | Only the catalogue listing is proxied; nothing downloads or installs yet |
+| 30 | Store: five kinds, version ladder, verified download, staged refusals, kill list, publisher rules, consent | Partial | The ladder, verified download (https, same origin as the configured store, size and SHA-256) and staged refusals are ported, and installing a dashboard theme, widget pack or editor theme is wired into the `Store…` dialog. Path-preset packs and plugins are refused with a sentence. The kill list, publisher rules and the catalogue-index build command stay on the deployed Worker and are not reproduced host-side; install consent is the Install press itself |
 | 31 | Readings are truthful | Met | Non-negotiable in `sample::{Reading, Status}` and every provider test |
 | 32 | The theme is portable | Partial | Native JSON envelope plus `.yunari-theme` import/export with validation before write; background framing is authored document state, not yet split into `background-media.json` |
 | 33 | The previous major is the compatibility floor | Deviation | The native schema is `1.0.0`; a source `3.0.0` theme is lifted on read and re-saved in the native shape, with the original beside it as `theme.fabric.json`. No 2.x migration, and any other major is refused |
@@ -713,7 +713,7 @@ recorded product decision.
 | 40 | Player at `/`, display-only, installable | Met | The browser player paints the host's DisplayList over SSE; the planned WASM bundle was not needed, so the page stays small. Installing it is the browser's own prompt |
 | 41 | Editor at `/editor`, `/settings` forwarded to it | Dropped | The native editor replaces both served surfaces (this spec) |
 | 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
-| 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones and autostart. Publish, the store account, sensor-provider and display settings panels, and the asset finder are not ported |
+| 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones and autostart; the Store… dialog signs in, installs, submits a theme and publishes or withdraws this account's items. The sensor-provider and display settings panels and the asset finder are not ported |
 | 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Settings lists this PC's monitors and turns each into a display record. Autostart is there too. There is no tray menu and no HTTP monitor enumeration |
 | 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the `yunari-mcp` binary bridges stdio to it through the port in `host.lock`. A skill installer is deferred |
 | 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |

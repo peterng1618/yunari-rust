@@ -46,8 +46,8 @@
   - `Client::new(origin, token, Send)`, methods `baseline(id) -> Result<Option<Baseline>, ClientError>`, `create_version(id, &CreateInput) -> Result<Plan, ClientError>`, `upload(url, &[u8])`, `finalize(id, version, thumbnail: &[u8], luminance: Option<f64>)`, `unpublish(id)`, `publish(id)`, `mine()`, `favorite(id, bool)`
   - `ClientError { status: u16, message: String }`
 
-- [ ] Tests: session survives a write/read round trip, a corrupt file is `None`, clear removes it; a 401 body `{"message":"…"}` becomes that sentence, an empty 404 baseline is `None`, a non-JSON 2xx is an error.
-- [ ] Implement both modules; commit.
+- [x] Tests: session survives a write/read round trip, a corrupt file is `None`, clear removes it; a 401 body `{"message":"…"}` becomes that sentence, an empty 404 baseline is `None`, a non-JSON 2xx is an error.
+- [x] Implement both modules; commit.
 
 ### Task 2: Host session routes
 
@@ -60,8 +60,8 @@
 - Produces: `POST /api/store/auth/start` → `{url}`; `GET /api/store/auth/return?state&token` → HTML sentence; `GET /api/store/session` → `{signedIn,email?}`; `POST /api/store/auth/sign-out` → `{ok:true}`; `GET /api/store/mine`; `POST /api/store/items/:id/publish|unpublish`.
 - `PendingStates` in memory: 10-minute TTL, 64 entries, one use each, bound to the loopback origin.
 
-- [ ] Tests: a state minted for `127.0.0.1:5229` is refused for another origin and on replay; signed-out `session` and `mine` answer 401 with the source's sentence; a 401 from the Worker clears the stored token.
-- [ ] Implement; commit.
+- [x] Tests: a state minted for `127.0.0.1:5229` is refused for another origin and on replay; signed-out `session` and `mine` answer 401 with the source's sentence; a 401 from the Worker clears the stored token.
+- [x] Implement; commit.
 
 ### Task 3: Theme origins and install
 
@@ -75,8 +75,8 @@
 - Kind handling: `dashboard-theme` → read with `yunari_library` package reader, save under a library id derived from the catalogue id, then write the origin (rollback the fresh copy on a failed origin write); `widget-pack` → `yunari_packs::install`; `editor-theme` → `<settings>/editor-themes/<id>.yunari-theme` after `yunari_library::package` accepts it; `path-preset-pack`/`plugin` → `stage: "store"` refusal.
 - Route `POST /api/store/install` (loopback only) answering `{ok,id}` or `{ok:false,stage,message}` with 400/502 by stage.
 
-- [ ] Tests: a good widget pack installs; a wrong digest writes nothing; an unknown kind is refused; reinstall of the same catalogue id reuses its library id; a foreign origin cannot reach the route.
-- [ ] Implement; commit.
+- [x] Tests: a good widget pack installs; a wrong digest writes nothing; an unknown kind is refused; reinstall of the same catalogue id reuses its library id; a foreign origin cannot reach the route.
+- [x] Implement; commit.
 
 ### Task 4: Submission
 
@@ -89,8 +89,8 @@
 - `pub fn thumbnail(document: &ThemeDocument, assets: &BTreeMap<String, Vec<u8>>) -> Result<(Vec<u8>, f64), String>` — render at 640 wide with `yunari-render-raster`, encode PNG with `image`, mean luminance 0–1.
 - `POST /api/themes/submit` body `{id}`: read the library theme, build the package with the library's own writer, `baseline` → choose the level → `create_version` → `upload` → `finalize`; answer `{ok:true,status,version:{from,to,level}}`.
 
-- [ ] Tests: ladder cases; an unchanged envelope is `none`; a missing id is 400; no session is 401; an upload 401 forgets the session; the thumbnail is a valid PNG of the artboard's aspect.
-- [ ] Implement; commit.
+- [x] Tests: ladder cases; an unchanged envelope is `none`; a missing id is 400; no session is 401; an upload 401 forgets the session; the thumbnail is a valid PNG of the artboard's aspect.
+- [x] Implement; commit.
 
 ### Task 5: Editor Store mode
 
@@ -102,10 +102,10 @@
 - Consumes: `/api/store/session`, the catalogue proxy `GET /api/store/themes`, `/api/store/install`, `/api/store/mine`, `/api/themes/submit`, `/api/store/auth/*`; the host's loopback origin from `host.lock`/bound port.
 - Produces: a Store mode with the catalogue list (name, kind, version, publisher, install button), a Mine list (version, status, publish/unpublish, Submit on a library theme), sign-in state with email and a Sign out action; install and submit answer with the host's own sentence.
 
-- [ ] Tests: catalogue rows render from a fixture listing; an install press posts the item's facts and no bytes; a signed-out Mine state offers Sign in; a submit answer shows the level and version the host reported.
-- [ ] Implement; commit.
+- [x] Tests: catalogue rows render from a fixture listing; an install press posts the item's facts and no bytes; a signed-out Mine state offers Sign in; a submit answer shows the level and version the host reported.
+- [x] Implement; commit.
 
 ### Task 6: Spec rows
 
-- [ ] Update rows 12, 13, 30, 43, 49 honestly; note the dropped kinds and the unported catalogue-index generator.
-- [ ] Commit.
+- [x] Update rows 12, 13, 30, 43, 49 honestly; note the dropped kinds and the unported catalogue-index generator.
+- [x] Commit.
