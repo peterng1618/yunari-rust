@@ -5,6 +5,8 @@
 //! resulting segment sits inside the node's box. Backends shape the segment
 //! they are handed and paint it; they never re-wrap.
 
+use serde::Serialize;
+
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping,
     Style as TextPosture, Weight,
@@ -50,7 +52,7 @@ impl Default for Fonts {
 
 /// How a run is drawn: the face it names and the size and colour it resolves
 /// to. Positions are the layout's business, so they are not here.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextStyle {
     /// The family the run's type token names. Absent takes the shaper's own
     /// sans-serif choice.
@@ -104,7 +106,7 @@ pub enum TextOverflow {
 }
 
 /// A laid-out paragraph in the text node's own box space.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextLayout {
     /// Segments in paint order, each with its left edge and line top.
     pub segments: Vec<TextSegment>,
@@ -113,7 +115,7 @@ pub struct TextLayout {
 }
 
 /// One run's share of one line, positioned and ready to shape.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextSegment {
     /// Left edge and line top, in the box's own coordinates. A backend that
     /// paints baselines reads the ascent from its own shaping, so the line box

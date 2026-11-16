@@ -73,9 +73,20 @@ pub fn app(config: HostConfig) -> Shared {
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),
         library: yunari_library::Library::new(config.themes_dir()),
         bound_port: AtomicU16::new(config.port),
+        streams: crate::stream::Streams::new(),
+        registry: providers(),
         authority,
         config,
     })
+}
+
+/// The providers this PC can read through. A host with none still serves the
+/// clock and says why every other key is a gap.
+fn providers() -> yunari_providers::registry::Registry {
+    let mut registry = yunari_providers::registry::Registry::new();
+    registry.add(yunari_providers::clock::ClockProvider::new());
+    registry.add(yunari_providers::system::SystemProvider::new());
+    registry
 }
 
 pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
@@ -109,6 +120,7 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
         .authority
         .as_ref()
         .map(|authority| tokio_rustls::TlsAcceptor::from(authority.server_config()));
+    crate::stream::spawn(app.clone());
     let router = crate::http::router(app.clone());
     let live = Arc::new(AtomicUsize::new(0));
     let (shutdown, mut stopped) = oneshot::channel();

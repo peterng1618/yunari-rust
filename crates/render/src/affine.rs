@@ -1,9 +1,10 @@
 //! A 2×3 affine transform, in the order a backend already speaks:
 //! `a b c d e f`, mapping `(x, y)` to `(a x + c y + e, b x + d y + f)`.
 
+use serde::Serialize;
 use yunari_model::document::Transform;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Affine {
     pub a: f32,
     pub b: f32,

@@ -4,11 +4,13 @@
 //! panel receives, and the canvas the phone player drives. A backend decides
 //! how to draw an op, never what to draw.
 
+use serde::Serialize;
+
 use crate::affine::Affine;
 use crate::color::Color;
 use crate::text::TextLayout;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DisplayList {
     pub width: f32,
     pub height: f32,
@@ -21,7 +23,7 @@ pub struct DisplayList {
 }
 
 /// The page's picture and how it dissolves into the fill.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Backdrop {
     pub asset_id: String,
     pub path: String,
@@ -33,7 +35,7 @@ pub struct Backdrop {
     pub flip_y: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Op {
     pub transform: Affine,
     pub shape: Shape,
@@ -41,13 +43,13 @@ pub struct Op {
     pub stroke: Option<Stroke>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Stroke {
     pub paint: Paint,
     pub width: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Shape {
     Rect {
         width: f32,
@@ -92,7 +94,7 @@ pub enum Shape {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum PathCommand {
     MoveTo(f32, f32),
     LineTo(f32, f32),
@@ -101,7 +103,7 @@ pub enum PathCommand {
     Close,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Paint {
     Solid(Color),
     Linear {
@@ -111,7 +113,7 @@ pub enum Paint {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct GradientStop {
     pub offset: f32,
     pub color: Color,

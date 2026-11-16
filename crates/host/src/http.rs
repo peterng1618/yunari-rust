@@ -34,6 +34,8 @@ pub struct App {
     pub library: yunari_library::Library,
     /// The port the listener actually took, which the first attempt may not be.
     pub bound_port: std::sync::atomic::AtomicU16,
+    pub streams: crate::stream::Streams,
+    pub registry: yunari_providers::registry::Registry,
 }
 
 pub type Shared = Arc<App>;
@@ -56,6 +58,8 @@ pub fn router(app: Shared) -> axum::Router {
             get(sessions).post(new_session),
         )
         .route("/api/displays", get(displays))
+        .route("/ws", get(ws))
+        .route("/api/sensors", get(sensors))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
         app,
@@ -377,6 +381,107 @@ async fn displays(State(app): State<Shared>, ConnectInfo(peer): ConnectInfo<Sock
         .map(|store| store.list().to_vec())
         .unwrap_or_default();
     Json(json!({"displays": displays})).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamQuery {
+    keys: Option<String>,
+    lang: Option<String>,
+    display: Option<String>,
+}
+
+async fn ws(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<StreamQuery>,
+) -> Response {
+    let loopback = is_loopback(peer.ip());
+    let display = authenticated(&app, &headers).or_else(|| {
+        if loopback {
+            Some(query.display.clone().unwrap_or_else(|| crate::displays::DEFAULT_DISPLAY.to_owned()))
+        } else {
+            None
+        }
+    });
+    let Some(display) = display else {
+        return (StatusCode::UNAUTHORIZED, "This display is not paired with the host.").into_response();
+    };
+    let keys: Vec<String> = query
+        .keys
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let lang = query.lang.filter(|lang| {
+        lang.len() <= 64
+            && lang
+                .split('-')
+                .next()
+                .is_some_and(|part| (2..=8).contains(&part.len()))
+    });
+    let (id, receiver) = match app.streams.register(display, keys, lang) {
+        Ok(stream) => stream,
+        Err(refusal) => return (StatusCode::TOO_MANY_REQUESTS, refusal.message()).into_response(),
+    };
+    let cleanup = Unregister {
+        app: app.clone(),
+        id,
+    };
+    let stream = futures_util::stream::unfold((receiver, cleanup), |(mut receiver, cleanup)| async move {
+        receiver
+            .recv()
+            .await
+            .map(|text| (Ok::<_, std::convert::Infallible>(text), (receiver, cleanup)))
+    });
+    let mut response = Response::new(Body::from_stream(stream));
+    let out = response.headers_mut();
+    out.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+    out.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-transform"),
+    );
+    out.insert(header::CONNECTION, HeaderValue::from_static("keep-alive"));
+    out.insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}
+
+/// The stream's slot is released when its body is dropped, which happens when
+/// the phone goes away.
+struct Unregister {
+    app: Shared,
+    id: u64,
+}
+
+impl Drop for Unregister {
+    fn drop(&mut self) {
+        self.app.streams.unregister(self.id);
+    }
+}
+
+async fn sensors(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if !is_loopback(peer.ip()) && authenticated(&app, &headers).is_none() {
+        return (StatusCode::UNAUTHORIZED, "This display is not paired with the host.").into_response();
+    }
+    let sensors: Vec<Value> = app
+        .registry
+        .describe()
+        .into_iter()
+        .map(|descriptor| {
+            json!({
+                "semanticKey": descriptor.semantic_key,
+                "unit": descriptor.unit,
+            })
+        })
+        .collect();
+    Json(json!({"sensors": sensors})).into_response()
 }
 
 /// Serve one request body, used by the player page for its own JSON.

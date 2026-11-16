@@ -10,6 +10,7 @@ publish = false
 axum = "0.8.9"
 base64 = "0.22"
 bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http-body-util = "0.1"
 jiff.workspace = true
 hyper = { version = "1", features = ["http1", "http2", "server"] }
@@ -26,3 +27,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signa
 tokio-rustls = "0.26"
 tower = "0.5"
 yunari-library.workspace = true
+yunari-model.workspace = true
+yunari-providers.workspace = true
+yunari-render.workspace = true

@@ -4,7 +4,9 @@
 //! the forms the editor writes and refuses the rest rather than painting a
 //! guess: a colour it cannot read becomes an issue with a reason.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Color {
     pub r: u8,
     pub g: u8,

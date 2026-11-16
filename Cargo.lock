@@ -8744,6 +8744,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "futures-util",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -8760,6 +8761,9 @@ dependencies = [
  "tokio-rustls",
  "tower",
  "yunari-library",
+ "yunari-model",
+ "yunari-providers",
+ "yunari-render",
 ]
 
 [[package]]
@@ -8811,6 +8815,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "jiff",
+ "serde",
  "serde_json",
  "svgtypes 0.16.2",
  "yunari-model",

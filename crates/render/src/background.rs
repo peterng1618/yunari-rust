@@ -7,6 +7,8 @@
 //! known, so the area and its ramps are computable from the document alone;
 //! only the crop waits for the bytes.
 
+use serde::Serialize;
+
 use yunari_model::document::{BackgroundAnchor, BackgroundComposition, BackgroundMedia};
 
 /// The area's share of the box when an edge anchor names no extent.
@@ -71,7 +73,7 @@ pub struct Composition {
 
 /// The authored scale and pan, clamped to the document's ranges. A non-finite
 /// value is a refused reading, not a number to round.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Geometry {
     pub scale: f32,
     pub offset_x: f32,
