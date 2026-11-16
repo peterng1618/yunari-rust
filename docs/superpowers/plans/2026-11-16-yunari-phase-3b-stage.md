@@ -309,6 +309,6 @@ fn pasting_a_node_whose_asset_is_missing_still_pastes_and_reports_it() {}
 
 ### Task 8: Phase 3B exit check
 
-- [ ] **Step 1:** Drive the real window (targeted synthetic keys and clicks): marquee two rectangles, group them, move the group until it snaps to the artboard centre, resize a corner, rotate, nudge by 10 with Shift, undo once per gesture, reorder in the panel, lock and confirm the canvas refuses, align and distribute three nodes, duplicate and paste. Capture screenshots at: fit view, mid-drag with guides, the layers panel with a hidden child, after group.
-- [ ] **Step 2:** Record the exit in the spec's Phase status, including the deliberate simplifications (axis-aligned handles on rotated nodes, no spacing/gap snapping, no drag-reorder in the panel, no skew) and what was not exercised.
-- [ ] **Step 3:** Commit. `docs: record phase 3B's exit`
+- [x] **Step 1:** Drove the real window with synthetic keys: the fit view and zoom keys, two rectangles selected with `Ctrl+A` (outlines, "2 selected"), delete and one undo, a text behind a rectangle through `Ctrl+[` and its undo, `Ctrl+G` on two rectangles, `Ctrl+Shift+G`, `Ctrl+D`, `Ctrl+C`/`Ctrl+V` ("Pasted 2"), one undo per op. Screenshots: fit view, selection with handles, the layers panel with both rows, after group, after ungroup, after duplicate, after paste. Marquee, mid-drag guides, resize and rotate need the pointer and were not captured — the same reason recorded in the spec.
+- [x] **Step 2:** Record the exit in the spec's Phase status, including the deliberate simplifications (axis-aligned handles on rotated nodes, no spacing/gap snapping, no drag-reorder in the panel, no skew) and what was not exercised.
+- [x] **Step 3:** Commit. `docs: record phase 3B's exit`

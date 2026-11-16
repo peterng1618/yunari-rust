@@ -370,3 +370,58 @@ Recorded as each phase's exit is met, with the evidence that met it.
   `Library::list`, covered by library tests.
 - Deferred to 3B/3C: dragging, snapping, zoom/pan, layers, grouping, the inspector,
   palette and type-token editing, asset import, charts.
+
+**Phase 3B — met (2026-11-16).** Plan:
+`docs/superpowers/plans/2026-11-16-yunari-phase-3b-stage.md`.
+
+- The artboard is a stage: `Viewport` carries the source's constants (0.02–64
+  scale, 1.1 ladder, wheel zoom divided by 1000, 48 px overscroll, 16 px line
+  height); wheel pans, Ctrl+wheel zooms at the cursor, Space or middle-drag pans,
+  `+`/`-`/`0`/`Shift+1` change the camera, and the status line shows the zoom.
+  Driven: fit 84 %, `+` `+` 101 %, `-` 92 %, `0` back to fit.
+- Selection is a list of ids: click replaces, Shift-click toggles, a marquee takes
+  fully contained visible nodes, `Ctrl+A` takes the roots, `Escape` clears. Hits
+  invert the node's drawn transform, so a rotated node is taken where it is
+  painted. Every refresh drops ids the document no longer has, and Delete removes
+  the whole list in one edit. Driven: two rectangles, `Ctrl+A` shows "2 selected"
+  with two outlines, `Delete`, then one `Ctrl+Z` restores both and neither is
+  selected.
+- Snapping draws lines from the artboard's edges and centre and from every
+  visible node outside the drag; the nearest line inside 5 screen pixels wins,
+  a boundary beats an edge and an edge a centre, Ctrl turns it off, and guides
+  paint dashed in `#3D8BF4` across the artboard.
+- Move, resize, rotate and nudge go through `Editor::begin_burst`/`end_burst`, so
+  any one gesture is a single undo entry; the pure geometry lives in
+  `transform.rs` (uniform corners, Shift frees, Alt resizes about the centre,
+  whole-degree rotation, 1-unit minimum, one line of arrow-nudge bursts after a
+  300 ms idle).
+- The layers panel is a 220 px right column: rows read topmost-first with depth,
+  a child of a hidden group reads hidden, groups fold with a caret, and a row
+  click selects (Ctrl toggles, Shift extends). `Ctrl+]`/`Ctrl+[` raise and lower;
+  hide, lock and rename are `Editor` edits. Driven: reordering a text behind a
+  rectangle changed both the panel order and the paint, and `Ctrl+Z` restored it.
+- Arrange aligns 2+ nodes on the first selected node and distributes equal gaps
+  for 3+; any locked member refuses the whole op. Grouping rebases the selection
+  into a union-box group and ungrouping bakes the offset back. The clipboard
+  copies bindings and asset references, pastes at +10 with fresh node and binding
+  ids and re-pointed runs, and reports the pictures the document cannot show.
+  Driven: `Ctrl+G` made a selected group of two rectangles, `Ctrl+Shift+G` put
+  both back, `Ctrl+D` added two copies at +10, `Ctrl+C`/`Ctrl+V` added two more
+  and the status line read "Pasted 2", each undone by one `Ctrl+Z`.
+- Deliberate simplifications, each with its upgrade path recorded in the code:
+  handles paint axis-aligned and a turned node offers only the turn handle
+  (resize would need the pointer in node space); snapping has no spacing/gap
+  mode; the panel has no drag-reorder; nothing skews; marquee and canvas hit test
+  top-level nodes, so a child is selected through the panel; a second click on
+  the only selected row renames it because gpui's click event carries no click
+  count.
+- Not exercised: every pointer path — marquee, drag with guides, resize, rotate
+  and the panel's row and toolbar clicks. The driver only delivers synthetic
+  keyboard input while the window keeps focus, and pointer input needs the
+  foreground, which would take over the user's screen. Their maths and the
+  `Editor` edits behind them are covered by 70 editor tests; the handle chrome,
+  selection outlines, guides and panel rows were confirmed painted in
+  screenshots.
+- Deferred to 3C: the inspector (per-kind fields), add/create beyond rectangle
+  and text, palette and type-token editing, asset import, chart binding sources,
+  presets.
