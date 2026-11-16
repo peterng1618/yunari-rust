@@ -35,6 +35,7 @@ use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use crate::document::{Editor, Source};
 use crate::persistence::import_package;
+use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 
 /// How often the window looks at the sampler; the sampler decides when a poll
 /// is actually due, so this only bounds how late a new reading can be.
@@ -107,6 +108,15 @@ pub struct EditorWindow {
     /// Where the canvas was last painted, so a click can be turned into an
     /// artboard point.
     canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The author's camera. Changes never enter history.
+    viewport: Viewport,
+    /// Whether the author has moved the camera; until they do the artboard is
+    /// kept fitted as the canvas resizes.
+    camera_touched: bool,
+    /// Canvas pixel the current pan drag started at.
+    panning: Option<Point<Pixels>>,
+    /// Space holds pan mode, as in the source.
+    space_held: bool,
     polling: bool,
 }
 
@@ -138,6 +148,13 @@ impl EditorWindow {
             status: None,
             focus: cx.focus_handle(),
             canvas_bounds: Rc::new(Cell::new(None)),
+            viewport: Viewport {
+                scale: 1.0,
+                offset: (0.0, 0.0),
+            },
+            camera_touched: false,
+            panning: None,
+            space_held: false,
             polling: false,
         }
     }
@@ -315,6 +332,7 @@ impl EditorWindow {
             Ok(()) => {
                 self.selection = None;
                 self.overlay = None;
+                self.camera_touched = false;
                 self.status = Some(Status::ok(format!("Opened {id}")));
                 self.point_images();
                 self.refresh();
@@ -346,6 +364,7 @@ impl EditorWindow {
                 self.editor = Editor::new(blank());
                 self.selection = None;
                 self.overlay = None;
+                self.camera_touched = false;
                 self.status = None;
                 self.point_images();
                 self.refresh();
@@ -380,16 +399,24 @@ impl EditorWindow {
         ))
     }
 
+    fn artboard(&self) -> (f64, f64) {
+        (
+            self.editor.document().artboard.width,
+            self.editor.document().artboard.height,
+        )
+    }
+
+    /// A window pixel as an artboard point, if the canvas has been painted.
+    fn scene_at(&self, position: Point<Pixels>) -> Option<(f64, f64)> {
+        let bounds = self.canvas_bounds.get()?;
+        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
+        Some(self.viewport.to_scene(local))
+    }
+
     fn select_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(bounds) = self.canvas_bounds.get() else {
+        let Some((x, y)) = self.scene_at(position) else {
             return;
         };
-        let fit = yunari_render_gpui::Fit::new(&self.list, bounds);
-        if fit.scale <= 0.0 {
-            return;
-        }
-        let x = f64::from(f32::from(position.x) - fit.origin.0) / f64::from(fit.scale);
-        let y = f64::from(f32::from(position.y) - fit.origin.1) / f64::from(fit.scale);
         let hit = node_at(self.editor.document(), x, y);
         if hit != self.selection {
             self.selection = hit;
@@ -397,9 +424,90 @@ impl EditorWindow {
         }
     }
 
+    /// Middle-drag or Space+drag pans the camera.
+    fn pan_start(&mut self, position: Point<Pixels>) {
+        self.panning = Some(position);
+    }
+
+    fn pan_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(last) = self.panning else {
+            return;
+        };
+        self.panning = Some(event.position);
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let dx = f32::from(event.position.x) - f32::from(last.x);
+        let dy = f32::from(event.position.y) - f32::from(last.y);
+        self.viewport.pan_by(dx, dy, bounds, self.artboard());
+        self.camera_touched = true;
+        cx.notify();
+    }
+
+    fn on_scroll(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
+        if self.overlay.is_some() {
+            return;
+        }
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let (dx, dy) = match event.delta {
+            ScrollDelta::Pixels(delta) => (f32::from(delta.x), f32::from(delta.y)),
+            ScrollDelta::Lines(delta) => (delta.x * LINE_HEIGHT, delta.y * LINE_HEIGHT),
+        };
+        let cursor = point(
+            event.position.x - bounds.origin.x,
+            event.position.y - bounds.origin.y,
+        );
+        let board = self.artboard();
+        if event.modifiers.control || event.modifiers.platform {
+            self.viewport
+                .zoom_at(wheel_factor(dy), cursor, bounds, board);
+        } else if event.modifiers.shift {
+            self.viewport.pan_by(-dx, 0.0, bounds, board);
+        } else {
+            self.viewport.pan_by(0.0, -dy, bounds, board);
+        }
+        self.camera_touched = true;
+        cx.notify();
+    }
+
+    /// `+`/`-` walk the 1.1 ladder and `Shift+1` fits.
+    fn zoom_key(&mut self, key: &str, shift: bool) -> bool {
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return false;
+        };
+        let board = self.artboard();
+        match key {
+            "+" | "=" => self.viewport.zoom_by(ZOOM_STEP, bounds, board),
+            "-" | "_" => self.viewport.zoom_by(1.0 / ZOOM_STEP, bounds, board),
+            "0" => {
+                self.viewport.fit(bounds, board);
+                self.camera_touched = false;
+                return true;
+            }
+            "1" | "!" if shift => {
+                self.viewport.fit(bounds, board);
+                self.camera_touched = false;
+                return true;
+            }
+            _ => return false,
+        }
+        self.camera_touched = true;
+        true
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let Some(overlay) = self.overlay.take() else {
+            if keystroke.key == "space" {
+                self.space_held = true;
+                return;
+            }
+            if self.zoom_key(&keystroke.key, keystroke.modifiers.shift) {
+                cx.notify();
+                return;
+            }
             if let Some(command) = Command::from_key(
                 &keystroke.key,
                 keystroke.modifiers.control,
@@ -444,6 +552,24 @@ impl EditorWindow {
     }
 
     /// Throws the open document away and runs what the guard was holding.
+    fn on_key_up(&mut self, event: &KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "space" && self.space_held {
+            self.space_held = false;
+            cx.notify();
+        }
+    }
+
+    /// Keeps the artboard fitted until the author moves the camera.
+    fn frame_camera(&mut self) {
+        if self.camera_touched {
+            return;
+        }
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        self.viewport = Viewport::contain(self.artboard(), bounds);
+    }
+
     fn discard(&mut self, resume: Resume, window: &mut Window, cx: &mut Context<Self>) {
         self.overlay = None;
         if resume == Resume::Quit {
@@ -485,16 +611,41 @@ impl EditorWindow {
         let images = self.images.clone();
         let bounds_cell = self.canvas_bounds.clone();
         let selection = self.selection_rect();
+        let view = self.viewport;
         div()
             .id("canvas")
             .flex_1()
             .w_full()
             .bg(rgb(0x101014))
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
+                this.on_scroll(event, cx)
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    this.select_at(event.position, cx)
+                    if this.space_held {
+                        this.pan_start(event.position);
+                    } else {
+                        this.select_at(event.position, cx);
+                    }
                 }),
+            )
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(|this, event: &MouseDownEvent, _, _| {
+                    this.pan_start(event.position)
+                }),
+            )
+            .on_mouse_move(
+                cx.listener(|this, event: &MouseMoveEvent, _, cx| this.pan_drag(event, cx)),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.panning = None),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.panning = None),
             )
             .child(
                 canvas(
@@ -503,12 +654,18 @@ impl EditorWindow {
                         bounds
                     },
                     move |_, bounds, window, cx| {
+                        let fit = yunari_render_gpui::Fit {
+                            scale: view.scale,
+                            origin: (
+                                f32::from(bounds.origin.x) + view.offset.0,
+                                f32::from(bounds.origin.y) + view.offset.1,
+                            ),
+                        };
                         let mut store = images.borrow_mut();
-                        yunari_render_gpui::paint(&list, bounds, window, cx, &mut store);
+                        yunari_render_gpui::paint_fitted(&list, fit, window, cx, &mut store);
                         let Some((x, y, width, height)) = selection else {
                             return;
                         };
-                        let fit = yunari_render_gpui::Fit::new(&list, bounds);
                         window.paint_quad(PaintQuad {
                             bounds: Bounds {
                                 origin: fit.point(x as f32, y as f32),
@@ -555,6 +712,8 @@ impl EditorWindow {
                 Source::Library { id, .. } => format!("· {id}"),
                 Source::Unsaved => "· not in the library".to_owned(),
             });
+        let zoom = format!("{:.0}%", self.viewport.scale * 100.0);
+        line = line.child(zoom);
         if let Some(status) = &self.status {
             line = line.child(
                 div()
@@ -709,6 +868,7 @@ impl Render for EditorWindow {
         if !self.focus.is_focused(window) {
             self.focus.focus(window, cx);
         }
+        self.frame_camera();
         // Closing the window is the same decision as New or Open: unsaved work
         // is discarded only on purpose. A refused close keeps the window open
         // with the guard showing.
@@ -744,6 +904,7 @@ impl Render for EditorWindow {
             .text_color(rgb(INK))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            .on_key_up(cx.listener(Self::on_key_up))
             .children(rows)
     }
 }

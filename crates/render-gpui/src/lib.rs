@@ -65,7 +65,18 @@ pub fn paint(
     cx: &mut App,
     images: &mut Images,
 ) {
-    let fit = Fit::new(list, bounds);
+    paint_fitted(list, Fit::new(list, bounds), window, cx, images);
+}
+
+/// Paint a display list through a caller-chosen fit, which is what an editor's
+/// viewport is: the same frame, placed and scaled by the author's camera.
+pub fn paint_fitted(
+    list: &DisplayList,
+    fit: Fit,
+    window: &mut Window,
+    cx: &mut App,
+    images: &mut Images,
+) {
     // A page picture is composed against the whole artboard, and a frosted
     // panel samples what is painted beneath it, so either makes the frame one
     // image rather than an op-by-op paint.
@@ -305,6 +316,17 @@ mod tests {
         assert_eq!(fit.scale, 2.0);
         assert_eq!(fit.origin, (0.0, 50.0));
         assert_eq!(f32::from(fit.point(10.0, 10.0).y), 70.0);
+    }
+
+    #[test]
+    fn a_caller_chosen_fit_places_the_artboard_where_it_says() {
+        // An editor's viewport is just a Fit; painting must not recompute it.
+        let fit = Fit {
+            scale: 2.0,
+            origin: (10.0, 20.0),
+        };
+        assert_eq!(fit.point(0.0, 0.0), point(px(10.0), px(20.0)));
+        assert_eq!(fit.point(5.0, 5.0), point(px(20.0), px(30.0)));
     }
 
     #[test]
