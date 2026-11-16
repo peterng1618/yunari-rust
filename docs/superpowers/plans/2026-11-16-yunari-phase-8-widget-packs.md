@@ -88,4 +88,4 @@
 - [x] Run the workspace gates.
 - [x] Commit.
 
-This is product item 10's widget-pack half. Its theme half — a committed starter theme behind a "New from template" command — is not built; the editor still opens an empty artboard.
+This covers product item 10: the pack ships committed, and `New` (and a fresh window) now opens a starter document with a title and a clock reading live, on the blank theme's tokens. The theme is built in Rust beside `blank()` rather than read from a committed JSON file; the commands, undo and `Editor` paths are the same either way.

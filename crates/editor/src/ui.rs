@@ -18,10 +18,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use gpui_kit::*;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
-    Artboard, ArtboardShape, Background, ChartContent, ChartFamily, ContentFit, ImageContent,
-    ImageFit, Metadata, Node, NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap, StyleRef,
-    StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform, TypeToken,
-    TypeWeight, VerticalAlign,
+    Artboard, ArtboardShape, Background, Binding, ChartContent, ChartFamily, ContentFit,
+    ImageContent, ImageFit, Metadata, Node, NodeKind, Paint, PaletteEntry, StyleLiteral, StyleMap,
+    StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform,
+    TypeToken, TypeWeight, VerticalAlign,
 };
 use yunari_providers::clock::ClockProvider;
 use yunari_providers::registry::Registry;
@@ -187,7 +187,7 @@ pub struct EditorWindow {
 
 impl EditorWindow {
     fn new(library: Library, cx: &mut Context<Self>) -> Self {
-        let document = blank();
+        let document = starter();
         let mut fonts = Fonts::new();
         let (list, issues) = yunari_render::build(&document, &mut fonts);
         let mut registry = Registry::new();
@@ -642,7 +642,7 @@ impl EditorWindow {
     fn resume(&mut self, resume: Resume, cx: &mut Context<Self>) {
         match resume {
             Resume::New => {
-                self.editor = Editor::new(blank());
+                self.editor = Editor::new(starter());
                 self.selection.clear();
                 self.overlay = None;
                 self.camera_touched = false;
@@ -2125,9 +2125,70 @@ impl Render for EditorWindow {
     }
 }
 
-/// The theme an author starts from, matching the source editor's blank theme:
-/// the three role tokens and the eight paint tokens every card expects, on a
-/// 1920 x 1080 artboard.
+/// The theme a new document starts from: a title and a clock reading live, so
+/// the first frame shows a working value rather than an empty board. The tokens
+/// are the source editor's blank theme.
+fn starter() -> ThemeDocument {
+    let mut document = blank();
+    let mut title = text_node(&document);
+    title.id = free_id(&document, "title");
+    title.transform = Transform {
+        x: 96.0,
+        y: 88.0,
+        width: 720.0,
+        height: 80.0,
+        ..Transform::default()
+    };
+    if let NodeKind::Text { content } = &mut title.kind {
+        content.runs = vec![TextRun::Literal {
+            text: "Untitled".to_owned(),
+            type_token: "typeTokens.heading".to_owned(),
+            style: style_with_fill("#e8e8ea"),
+        }];
+    }
+    document.nodes.push(title);
+
+    let mut clock = text_node(&document);
+    clock.id = free_id(&document, "clock");
+    clock.transform = Transform {
+        x: 96.0,
+        y: 176.0,
+        width: 360.0,
+        height: 96.0,
+        ..Transform::default()
+    };
+    if let NodeKind::Text { content } = &mut clock.kind {
+        content.runs = vec![TextRun::Value {
+            binding_id: "clock-value".to_owned(),
+            precision: None,
+            unit_display: None,
+            type_token: "typeTokens.heading".to_owned(),
+            style: style_with_fill("#ecf5ff"),
+        }];
+    }
+    let clock_id = clock.id.clone();
+    document.nodes.push(clock);
+    document.bindings.insert(
+        clock_id,
+        vec![Binding {
+            id: "clock-value".to_owned(),
+            semantic_key: "time.now".to_owned(),
+            precision: None,
+            unit_display: None,
+            scale: None,
+            offset: None,
+            unit: None,
+            auto_scale: None,
+            format: None,
+            time_zone: None,
+        }],
+    );
+    document
+}
+
+/// The tokens and artboard a new document shares, matching the source editor's
+/// blank theme: the three role tokens and the eight paint tokens every card
+/// expects, on a 1920 x 1080 artboard.
 fn blank() -> ThemeDocument {
     let mut type_tokens = BTreeMap::new();
     for (id, family, weight) in [
@@ -2676,9 +2737,9 @@ mod tests {
     // Named imports, not the module glob: GPUI exports its own `test`
     // attribute, and a glob would shadow the built-in one.
     use super::{
-        INSET, Node, NodeKind, Path, STEP, StyleMap, ThemeDocument, Transform, blank, chart_node,
-        export_path, free_id, image_node, images_for, line_node, place, rectangle_node, slug,
-        suggested_id,
+        INSET, Node, NodeKind, Path, STEP, StyleMap, TextRun, ThemeDocument, Transform, blank,
+        chart_node, export_path, free_id, image_node, images_for, line_node, place, rectangle_node,
+        slug, starter, suggested_id,
     };
 
     #[test]
@@ -2740,6 +2801,25 @@ mod tests {
         assert!(document.palette.contains_key("none"));
         assert_eq!(document.palette.len(), 8);
         assert!(yunari_model::validate::validate_document(&document).is_ok());
+    }
+
+    #[test]
+    fn a_new_document_starts_with_a_title_and_a_live_clock() {
+        let document = starter();
+        assert_eq!(document.nodes.len(), 2);
+        let clock = &document.nodes[1];
+        let NodeKind::Text { content } = &clock.kind else {
+            panic!("the second node is text");
+        };
+        assert!(matches!(&content.runs[0], TextRun::Value { .. }));
+        let bindings = document.bindings.get(&clock.id).expect("a binding");
+        assert_eq!(bindings[0].semantic_key, "time.now");
+        // The clock is what the sampler must poll for this document.
+        let wanted = yunari_render::reading::wanted_keys(&document);
+        assert!(
+            wanted.iter().any(|key| key == "time.now"),
+            "the clock is polled"
+        );
     }
 
     #[test]
