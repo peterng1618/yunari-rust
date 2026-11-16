@@ -36,6 +36,7 @@ use self::prompt::{Outcome, Prompt};
 use crate::arrange;
 use crate::document::{Editor, Source};
 use crate::inspector;
+use crate::palette;
 use crate::layers::{self, Move as LayerMove};
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
@@ -835,7 +836,27 @@ impl EditorWindow {
             return;
         };
         let mut outcome = Ok(());
-        self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
+        if let Some(rest) = key.strip_prefix("palette.") {
+            outcome = if rest == "new" {
+                let (name, colour) = value
+                    .split_once('=')
+                    .map_or((value, value), |(name, colour)| (name, colour));
+                self.editor
+                    .add_palette(name, colour)
+                    .map(|_| ())
+                    .ok_or_else(|| "A new colour needs name = #rrggbb".to_owned())
+            } else if let Some(entry) = rest.strip_suffix(".name") {
+                if self.editor.rename_palette(entry, value) {
+                    Ok(())
+                } else {
+                    Err("A token name is one non-empty line".to_owned())
+                }
+            } else {
+                self.editor.set_palette_colour(rest, value)
+            };
+        } else {
+            self.editor.edit(|document| outcome = inspector::apply(document, &id, &key, value));
+        }
         match outcome {
             Ok(()) => {
                 self.status = Some(Status::ok(format!("Set {}", key.rsplit('.').next().unwrap_or(&key))));
@@ -862,6 +883,7 @@ impl EditorWindow {
                     .into_any_element(),
             );
         }
+        let palette = self.editor.document().palette.clone();
         for (section_index, section) in sections.into_iter().enumerate() {
             children.push(
                 div()
@@ -904,6 +926,73 @@ impl EditorWindow {
                 );
             }
         }
+        children.push(
+            div()
+                .px_2()
+                .pt_3()
+                .text_xs()
+                .text_color(rgb(MUTED))
+                .child("Palette")
+                .into_any_element(),
+        );
+        for (index, (id, entry)) in palette.into_iter().enumerate() {
+            let colour_key = format!("palette.{id}");
+            let name_key = format!("palette.{id}.name");
+            let colour = palette::paint_text(&entry.value);
+            let name = entry.name.clone();
+            let (name_for_edit, colour_for_edit) = (name.clone(), colour.clone());
+            children.push(
+                div()
+                    .id(("palette", index))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .text_sm()
+                    .child(
+                        div()
+                            .id(("palette-name", index))
+                            .flex_1()
+                            .text_color(rgb(INK))
+                            .cursor_pointer()
+                            .child(name)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.begin_field(&name_key, "token name", &name_for_edit, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(("palette-colour", index))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_sm()
+                            .bg(rgb(0x101014))
+                            .text_color(rgb(INK))
+                            .cursor_pointer()
+                            .child(colour)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.begin_field(&colour_key, "token colour", &colour_for_edit, cx)
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
+        children.push(
+            div()
+                .id("palette-add")
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(rgb(MUTED))
+                .cursor_pointer()
+                .child("+ Add colour")
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.begin_field("palette.new", "new colour", "", cx)
+                }))
+                .into_any_element(),
+        );
         div()
             .w(px(260.0))
             .flex_shrink_0()

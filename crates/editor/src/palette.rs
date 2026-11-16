@@ -5,7 +5,7 @@
 //! token which no longer exists renders a gap.
 
 use serde_json::Value;
-use yunari_model::document::{Paint, StyleValue, ThemeDocument};
+use yunari_model::document::{Paint, ThemeDocument};
 
 use crate::document::Editor;
 
@@ -140,7 +140,7 @@ impl Editor {
 /// Tests only: a document with one style that refers to `palette.<id>`.
 #[cfg(test)]
 mod tests {
-    use yunari_model::document::{StyleLiteral, StyleRef};
+    use yunari_model::document::{StyleLiteral, StyleRef, StyleValue};
 
     use crate::fixtures::{document, rect};
 
