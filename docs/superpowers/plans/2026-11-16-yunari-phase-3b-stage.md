@@ -237,7 +237,7 @@ fn rotation_snaps_to_whole_degrees() { /* 44.6 -> 45 */ }
   `Editor::raise(id, Move)` / `Editor::reorder(id, target_index)` where `Move::{Front, Forward, Backward, Back}` and a reorder is one history entry;
   `Editor::set_visible(id, bool)` (hiding hides one node, showing reveals the ancestor path), `Editor::set_locked(id, bool)` (applied to the node's root), `Editor::rename_node(id, &str)` (trimmed; empty clears; refused if the model's `is_object_name` says no).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -256,11 +256,11 @@ fn showing_a_child_reveals_its_ancestors() {}
 fn renaming_to_whitespace_clears_the_name() {}
 ```
 
-- [ ] **Step 2:** Run, see them fail.
-- [ ] **Step 3:** Implement in `layers.rs` and the `Editor` helpers (all through `edit`, so history and dirty stay in step).
-- [ ] **Step 4:** Render the panel: fixed 220 px right column, one row per `Row` (indent by depth, name, eye and lock toggles), click selects (Ctrl+click toggles, Shift+click extends), double-click renames through the existing prompt. Keyboard: `Ctrl+]` front, `Ctrl+[` back, and panel commands for forward/backward.
-- [ ] **Step 5:** By hand: reorder with `Ctrl+]`/`Ctrl+[`, hide and show, lock a node and confirm the canvas refuses to move it, rename, undo each.
-- [ ] **Step 6:** Commit. `feat(editor): a layers panel that reorders, hides, locks and renames`
+- [x] **Step 2:** Run, see them fail.
+- [x] **Step 3:** Implement in `layers.rs` and the `Editor` helpers (all through `edit`, so history and dirty stay in step).
+- [x] **Step 4:** Render the panel: fixed 220 px right column, one row per `Row` (indent by depth, name, eye and lock toggles, a caret on groups), click selects (Ctrl toggles, Shift extends), and a second click on the only selected row renames it through the existing prompt — gpui's `ClickEvent` carries no click count, so there is no double-click. Keyboard: `Ctrl+]` front, `Ctrl+[` back.
+- [x] **Step 5:** By hand: two nodes, `Ctrl+[` sent the selected text behind the rectangle (panel order and paint both changed) and one `Ctrl+Z` restored both. Hide, lock, rename and forward/backward are `Editor` methods covered by tests; their row clicks need pointer input the driver cannot deliver.
+- [x] **Step 6:** Commit. `feat(editor): a layers panel that reorders, hides, locks and renames`
 
 ### Task 7: Arrange, group, clipboard
 

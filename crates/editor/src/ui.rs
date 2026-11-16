@@ -9,7 +9,7 @@ pub mod menus;
 pub mod prompt;
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -34,6 +34,7 @@ use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use crate::document::{Editor, Source};
+use crate::layers::{self, Move as LayerMove};
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
 use crate::snap;
@@ -85,6 +86,7 @@ enum Overlay {
     SaveAs(Prompt),
     Import(Prompt),
     Library(LibraryDialog),
+    Rename(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
     Confirm { message: String, resume: Resume },
 }
@@ -142,6 +144,10 @@ pub struct EditorWindow {
     guides: Vec<snap::Guide>,
     /// Bumped per arrow press so a stale idle timer ends nothing.
     nudge_epoch: u64,
+    /// Group rows the layers panel is showing the children of.
+    expanded: BTreeSet<String>,
+    /// The row a rename prompt is editing.
+    renaming: Option<String>,
     overlay: Option<Overlay>,
     status: Option<Status>,
     focus: FocusHandle,
@@ -188,6 +194,8 @@ impl EditorWindow {
             gesture: None,
             guides: Vec::new(),
             nudge_epoch: 0,
+            expanded: BTreeSet::new(),
+            renaming: None,
             overlay: None,
             status: None,
             focus: cx.focus_handle(),
@@ -669,6 +677,52 @@ impl EditorWindow {
         cx.notify();
     }
 
+    /// A click on a layers row: Ctrl toggles, Shift extends, a second click on
+    /// the only selected row renames it, and a plain click selects.
+    fn layer_click(&mut self, id: &str, modifiers: Modifiers, cx: &mut Context<Self>) {
+        if modifiers.control || modifiers.platform {
+            self.selection.toggle(id);
+        } else if modifiers.shift {
+            if !self.selection.contains(id) {
+                self.selection.toggle(id);
+            }
+        } else if self.selection.len() == 1 && self.selection.contains(id) {
+            let name = selection::find(self.editor.document(), id)
+                .and_then(|node| node.name.clone())
+                .unwrap_or_else(|| {
+                    selection::find(self.editor.document(), id)
+                        .map_or_else(String::new, |node| layers::kind_name(node).to_owned())
+                });
+            self.renaming = Some(id.to_owned());
+            self.overlay = Some(Overlay::Rename(Prompt::new(
+                "Rename layer",
+                "A name; empty clears it",
+                name,
+            )));
+        } else {
+            self.selection.replace(id);
+        }
+        cx.notify();
+    }
+
+    fn rename_node(&mut self, value: &str) {
+        let Some(id) = self.renaming.take() else {
+            return;
+        };
+        if self.editor.rename_node(&id, value) {
+            self.refresh();
+        } else {
+            self.status = Some(Status::error("Names are one line and at most 120 characters"));
+        }
+    }
+
+    fn toggle_expanded(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(id) {
+            self.expanded.insert(id.to_owned());
+        }
+        cx.notify();
+    }
+
     /// Arrow keys move the selection; one burst of presses is one history entry.
     fn nudge(
         &mut self,
@@ -876,6 +930,22 @@ impl EditorWindow {
             if self.nudge(&keystroke.key, keystroke.modifiers.shift, window, cx) {
                 return;
             }
+            if keystroke.modifiers.control && keystroke.key == "]" {
+                if let Some(id) = self.selection.first().map(str::to_owned) {
+                    self.editor.raise(&id, LayerMove::Front);
+                    self.refresh();
+                    cx.notify();
+                }
+                return;
+            }
+            if keystroke.modifiers.control && keystroke.key == "[" {
+                if let Some(id) = self.selection.first().map(str::to_owned) {
+                    self.editor.raise(&id, LayerMove::Back);
+                    self.refresh();
+                    cx.notify();
+                }
+                return;
+            }
             if keystroke.modifiers.control && keystroke.key == "a" {
                 self.select_all();
                 cx.notify();
@@ -922,6 +992,13 @@ impl EditorWindow {
                     self.discard(resume, window, cx);
                 } else {
                     self.overlay = Some(Overlay::Confirm { message, resume });
+                }
+            }
+            Overlay::Rename(mut prompt) => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => self.overlay = Some(Overlay::Rename(prompt)),
+                    Outcome::Cancel => self.renaming = None,
+                    Outcome::Submit(value) => self.rename_node(&value),
                 }
             }
             Overlay::Library(dialog) => {
@@ -988,6 +1065,112 @@ impl EditorWindow {
             .children(buttons)
     }
 
+    fn layers_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = layers::rows(self.editor.document(), &self.selection, &self.expanded);
+        let items: Vec<AnyElement> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let id = row.id.clone();
+                let caret_id = id.clone();
+                let eye_id = id.clone();
+                let lock_id = id.clone();
+                let group = row.kind == "Group";
+                let caret = if !group {
+                    " "
+                } else if self.expanded.contains(&id) {
+                    "v"
+                } else {
+                    ">"
+                };
+                let eye = if row.visible { "V" } else { "-" };
+                let lock = if row.locked { "L" } else { "." };
+                div()
+                    .id(("layer", index))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .pl(px(6.0 + row.depth as f32 * 12.0))
+                    .pr_2()
+                    .py_1()
+                    .bg(if row.selected { rgb(0x2b2b36) } else { rgb(PANEL) })
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .id(("caret", index))
+                            .w(px(12.0))
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(caret)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.toggle_expanded(&caret_id, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(if row.visible { rgb(INK) } else { rgb(MUTED) })
+                            .child(row.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .id(("eye", index))
+                            .px_1()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(eye)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                let shown = selection::find(this.editor.document(), &eye_id)
+                                    .is_some_and(|node| node.visible);
+                                if this.editor.set_visible(&eye_id, !shown) {
+                                    this.refresh();
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(("lock", index))
+                            .px_1()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(lock)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                let locked = selection::find(this.editor.document(), &lock_id)
+                                    .is_some_and(|node| node.locked);
+                                if this.editor.set_locked(&lock_id, !locked) {
+                                    this.refresh();
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                        this.layer_click(&id, event.modifiers(), cx)
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        div()
+            .w(px(220.0))
+            .flex_shrink_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(rgb(0x2e2e38))
+            .bg(rgb(PANEL))
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child("Layers"),
+            )
+            .children(items)
+    }
+
     fn canvas_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let list = self.list.clone();
         let images = self.images.clone();
@@ -1010,7 +1193,6 @@ impl EditorWindow {
         div()
             .id("canvas")
             .flex_1()
-            .w_full()
             .bg(rgb(0x101014))
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 this.on_scroll(event, cx)
@@ -1188,6 +1370,7 @@ impl EditorWindow {
     fn submit_prompt(&mut self, cx: &mut Context<Self>) {
         match self.overlay.take() {
             Some(Overlay::SaveAs(prompt)) => self.save_as(&prompt.value),
+            Some(Overlay::Rename(prompt)) => self.rename_node(&prompt.value),
             Some(Overlay::Import(prompt)) => self.guard(Resume::Import(prompt.value), cx),
             other => self.overlay = other,
         }
@@ -1197,7 +1380,9 @@ impl EditorWindow {
     fn overlay_view(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let content = match &self.overlay {
             None => return None,
-            Some(Overlay::SaveAs(prompt)) => Self::prompt_panel(prompt, cx),
+            Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt)) => {
+                Self::prompt_panel(prompt, cx)
+            }
             Some(Overlay::Import(prompt)) => Self::prompt_panel(prompt, cx),
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {
@@ -1315,7 +1500,15 @@ impl Render for EditorWindow {
         });
         let mut rows: Vec<AnyElement> = Vec::new();
         rows.push(self.toolbar(cx).into_any_element());
-        rows.push(self.canvas_view(cx).into_any_element());
+        rows.push(
+            div()
+                .flex()
+                .flex_1()
+                .w_full()
+                .child(self.canvas_view(cx))
+                .child(self.layers_view(cx))
+                .into_any_element(),
+        );
         rows.push(self.status_view().into_any_element());
         if let Some(overlay) = self.overlay_view(cx) {
             rows.push(overlay);
