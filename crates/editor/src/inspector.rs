@@ -5,9 +5,9 @@
 //! same way and a refused value changes nothing.
 
 use yunari_model::document::{
-    ArtboardShape, BackgroundMode, ContentFit, ImageFit, Node, NodeKind, StyleLiteral, StyleMap,
-    StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument,
-    VerticalAlign,
+    ArtboardShape, BackgroundMode, ChartContent, ChartFamily, ContentFit, ImageFit, Node, NodeKind,
+    StyleLiteral, StyleMap, StyleRef, StyleValue, TextAlign, TextContent, TextOverflow, TextRun,
+    ThemeDocument, VerticalAlign,
 };
 
 use crate::selection::find_mut;
@@ -136,6 +136,10 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         NodeKind::Text { content } => sections.push(Section {
             title: "Text",
             rows: text_rows(content),
+        }),
+        NodeKind::Chart { content } => sections.push(Section {
+            title: "Chart",
+            rows: chart_rows(content),
         }),
         _ => {}
     }
@@ -372,6 +376,218 @@ fn choice(key: &'static str, label: &'static str, value: &str) -> Field {
         label,
         kind: FieldKind::Choice(Vec::new()),
         value: value.to_owned(),
+    }
+}
+
+/// One chart setting the panel edits: a number, a flag or a paint.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Setting {
+    Number(&'static str, &'static str),
+    Flag(&'static str, &'static str),
+    Paint(&'static str, &'static str),
+}
+
+const GAUGE: &[Setting] = &[
+    Setting::Number("min", "Min"),
+    Setting::Number("max", "Max"),
+    Setting::Number("startAngle", "Start angle"),
+    Setting::Number("endAngle", "End angle"),
+    Setting::Number("thickness", "Thickness"),
+    Setting::Flag("roundCap", "Round cap"),
+    Setting::Number("gradientSegments", "Gradient segments"),
+    Setting::Number("segmentDivisor", "Segment divisor"),
+    Setting::Paint("track", "Track"),
+    Setting::Paint("progress", "Progress"),
+];
+const LINE: &[Setting] = &[
+    Setting::Number("min", "Min"),
+    Setting::Number("max", "Max"),
+    Setting::Flag("showAxes", "Show axes"),
+    Setting::Number("windowSeconds", "Window (s)"),
+    Setting::Number("lineWidth", "Line width"),
+    Setting::Number("markerSize", "Marker size"),
+    Setting::Flag("showMarkers", "Show markers"),
+    Setting::Paint("stroke", "Stroke"),
+];
+const BAR: &[Setting] = &[
+    Setting::Number("min", "Min"),
+    Setting::Number("max", "Max"),
+    Setting::Number("barWidth", "Bar width"),
+    Setting::Number("cornerRadius", "Corner radius"),
+    Setting::Number("trackCornerRadius", "Track corner radius"),
+    Setting::Number("categoryGapPercent", "Category gap %"),
+    Setting::Flag("vertical", "Vertical"),
+    Setting::Flag("showAxes", "Show axes"),
+    Setting::Paint("fill", "Fill"),
+    Setting::Paint("stroke", "Stroke"),
+];
+const PIE: &[Setting] = &[
+    Setting::Number("startAngle", "Start angle"),
+    Setting::Number("padAngle", "Pad angle"),
+    Setting::Number("innerRadiusPercent", "Inner radius %"),
+    Setting::Number("outerRadiusPercent", "Outer radius %"),
+    Setting::Paint("fill", "Fill"),
+];
+const RADAR: &[Setting] = &[
+    Setting::Number("min", "Min"),
+    Setting::Number("max", "Max"),
+    Setting::Number("splitNumber", "Split number"),
+    Setting::Number("lineWidth", "Line width"),
+    Setting::Number("markerSize", "Marker size"),
+    Setting::Flag("showAxes", "Show axes"),
+    Setting::Flag("showMarkers", "Show markers"),
+    Setting::Paint("stroke", "Stroke"),
+];
+const POLAR_BAR: &[Setting] = &[
+    Setting::Number("min", "Min"),
+    Setting::Number("max", "Max"),
+    Setting::Number("startAngle", "Start angle"),
+    Setting::Number("barWidth", "Bar width"),
+    Setting::Number("cornerRadius", "Corner radius"),
+    Setting::Number("trackCornerRadius", "Track corner radius"),
+    Setting::Number("categoryGapPercent", "Category gap %"),
+    Setting::Number("innerRadiusPercent", "Inner radius %"),
+    Setting::Number("outerRadiusPercent", "Outer radius %"),
+    Setting::Flag("showAxes", "Show axes"),
+    Setting::Paint("fill", "Fill"),
+    Setting::Paint("track", "Track"),
+];
+
+fn chart_settings(family: ChartFamily) -> &'static [Setting] {
+    match family {
+        ChartFamily::Gauge => GAUGE,
+        ChartFamily::Line => LINE,
+        ChartFamily::Bar => BAR,
+        ChartFamily::Pie => PIE,
+        ChartFamily::Radar => RADAR,
+        ChartFamily::PolarBar => POLAR_BAR,
+    }
+}
+
+fn chart_family_name(family: ChartFamily) -> &'static str {
+    match family {
+        ChartFamily::Gauge => "gauge",
+        ChartFamily::Line => "line",
+        ChartFamily::Bar => "bar",
+        ChartFamily::Pie => "pie",
+        ChartFamily::Radar => "radar",
+        ChartFamily::PolarBar => "polarBar",
+    }
+}
+
+fn chart_family(name: &str) -> Option<ChartFamily> {
+    match name {
+        "gauge" => Some(ChartFamily::Gauge),
+        "line" => Some(ChartFamily::Line),
+        "bar" => Some(ChartFamily::Bar),
+        "pie" => Some(ChartFamily::Pie),
+        "radar" => Some(ChartFamily::Radar),
+        "polarBar" => Some(ChartFamily::PolarBar),
+        _ => None,
+    }
+}
+
+fn chart_rows(content: &ChartContent) -> Vec<Field> {
+    let mut rows = vec![choice(
+        "kind.content.family",
+        "Family",
+        chart_family_name(content.family),
+    )];
+    for setting in chart_settings(content.family) {
+        let key = match setting {
+            Setting::Number(key, _) | Setting::Flag(key, _) | Setting::Paint(key, _) => *key,
+        };
+        let label = match setting {
+            Setting::Number(_, label) | Setting::Flag(_, label) | Setting::Paint(_, label) => label,
+        };
+        let value = content.settings.0.get(key);
+        let (kind, text) = match setting {
+            Setting::Number(..) => (
+                FieldKind::Number {
+                    min: f64::MIN,
+                    max: f64::MAX,
+                    step: 1.0,
+                },
+                value.and_then(serde_json::Value::as_f64).map_or_else(String::new, format_number),
+            ),
+            Setting::Flag(..) => (
+                FieldKind::Toggle,
+                value
+                    .and_then(serde_json::Value::as_bool)
+                    .map_or_else(String::new, |flag| flag.to_string()),
+            ),
+            Setting::Paint(..) => (FieldKind::Colour, chart_paint_text(value)),
+        };
+        rows.push(Field {
+            key: format!("kind.chart.{key}"),
+            label,
+            kind,
+            value: text,
+        });
+    }
+    rows
+}
+
+/// A chart paint reads as a hex colour, its palette reference, or the shape it
+/// has when a field cannot edit it.
+fn chart_paint_text(value: Option<&serde_json::Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    match value.get("kind").and_then(serde_json::Value::as_str) {
+        Some("solid") => value
+            .get("color")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(String::new, ToOwned::to_owned),
+        Some(other) => other.to_owned(),
+        None => value
+            .get("ref")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(String::new, ToOwned::to_owned),
+    }
+}
+
+/// A setting field's own JSON shape: a number, a flag or a chart fill.
+fn chart_setting(key: &str, value: &str) -> Result<Option<serde_json::Value>, String> {
+    let found = [GAUGE, LINE, BAR, PIE, RADAR, POLAR_BAR]
+        .iter()
+        .flat_map(|table| table.iter())
+        .find(|setting| match setting {
+            Setting::Number(held, _) | Setting::Flag(held, _) | Setting::Paint(held, _) => {
+                *held == key
+            }
+        })
+        .ok_or_else(|| format!("{key} is not a chart setting"))?;
+    let text = value.trim();
+    match found {
+        Setting::Number(..) => {
+            if text.is_empty() {
+                return Ok(None);
+            }
+            let number = text
+                .parse::<f64>()
+                .map_err(|_| format!("{key} needs a number"))?;
+            if !number.is_finite() {
+                return Err(format!("{key} needs a finite number"));
+            }
+            Ok(Some(serde_json::json!(number)))
+        }
+        Setting::Flag(..) => match text {
+            "true" => Ok(Some(serde_json::json!(true))),
+            "false" => Ok(Some(serde_json::json!(false))),
+            other => Err(format!("{other} is not true or false")),
+        },
+        Setting::Paint(..) => {
+            if text.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(match paint(text)? {
+                StyleValue::Ref(reference) => serde_json::json!({ "ref": reference.r#ref }),
+                StyleValue::Literal(literal) => {
+                    serde_json::json!({ "kind": "solid", "color": literal.value })
+                }
+            }))
+        }
     }
 }
 
@@ -731,6 +947,28 @@ fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
             }
             _ => return Err("Only a video has playback flags".to_owned()),
         },
+        "kind.content.family" => match &mut node.kind {
+            NodeKind::Chart { content } => {
+                let name = value.trim();
+                content.family = chart_family(name)
+                    .ok_or_else(|| format!("{name} is not a chart family"))?;
+            }
+            _ => return Err("Only a chart has a family".to_owned()),
+        },
+        key if key.starts_with("kind.chart.") => {
+            let setting = key.trim_start_matches("kind.chart.");
+            let NodeKind::Chart { content } = &mut node.kind else {
+                return Err("Only a chart has chart settings".to_owned());
+            };
+            match chart_setting(setting, value)? {
+                Some(json) => {
+                    content.settings.0.insert(setting.to_owned(), json);
+                }
+                None => {
+                    content.settings.0.remove(setting);
+                }
+            }
+        }
         "kind.content.align" | "kind.content.overflow" | "kind.content.verticalAlign"
         | "kind.content.vertical" => match &mut node.kind {
             NodeKind::Text { content } => match (key, value.trim()) {
@@ -997,6 +1235,62 @@ mod tests {
             format: None,
             subset: None,
         }
+    }
+
+    fn chart_node(family: ChartFamily) -> Node {
+        let mut node = rect("chart", 0.0, 0.0, 120.0, 120.0);
+        node.kind = NodeKind::Chart {
+            content: ChartContent {
+                family,
+                settings: yunari_model::document::ChartSettings(serde_json::Map::new()),
+            },
+        };
+        node
+    }
+
+    #[test]
+    fn a_chart_shows_its_family_and_settings() {
+        let document = document(vec![chart_node(ChartFamily::Gauge)]);
+        let sections = sections(&document, "chart");
+        let chart = sections
+            .iter()
+            .find(|section| section.title == "Chart")
+            .expect("a chart section");
+        assert_eq!(chart.rows[0].key, "kind.content.family");
+        assert_eq!(chart.rows[0].value, "gauge");
+        assert_eq!(chart.rows[1].key, "kind.chart.min");
+        assert_eq!(chart.rows[1].value, "");
+    }
+
+    #[test]
+    fn chart_settings_are_written_in_their_own_shapes() {
+        let mut document = document(vec![chart_node(ChartFamily::Bar)]);
+        assert!(apply(&mut document, "chart", "kind.chart.min", "10").is_ok());
+        assert!(apply(&mut document, "chart", "kind.chart.vertical", "true").is_ok());
+        assert!(apply(&mut document, "chart", "kind.chart.fill", "#ff0000").is_ok());
+        assert!(apply(&mut document, "chart", "kind.chart.stroke", "palette.accent").is_ok());
+        assert!(apply(&mut document, "chart", "kind.content.family", "pie").is_ok());
+        let NodeKind::Chart { content } = &document.nodes[0].kind else {
+            panic!("still a chart");
+        };
+        assert_eq!(content.family, ChartFamily::Pie);
+        assert_eq!(content.settings.0["min"], serde_json::json!(10.0));
+        assert_eq!(content.settings.0["vertical"], serde_json::json!(true));
+        assert_eq!(
+            content.settings.0["fill"],
+            serde_json::json!({ "kind": "solid", "color": "#ff0000" })
+        );
+        assert_eq!(
+            content.settings.0["stroke"],
+            serde_json::json!({ "ref": "palette.accent" })
+        );
+        assert!(apply(&mut document, "chart", "kind.chart.min", "").is_ok());
+        let NodeKind::Chart { content } = &document.nodes[0].kind else {
+            panic!("still a chart");
+        };
+        assert!(!content.settings.0.contains_key("min"));
+        assert!(apply(&mut document, "chart", "kind.content.family", "bubble").is_err());
+        assert!(apply(&mut document, "chart", "kind.chart.nonsense", "1").is_err());
     }
 
     #[test]
