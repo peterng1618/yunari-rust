@@ -3,6 +3,9 @@
 //! The transport is a seam so a test can hand the driver a fake and read back
 //! exactly what it wrote; on a real machine it is `UsbBulk` over libusb.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::family::{CommandKind, Geometry, PanelCommand, PanelDevice, StillFormat};
@@ -36,6 +39,16 @@ const ACK_DEPTH: u8 = 3;
 const DRAIN_DEPTH: u8 = 2;
 const DRAIN_POLL_MS: u64 = 50;
 const DRAIN_WAIT_MS: u64 = 30_000;
+/// The block size the vendor driver falls back to when the panel answers
+/// nothing (`WinUsb.CheckH264Block`).
+pub const H264_BLOCK_BYTES: usize = 202_752;
+/// The vendor's own cadence: a block goes out, the driver sleeps 30 ms, then
+/// reads the acknowledgement. Nothing else paces the feed.
+const BLOCK_PAUSE_MS: u64 = 30;
+/// Blocks the feed keeps queued ahead of the decoder. The vendor's loop holds
+/// 2–4; a feed that only matches the play time keeps one and the picture holds
+/// at every block boundary.
+const LOOKAHEAD_DEPTH: u8 = 2;
 
 /// The bulk endpoint, as the driver needs it.
 pub trait Bulk: Send {
@@ -49,7 +62,8 @@ pub trait Bulk: Send {
 }
 
 pub struct TurUsbPanel<B: Bulk> {
-    transport: B,
+    /// Shared with the feed thread: one writer at a time on the endpoint.
+    transport: Arc<Mutex<B>>,
     label: &'static str,
     geometry: Geometry,
     started: Instant,
@@ -59,12 +73,20 @@ pub struct TurUsbPanel<B: Bulk> {
     off: bool,
     /// The panel keeps the PNG layer across a push, so it is enabled once.
     overlay_shown: bool,
+    /// The clip being fed, when one is.
+    video: Option<Feed>,
 }
 
-impl<B: Bulk> TurUsbPanel<B> {
+/// A running feed, and the flag that ends it.
+struct Feed {
+    stop: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
+}
+
+impl<B: Bulk + 'static> TurUsbPanel<B> {
     pub fn new(transport: B, label: &'static str, geometry: Geometry) -> Self {
         Self {
-            transport,
+            transport: Arc::new(Mutex::new(transport)),
             label,
             geometry,
             started: Instant::now(),
@@ -72,106 +94,56 @@ impl<B: Bulk> TurUsbPanel<B> {
             level: 100,
             off: false,
             overlay_shown: false,
+            video: None,
         }
     }
 
-    fn elapsed_ms(&self) -> u32 {
-        self.started.elapsed().as_millis() as u32
+    /// Ends the feed thread before touching the wire again: a block written
+    /// after the stop command starts a playback nobody is feeding.
+    fn stop_feed(&mut self) {
+        let Some(feed) = self.video.take() else {
+            return;
+        };
+        feed.stop.store(true, Ordering::Relaxed);
+        let _ = feed.handle.join();
     }
 
     fn request(&mut self, opcode: u8, fields: &Fields) -> Result<Option<Vec<u8>>, String> {
-        let write = protocol::packet(opcode, self.elapsed_ms(), fields, None);
-        self.transport.write(&write, WRITE_TIMEOUT_MS)?;
-        self.read(READ_TIMEOUT_MS)
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        request(&mut *transport, started, opcode, fields)
     }
 
     fn parameter(&mut self, opcode: u8, byte: u8) -> Result<Option<Vec<u8>>, String> {
-        self.request(
-            opcode,
-            &Fields {
-                parameter: Some(byte),
-                ..Fields::default()
-            },
-        )
-    }
-
-    /// One reply, then whatever else the panel already queued.
-    ///
-    /// A reply left unread backs up the IN queue, and once it is full the panel
-    /// stops accepting writes — a freeze that reads as a panel fault and only a
-    /// replug clears. The vendor driver flushes after every read for the same
-    /// reason; a read with nothing waiting answers with a zero-length transfer.
-    fn read(&mut self, timeout_ms: u64) -> Result<Option<Vec<u8>>, String> {
-        let first = self.read_one(timeout_ms);
-        self.flush_replies();
-        first
-    }
-
-    fn flush_replies(&mut self) {
-        for _ in 0..MAX_QUEUED_REPLIES {
-            match self.read_one(VENDOR_READ_TIMEOUT_MS) {
-                Ok(Some(reply)) if !reply.is_empty() => {}
-                _ => return,
-            }
-        }
-    }
-
-    /// A read the device never answers is the common case for a frame, not a
-    /// failure: the write already landed.
-    fn read_one(&mut self, timeout_ms: u64) -> Result<Option<Vec<u8>>, String> {
-        match self.transport.read(512, timeout_ms) {
-            Ok(reply) if !reply.is_empty() => Ok(Some(reply)),
-            _ => Ok(None),
-        }
-    }
-
-    /// Ends any playback still running. The vendor stops playback before
-    /// **every** frame: a panel still playing keeps ingesting into a buffer it
-    /// never drains, and after about thirty frames every transfer is cancelled.
-    fn stop_play(&mut self) -> Result<(), String> {
-        self.request(opcode::STOP_PLAY, &Fields::default())?;
-        Ok(())
-    }
-
-    /// Recovering a stalled endpoint the way the vendor does: clear both halts
-    /// and write again. A device reset is avoided because it takes the LED MCU
-    /// beside the panel down with it.
-    fn write_frame(&mut self, write: &[u8]) -> Result<(), String> {
-        if self.transport.write(write, WRITE_TIMEOUT_MS).is_ok() {
-            return Ok(());
-        }
-        let _ = self.transport.clear_halt();
-        self.transport.write(write, WRITE_TIMEOUT_MS)
-    }
-
-    fn drain(&mut self) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_millis(DRAIN_WAIT_MS);
-        while Instant::now() < deadline {
-            let reply = self.request(opcode::BUFFER_LEVEL, &Fields::default())?;
-            let depth = reply.as_ref().and_then(|reply| reply.get(8)).copied();
-            if depth.is_none_or(|depth| depth <= DRAIN_DEPTH) {
-                return Ok(());
-            }
-            std::thread::sleep(Duration::from_millis(DRAIN_POLL_MS));
-        }
-        Ok(())
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        parameter(&mut *transport, started, opcode, byte)
     }
 
     /// Empties the panel's PNG layer, where L-Connect leaves its sensor
     /// dashboard: the last picture survives L-Connect exiting and every JPEG
     /// this driver pushes, so a theme otherwise renders under a ghost.
     fn clear_overlay(&mut self) -> Result<(), String> {
-        self.parameter(opcode::OVERLAY_LAYER, 1)?;
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        parameter(&mut *transport, started, opcode::OVERLAY_LAYER, 1)?;
         self.overlay_shown = true;
         let png = transparent_png(self.geometry.width, self.geometry.height);
-        let write = protocol::image(opcode::PUSH_PNG, &png, self.elapsed_ms());
-        self.transport.write(&write, WRITE_TIMEOUT_MS)?;
-        self.read(READ_TIMEOUT_MS)?;
+        let write = protocol::image(opcode::PUSH_PNG, &png, elapsed_ms(started));
+        transport.write(&write, WRITE_TIMEOUT_MS)?;
+        read(&mut *transport, READ_TIMEOUT_MS)?;
         Ok(())
     }
 
     fn firmware(&mut self) -> Result<String, String> {
-        let reply = self.request(opcode::VERSION, &Fields::default())?;
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        let reply = request(
+            &mut *transport,
+            started,
+            opcode::VERSION,
+            &Fields::default(),
+        )?;
         let body = reply
             .as_ref()
             .map(|reply| reply[8.min(reply.len())..].to_vec());
@@ -189,13 +161,205 @@ impl<B: Bulk> TurUsbPanel<B> {
     }
 }
 
-impl<B: Bulk> PanelDevice for TurUsbPanel<B> {
+fn lock<B>(transport: &Arc<Mutex<B>>) -> MutexGuard<'_, B> {
+    transport
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn elapsed_ms(started: Instant) -> u32 {
+    started.elapsed().as_millis() as u32
+}
+
+fn request(
+    transport: &mut impl Bulk,
+    started: Instant,
+    opcode: u8,
+    fields: &Fields,
+) -> Result<Option<Vec<u8>>, String> {
+    let write = protocol::packet(opcode, elapsed_ms(started), fields, None);
+    transport.write(&write, WRITE_TIMEOUT_MS)?;
+    read(transport, READ_TIMEOUT_MS)
+}
+
+fn parameter(
+    transport: &mut impl Bulk,
+    started: Instant,
+    opcode: u8,
+    byte: u8,
+) -> Result<Option<Vec<u8>>, String> {
+    request(
+        transport,
+        started,
+        opcode,
+        &Fields {
+            parameter: Some(byte),
+            ..Fields::default()
+        },
+    )
+}
+
+/// One reply, then whatever else the panel already queued.
+///
+/// A reply left unread backs up the IN queue, and once it is full the panel
+/// stops accepting writes — a freeze that reads as a panel fault and only a
+/// replug clears. The vendor driver flushes after every read for the same
+/// reason; a read with nothing waiting answers with a zero-length transfer.
+fn read(transport: &mut impl Bulk, timeout_ms: u64) -> Result<Option<Vec<u8>>, String> {
+    let first = read_one(transport, timeout_ms);
+    flush_replies(transport);
+    first
+}
+
+fn flush_replies(transport: &mut impl Bulk) {
+    for _ in 0..MAX_QUEUED_REPLIES {
+        match read_one(transport, VENDOR_READ_TIMEOUT_MS) {
+            Ok(Some(reply)) if !reply.is_empty() => {}
+            _ => return,
+        }
+    }
+}
+
+/// A read the device never answers is the common case for a frame, not a
+/// failure: the write already landed.
+fn read_one(transport: &mut impl Bulk, timeout_ms: u64) -> Result<Option<Vec<u8>>, String> {
+    match transport.read(512, timeout_ms) {
+        Ok(reply) if !reply.is_empty() => Ok(Some(reply)),
+        _ => Ok(None),
+    }
+}
+
+/// Ends any playback still running. The vendor stops playback before **every**
+/// frame: a panel still playing keeps ingesting into a buffer it never drains,
+/// and after about thirty frames every transfer is cancelled.
+fn stop_play(transport: &mut impl Bulk, started: Instant) -> Result<(), String> {
+    request(transport, started, opcode::STOP_PLAY, &Fields::default())?;
+    Ok(())
+}
+
+/// Recovering a stalled endpoint the way the vendor does: clear both halts and
+/// write again. A device reset is avoided because it takes the LED MCU beside
+/// the panel down with it.
+fn write_frame(transport: &mut impl Bulk, write: &[u8]) -> Result<(), String> {
+    if transport.write(write, WRITE_TIMEOUT_MS).is_ok() {
+        return Ok(());
+    }
+    let _ = transport.clear_halt();
+    transport.write(write, WRITE_TIMEOUT_MS)
+}
+
+/// Waits until the decoder has room, polling the way `waitBuffer(2)` does. A
+/// panel that stops answering stops the drain as well: silence is not
+/// permission to keep writing.
+fn drain(
+    transport: &mut impl Bulk,
+    started: Instant,
+    stop: Option<&AtomicBool>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(DRAIN_WAIT_MS);
+    while !stop.is_some_and(|stop| stop.load(Ordering::Relaxed)) && Instant::now() < deadline {
+        let depth = level(transport, started)?;
+        if depth.is_none_or(|depth| depth <= DRAIN_DEPTH) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(DRAIN_POLL_MS));
+    }
+    Ok(())
+}
+
+/// The decoder's latest reported depth. Flush first, then ask: every block
+/// queues an ack, so a plain read answers with a depth that can be stale.
+fn level(transport: &mut impl Bulk, started: Instant) -> Result<Option<u8>, String> {
+    flush_replies(transport);
+    let write = protocol::packet(
+        opcode::BUFFER_LEVEL,
+        elapsed_ms(started),
+        &Fields::default(),
+        None,
+    );
+    transport.write(&write, WRITE_TIMEOUT_MS)?;
+    Ok(read_one(transport, VENDOR_READ_TIMEOUT_MS)?.and_then(|reply| reply.get(8).copied()))
+}
+
+/// The block size this panel wants, with the vendor's own default when it
+/// answers zero or not at all (`WinUsb.CheckH264Block`).
+///
+/// **Match the reply by opcode.** A stale reply left by an earlier command
+/// answers this query with its own bytes; reading a block size out of a version
+/// string once produced a 1.8 GB block, which the panel refused.
+fn query_block_bytes(transport: &mut impl Bulk, started: Instant) -> Result<usize, String> {
+    let Ok(Some(reply)) = request(transport, started, opcode::H264_BLOCK, &Fields::default())
+    else {
+        return Ok(H264_BLOCK_BYTES);
+    };
+    if reply.len() < 12 || reply[0] != opcode::H264_BLOCK {
+        return Ok(H264_BLOCK_BYTES);
+    }
+    let size = u32::from_be_bytes([reply[8], reply[9], reply[10], reply[11]]) as usize;
+    Ok(if size > 0 && size <= MAX_PAYLOAD {
+        size
+    } else {
+        H264_BLOCK_BYTES
+    })
+}
+
+/// One block onto the wire; answers the decoder's ring depth it reported.
+///
+/// The stream never ends: the feed wraps and keeps sending while a clip is
+/// wanted, the way the vendor driver rewinds. The final block of each pass
+/// carries the vendor's end-of-file flag so the panel can finish the stream it
+/// was handed.
+fn write_video_block(
+    transport: &mut impl Bulk,
+    started: Instant,
+    clip: &[u8],
+    at: usize,
+    block_bytes: usize,
+    stop: Option<&AtomicBool>,
+) -> Result<Option<u8>, String> {
+    let end = (at + block_bytes).min(clip.len());
+    let block = &clip[at..end];
+    let write = protocol::packet(
+        opcode::PLAY_BLOCK,
+        elapsed_ms(started),
+        &Fields {
+            payload_length: Some(block.len() as u32),
+            last_block: Some(end >= clip.len()),
+            ..Fields::default()
+        },
+        Some(block),
+    );
+    transport.write(&write, WRITE_TIMEOUT_MS)?;
+
+    // **The ack is the flow control.** Its byte 8 is the decoder's depth: at
+    // or below the vendor's threshold the ring is draining, and above it the
+    // decoder has stopped reading — another block there is an overrun, which
+    // the panel plays out as a freeze.
+    thread::sleep(Duration::from_millis(BLOCK_PAUSE_MS));
+    let depth =
+        read_one(transport, VENDOR_READ_TIMEOUT_MS)?.and_then(|reply| reply.get(8).copied());
+    if depth.is_some_and(|depth| depth > ACK_DEPTH) {
+        drain(transport, started, stop)?;
+    }
+    Ok(depth)
+}
+
+/// Recovers from a cancelled block transfer. The block is not rewritten: a
+/// cancelled bulk OUT can leave the decoder holding part of one, and writing
+/// the same bytes again duplicates them. Starting again from the first block
+/// hands the decoder a fresh keyframe.
+fn resync(transport: &mut impl Bulk, started: Instant) {
+    let _ = transport.clear_halt();
+    let _ = stop_play(transport, started);
+}
+
+impl<B: Bulk + 'static> PanelDevice for TurUsbPanel<B> {
     fn geometry(&self) -> Geometry {
         self.geometry
     }
 
     fn open(&mut self) -> Result<(), String> {
-        self.transport.open(CONFIGURATION, INTERFACE)?;
+        lock(&self.transport).open(CONFIGURATION, INTERFACE)?;
         self.opened = true;
         // The sync exchange is what tells a panel it has a host. Every driver
         // sends it first, and a frame without it is ignored by some firmware.
@@ -215,17 +379,89 @@ impl<B: Bulk> PanelDevice for TurUsbPanel<B> {
                 still.len()
             ));
         }
-        self.stop_play()?;
-        let write = protocol::image(opcode::PUSH_JPEG, still, self.elapsed_ms());
-        self.write_frame(&write)?;
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        stop_play(&mut *transport, started)?;
+        let write = protocol::image(opcode::PUSH_JPEG, still, elapsed_ms(started));
+        write_frame(&mut *transport, &write)?;
         // Flow control: byte 8 of the ack is the device's buffer level. A frame
         // commonly renders with no readable ack, so a timeout here is normal.
-        if let Some(ack) = self.read(READ_TIMEOUT_MS)?
+        if let Some(ack) = read(&mut *transport, READ_TIMEOUT_MS)?
             && ack.get(8).is_some_and(|depth| *depth > ACK_DEPTH)
         {
-            self.drain()?;
+            drain(&mut *transport, started, None)?;
         }
         Ok(())
+    }
+
+    fn start_video(&mut self, clip: &[u8], seconds: f64) -> Result<(), String> {
+        if !self.opened {
+            return Err(format!("{} is not open.", self.label));
+        }
+        if clip.is_empty() {
+            return Err("The clip is empty.".to_owned());
+        }
+        self.stop_feed();
+
+        // The first block is sent here so an encoder or wire failure still
+        // reaches the runner, which then falls back to still frames; the rest
+        // is fed in the background.
+        let started = self.started;
+        let block_bytes = {
+            let mut transport = lock(&self.transport);
+            // No frame-rate command here: a 15 sent just before the blocks
+            // makes this panel's decoder ghost moving parts.
+            stop_play(&mut *transport, started)?;
+            let block_bytes = query_block_bytes(&mut *transport, started)?;
+            write_video_block(&mut *transport, started, clip, 0, block_bytes, None)?;
+            block_bytes
+        };
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = spawn_feed(
+            Arc::clone(&self.transport),
+            started,
+            clip.to_vec(),
+            seconds,
+            block_bytes,
+            Arc::clone(&stop),
+        );
+        self.video = Some(Feed { stop, handle });
+        Ok(())
+    }
+
+    fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {
+        if !self.opened {
+            return Err(format!("{} is not open.", self.label));
+        }
+        if png.len() > MAX_PAYLOAD {
+            return Err(format!(
+                "A {}-byte overlay exceeds the panel's {MAX_PAYLOAD}-byte limit.",
+                png.len()
+            ));
+        }
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        if !self.overlay_shown {
+            parameter(&mut *transport, started, opcode::OVERLAY_LAYER, 1)?;
+            self.overlay_shown = true;
+        }
+        let write = protocol::image(opcode::PUSH_PNG, png, elapsed_ms(started));
+        write_frame(&mut *transport, &write)?;
+        read(&mut *transport, READ_TIMEOUT_MS)?;
+        Ok(())
+    }
+
+    fn stop_video(&mut self) {
+        self.stop_feed();
+        if !self.opened {
+            return;
+        }
+        let started = self.started;
+        let mut transport = lock(&self.transport);
+        let _ = stop_play(&mut *transport, started);
+        // A stopped clip leaves the layer off; the next overlay enables it.
+        self.overlay_shown = false;
     }
 
     fn still_format(&self) -> StillFormat {
@@ -267,11 +503,89 @@ impl<B: Bulk> PanelDevice for TurUsbPanel<B> {
         if !self.opened {
             return Ok(());
         }
+        self.stop_feed();
         self.opened = false;
         // A panel that went away cannot be closed again; the unplug is the
         // report, not this failure.
-        let _ = self.transport.clear_halt();
-        self.transport.close()
+        let mut transport = lock(&self.transport);
+        let _ = transport.clear_halt();
+        transport.close()
+    }
+}
+
+/// Feeds the clip's blocks forever, paced by the clip's own playing time.
+fn spawn_feed<B: Bulk + 'static>(
+    transport: Arc<Mutex<B>>,
+    started: Instant,
+    clip: Vec<u8>,
+    seconds: f64,
+    block_bytes: usize,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let clip_ms = seconds * 1000.0;
+        let mut at = block_bytes;
+        while !stop.load(Ordering::Relaxed) {
+            if at >= clip.len() {
+                at = 0;
+            }
+            let sent = (at + block_bytes).min(clip.len()) - at;
+            let began = Instant::now();
+            let result = {
+                let mut guard = lock(&transport);
+                write_video_block(&mut *guard, started, &clip, at, block_bytes, Some(&stop))
+            };
+            let mut depth = None;
+            match result {
+                Ok(reported) => {
+                    depth = reported;
+                    at += block_bytes;
+                }
+                Err(error) => {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    // Nothing above is awaiting this loop, so a failure has to
+                    // be said here: the panel keeps whatever it decoded last.
+                    eprintln!("Panel video: {error}. Restarting the clip.");
+                    let mut guard = lock(&transport);
+                    resync(&mut *guard, started);
+                    at = 0;
+                }
+            }
+
+            // **The clip's playing time is the pace, kept outside the lock.**
+            // Handing this panel blocks faster than it plays makes its decoder
+            // leave ghost trails. Sleeping under the lock would hold the
+            // overlay push for a whole block instead.
+            //
+            // Except while the ring is short: below `LOOKAHEAD_DEPTH` the next
+            // block goes without waiting, which fills the buffer.
+            let play_ms = if clip.is_empty() {
+                0.0
+            } else {
+                (sent as f64 / clip.len() as f64) * clip_ms
+            };
+            let spent = began.elapsed().as_secs_f64() * 1000.0;
+            let wait = match depth {
+                Some(depth) if depth < LOOKAHEAD_DEPTH => 0.0,
+                _ => (play_ms - spent).max(BLOCK_PAUSE_MS as f64),
+            };
+            if wait > 0.0 {
+                pause(wait, &stop);
+            }
+        }
+    })
+}
+
+/// Sleeps `wait_ms` in slices, so stopping the feed does not wait for a whole
+/// block's playing time.
+fn pause(wait_ms: f64, stop: &AtomicBool) {
+    let mut left = wait_ms;
+    while left > 0.0 && !stop.load(Ordering::Relaxed) {
+        let step = left.min(50.0);
+        thread::sleep(Duration::from_secs_f64(step / 1000.0));
+        left -= step;
     }
 }
 
@@ -384,6 +698,12 @@ mod tests {
         /// frame and not the command before it.
         fail_at_write: usize,
         cleared: usize,
+        /// Depths a `buffer-level` poll answers, one per command, and whether
+        /// the reply is waiting for the short read that follows the command.
+        depths: std::collections::VecDeque<u8>,
+        short_reply: bool,
+        /// The size an `h264-block` query answers, when it answers at all.
+        block_size: Option<u32>,
     }
 
     impl FakeBulk {
@@ -393,6 +713,9 @@ mod tests {
                 replies: std::collections::VecDeque::new(),
                 fail_at_write: 0,
                 cleared: 0,
+                depths: std::collections::VecDeque::new(),
+                short_reply: false,
+                block_size: None,
             }
         }
 
@@ -423,17 +746,40 @@ mod tests {
                 self.fail_at_write = 0;
                 return Err("cancelled".to_owned());
             }
+            // A poll's depth and a block query's size are answers to the
+            // command that was just written, so they arrive with it.
+            let opcode = crate::tur_usb::protocol::decrypt_block(bytes)[0];
+            if opcode == opcode::BUFFER_LEVEL
+                && let Some(depth) = self.depths.pop_front()
+            {
+                let mut reply = vec![0_u8; 8];
+                reply.push(depth);
+                self.replies.push_back(reply);
+                self.short_reply = true;
+            }
+            if opcode == opcode::H264_BLOCK
+                && let Some(size) = self.block_size
+            {
+                let mut reply = vec![0_u8; 12];
+                reply[0] = opcode::H264_BLOCK;
+                reply[8..12].copy_from_slice(&size.to_be_bytes());
+                self.replies.push_back(reply);
+            }
             self.writes.push(bytes.to_vec());
             Ok(())
         }
 
         fn read(&mut self, _length: usize, timeout_ms: u64) -> Result<Vec<u8>, String> {
-            // The driver flushes with the vendor's short timeout; a reply the
-            // device has not sent yet does not answer one of those.
-            if timeout_ms < READ_TIMEOUT_MS {
+            // The driver flushes with the vendor's short timeout; only a reply
+            // that arrived with the command just written answers one of those.
+            if timeout_ms < READ_TIMEOUT_MS && !self.short_reply {
                 return Ok(Vec::new());
             }
-            Ok(self.replies.pop_front().unwrap_or_default())
+            let reply = self.replies.pop_front().unwrap_or_default();
+            if self.replies.is_empty() {
+                self.short_reply = false;
+            }
+            Ok(reply)
         }
 
         fn clear_halt(&mut self) -> Result<(), String> {
@@ -457,12 +803,16 @@ mod tests {
         )
     }
 
+    fn bulk(panel: &TurUsbPanel<FakeBulk>) -> MutexGuard<'_, FakeBulk> {
+        lock(&panel.transport)
+    }
+
     #[test]
     fn open_announces_the_host_and_pins_the_turn() {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
         let opcodes = {
-            let transport: &FakeBulk = &panel.transport;
+            let transport = bulk(&panel);
             transport.opcodes()
         };
         // version, frame rate, rotate, overlay enable, transparent PNG.
@@ -476,20 +826,23 @@ mod tests {
                 opcode::PUSH_PNG
             ]
         );
-        assert_eq!(panel.transport.parameter(1), FRAME_RATE);
-        assert_eq!(panel.transport.parameter(2), ROTATE_MODE);
+        assert_eq!(bulk(&panel).parameter(1), FRAME_RATE);
+        assert_eq!(bulk(&panel).parameter(2), ROTATE_MODE);
     }
 
     #[test]
     fn a_still_stops_playback_before_it_pushes() {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
-        panel.transport.writes.clear();
+        bulk(&panel).writes.clear();
         panel.present(&[0xff, 0xd8, 0xff]).unwrap();
-        let opcodes: Vec<u8> = panel.transport.opcodes();
+        let opcodes: Vec<u8> = bulk(&panel).opcodes();
         assert_eq!(opcodes, vec![opcode::STOP_PLAY, opcode::PUSH_JPEG]);
-        let push = panel.transport.writes.last().unwrap();
-        assert!(push.len() > PACKET_SIZE);
+        let push = {
+            let transport = bulk(&panel);
+            transport.writes.last().unwrap().len()
+        };
+        assert!(push > PACKET_SIZE);
     }
 
     #[test]
@@ -514,16 +867,15 @@ mod tests {
     fn a_full_buffer_is_drained_until_it_is_not() {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
-        panel.transport.writes.clear();
+        bulk(&panel).writes.clear();
         // stop-play reads nothing; the push's ack reports a full buffer, then
         // the poll answers 9 and then 2, which is the drain's own floor.
-        panel.transport.replies.push_back(Vec::new());
-        panel.transport.replies.push_back(depth(9));
-        panel.transport.replies.push_back(depth(9));
-        panel.transport.replies.push_back(depth(2));
+        bulk(&panel).replies.push_back(Vec::new());
+        bulk(&panel).replies.push_back(depth(9));
+        bulk(&panel).depths.push_back(9);
+        bulk(&panel).depths.push_back(2);
         panel.present(&[0xff]).unwrap();
-        let polls = panel
-            .transport
+        let polls = bulk(&panel)
             .opcodes()
             .iter()
             .filter(|code| **code == opcode::BUFFER_LEVEL)
@@ -535,14 +887,14 @@ mod tests {
     fn a_cancelled_write_is_retried_after_the_halts_are_cleared() {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
-        panel.transport.writes.clear();
+        bulk(&panel).writes.clear();
         // The frame is the second write of a push; the stop-play before it
         // lands, which is what a panel wedged mid-frame looks like.
-        panel.transport.fail_at_write = 2;
+        bulk(&panel).fail_at_write = 2;
         panel.present(&[0xff]).unwrap();
-        assert_eq!(panel.transport.cleared, 1);
+        assert_eq!(bulk(&panel).cleared, 1);
         assert_eq!(
-            panel.transport.opcodes(),
+            bulk(&panel).opcodes(),
             vec![opcode::STOP_PLAY, opcode::PUSH_JPEG]
         );
     }
@@ -551,15 +903,15 @@ mod tests {
     fn brightness_is_a_percent_and_screen_off_restores_it() {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
-        panel.transport.writes.clear();
+        bulk(&panel).writes.clear();
         assert_eq!(panel.run(PanelCommand::Brightness(70)).unwrap(), "");
-        assert_eq!(panel.transport.parameter(0), 70);
-        panel.transport.writes.clear();
+        assert_eq!(bulk(&panel).parameter(0), 70);
+        bulk(&panel).writes.clear();
         panel.run(PanelCommand::Screen(false)).unwrap();
-        assert_eq!(panel.transport.parameter(0), 0);
-        panel.transport.writes.clear();
+        assert_eq!(bulk(&panel).parameter(0), 0);
+        bulk(&panel).writes.clear();
         panel.run(PanelCommand::Screen(true)).unwrap();
-        assert_eq!(panel.transport.parameter(0), 70);
+        assert_eq!(bulk(&panel).parameter(0), 70);
     }
 
     #[test]
@@ -568,7 +920,7 @@ mod tests {
         panel.open().unwrap();
         let mut reply = vec![0_u8; 8];
         reply.extend_from_slice(b"lianli92_0001\0");
-        panel.transport.replies.push_back(reply);
+        bulk(&panel).replies.push_back(reply);
         assert_eq!(panel.run(PanelCommand::Status).unwrap(), "lianli92_0001");
 
         let mut silent = self::panel(FakeBulk::new());
@@ -597,6 +949,113 @@ mod tests {
         assert_eq!(
             panel.present(&[]).unwrap_err(),
             "Lian Li 9.2\" LCD is not open."
+        );
+        assert_eq!(
+            panel.start_video(&[0], 1.0).unwrap_err(),
+            "Lian Li 9.2\" LCD is not open."
+        );
+        assert_eq!(
+            panel.present_overlay(&[0]).unwrap_err(),
+            "Lian Li 9.2\" LCD is not open."
+        );
+    }
+
+    #[test]
+    fn a_clip_is_announced_as_blocks_after_stop_play() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        bulk(&panel).writes.clear();
+        panel.start_video(&[0x00, 0x00, 0x01, 0x65], 1.0).unwrap();
+        panel.stop_video();
+        let transport = bulk(&panel);
+        let opcodes = transport.opcodes();
+        assert_eq!(
+            &opcodes[..3],
+            &[opcode::STOP_PLAY, opcode::H264_BLOCK, opcode::PLAY_BLOCK]
+        );
+        let first = transport.plain()[2];
+        assert_eq!(u32::from_be_bytes(first[8..12].try_into().unwrap()), 4);
+        // The clip is one block, so that block ends the pass.
+        assert_eq!(first[12], 1);
+    }
+
+    #[test]
+    fn the_panels_block_size_is_used_and_a_zero_answer_keeps_the_default() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        bulk(&panel).writes.clear();
+        bulk(&panel).block_size = Some(4_096);
+        panel.start_video(&[7_u8; 10_000], 2.0).unwrap();
+        panel.stop_video();
+        let first = bulk(&panel).plain()[2];
+        assert_eq!(u32::from_be_bytes(first[8..12].try_into().unwrap()), 4_096);
+        // More blocks follow, so this one is not the end of the stream.
+        assert_eq!(first[12], 0);
+
+        let mut fallback = self::panel(FakeBulk::new());
+        fallback.open().unwrap();
+        bulk(&fallback).writes.clear();
+        bulk(&fallback).block_size = Some(0);
+        fallback.start_video(&vec![7_u8; 300_000], 2.0).unwrap();
+        fallback.stop_video();
+        let first = bulk(&fallback).plain()[2];
+        assert_eq!(
+            u32::from_be_bytes(first[8..12].try_into().unwrap()) as usize,
+            H264_BLOCK_BYTES
+        );
+    }
+
+    #[test]
+    fn an_empty_clip_is_refused() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        assert_eq!(
+            panel.start_video(&[], 1.0).unwrap_err(),
+            "The clip is empty."
+        );
+    }
+
+    #[test]
+    fn an_overlay_enables_its_layer_once_and_is_pushed_as_png() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        bulk(&panel).writes.clear();
+        // The open already enabled the layer for its transparent clear.
+        panel.overlay_shown = false;
+        panel.present_overlay(&[1, 2, 3]).unwrap();
+        panel.present_overlay(&[4, 5]).unwrap();
+        let transport = bulk(&panel);
+        assert_eq!(
+            transport.opcodes(),
+            vec![opcode::OVERLAY_LAYER, opcode::PUSH_PNG, opcode::PUSH_PNG]
+        );
+        assert_eq!(transport.parameter(0), 1);
+    }
+
+    #[test]
+    fn a_stopped_clip_re_enables_the_layer_on_the_next_overlay() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        panel.present_overlay(&[1]).unwrap();
+        bulk(&panel).writes.clear();
+        panel.stop_video();
+        panel.present_overlay(&[2]).unwrap();
+        assert_eq!(
+            bulk(&panel).opcodes(),
+            vec![opcode::STOP_PLAY, opcode::OVERLAY_LAYER, opcode::PUSH_PNG]
+        );
+    }
+
+    #[test]
+    fn an_overlay_over_the_payload_limit_is_refused_by_its_size() {
+        let mut panel = panel(FakeBulk::new());
+        panel.open().unwrap();
+        let error = panel
+            .present_overlay(&vec![0_u8; MAX_PAYLOAD + 1])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "A 512001-byte overlay exceeds the panel's 512000-byte limit."
         );
     }
 }

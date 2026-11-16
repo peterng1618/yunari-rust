@@ -307,6 +307,24 @@ pub trait PanelDevice: Send {
 
     fn present(&mut self, still: &[u8]) -> Result<(), String>;
 
+    /// Plays an already-encoded H.264 elementary stream of `seconds` on the
+    /// panel's own decoder. The first block is written before this returns, so
+    /// a refused clip reaches the caller and it can fall back to stills.
+    fn start_video(&mut self, h264: &[u8], seconds: f64) -> Result<(), String> {
+        let _ = (h264, seconds);
+        Err("That device does not play video.".to_owned())
+    }
+
+    /// Replaces the UI layer over the playing clip; a PNG whose alpha lets the
+    /// picture show through.
+    fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {
+        let _ = png;
+        Err("That device has no overlay layer.".to_owned())
+    }
+
+    /// Stops the feed and the panel's playback, in that order.
+    fn stop_video(&mut self) {}
+
     fn still_format(&self) -> StillFormat {
         StillFormat::Jpeg
     }
@@ -377,6 +395,18 @@ impl PanelDevice for Box<dyn PanelDevice> {
 
     fn present(&mut self, still: &[u8]) -> Result<(), String> {
         (**self).present(still)
+    }
+
+    fn start_video(&mut self, h264: &[u8], seconds: f64) -> Result<(), String> {
+        (**self).start_video(h264, seconds)
+    }
+
+    fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {
+        (**self).present_overlay(png)
+    }
+
+    fn stop_video(&mut self) {
+        (**self).stop_video()
     }
 
     fn still_format(&self) -> StillFormat {

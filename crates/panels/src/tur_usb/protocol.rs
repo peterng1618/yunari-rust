@@ -36,6 +36,10 @@ pub mod opcode {
     /// Ends any playback still running before a pushed frame.
     pub const STOP_PLAY: u8 = 123;
     pub const BUFFER_LEVEL: u8 = 122;
+    /// One block of an H.264 elementary stream the panel decodes itself.
+    pub const PLAY_BLOCK: u8 = 121;
+    /// The block size this panel wants its H.264 stream cut into.
+    pub const H264_BLOCK: u8 = 17;
 }
 
 /// The fields a command may carry.
