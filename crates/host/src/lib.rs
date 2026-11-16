@@ -23,6 +23,7 @@ pub mod origins;
 pub mod packs_routes;
 pub mod pages;
 pub mod pairing;
+pub mod panel_video;
 pub mod panels;
 pub mod panels_routes;
 pub mod path_presets;
