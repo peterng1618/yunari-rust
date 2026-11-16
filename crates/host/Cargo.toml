@@ -17,14 +17,16 @@ hyper = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util = { version = "0.1", features = ["server-auto", "http1", "http2", "tokio", "service"] }
 rand = "0.10.4"
 rcgen = { version = "0.14.10", features = ["pem"] }
-rustls = "0.23.46"
+# ring is the provider ureq's TLS already uses; one provider in the process
+# keeps rustls from refusing to pick one at runtime.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.11.1"
 sysinfo.workspace = true
 time = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net", "io-util", "sync"] }
-tokio-rustls = "0.26"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging"] }
 tower = "0.5"
 yunari-library.workspace = true
 yunari-model.workspace = true

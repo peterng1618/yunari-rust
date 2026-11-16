@@ -100,6 +100,9 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/", get(root))
         .route("/player.js", get(player_script))
         .route("/favicon.svg", get(favicon))
+        // A display loads the icon a weather reading names; the slug is
+        // allow-listed, so no other path is ever served.
+        .route("/api/weather/icon/{file}", get(weather_icon))
         .route("/manifest.webmanifest", get(manifest))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
@@ -788,6 +791,10 @@ async fn favicon() -> Response {
     crate::pages::favicon()
 }
 
+async fn weather_icon(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+    crate::pages::weather_icon(&file)
+}
+
 async fn manifest() -> Response {
     crate::pages::manifest()
 }
@@ -965,6 +972,23 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn a_weather_icon_is_served_only_for_a_vendored_slug() {
+        let app = app("weather-icons");
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        // A paired display loads the picture itself, so a phone may read it.
+        let (status, body) = ask(app.clone(), "/api/weather/icon/rain.svg", phone).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("<svg"));
+        // A slug this build did not vendor, and a path that is not a slug.
+        let (status, _) = ask(app.clone(), "/api/weather/icon/evil.svg", phone).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = ask(app.clone(), "/api/weather/icon/rain.png", phone).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = ask(app, "/api/weather/icon/..%2Fsecrets.svg", phone).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

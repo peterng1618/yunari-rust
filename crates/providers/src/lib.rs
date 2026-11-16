@@ -17,3 +17,4 @@ pub mod sampler;
 pub mod system;
 pub mod units;
 pub mod vocabulary;
+pub mod weather;

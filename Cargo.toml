@@ -32,6 +32,7 @@ jiff = "0.2"
 sysinfo = "0.40"
 image = "0.25"
 proptest = "1"
+ureq = "3"
 windows-sys = { version = "0.61", default-features = false }
 yunari-model = { path = "crates/model" }
 yunari-player = { path = "crates/player" }

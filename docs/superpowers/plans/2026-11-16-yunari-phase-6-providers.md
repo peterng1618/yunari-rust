@@ -73,15 +73,16 @@
 ### Task 4: Weather
 
 **Files:**
-- Create: `crates/providers/src/weather/{mod.rs,open_meteo.rs,conditions.rs}`
-- Test: same files
+- Create: `crates/providers/src/weather/{mod.rs,open_meteo.rs,conditions.rs}`, `crates/host/assets/weather-icons/*.svg`
+- Modify: `crates/host/src/{pages.rs,http.rs,server.rs}`
 
 **Interfaces:**
-- Produces: keys `weather.temp`, `weather.temp.feels`, `weather.condition`, `weather.humidity`, `weather.wind`, `weather.pressure`, `weather.forecast.*`, `weather.location`; `OpenMeteo::fetch(&Location) -> Result<Weather, String>`.
+- Produces: every key in `weather::KEYS`; `WeatherSettings::from_json` (host's `weather.json`, field-by-field defaults); `OpenMeteo::fetch(&Location, &Fetch) -> Result<Weather, String>`; `GET /api/weather/icon/{file}` serving only vendored slugs.
+- Deferred: WeatherAPI and OpenWeatherMap backends (named in the reading's reason), Windows location fallback (named in the reason), German/Vietnamese condition tables (English only until the host has a language setting).
 
-- [ ] Test: the fixture answer maps `weather_code` 3 to "Overcast" and 61 to "Rain".
-- [ ] Test: a fetch that times out is `missing` with the timeout sentence.
-- [ ] Commit.
+- [x] Test: the fixture answer maps `weather_code` 3 to "Overcast" and 61 to "Slight rain".
+- [x] Test: a fetch that times out is `missing` with the timeout sentence.
+- [x] Commit.
 
 ### Task 5: Media (SMTC via the source's own helper)
 

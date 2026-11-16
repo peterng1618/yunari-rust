@@ -78,7 +78,11 @@ pub fn app(config: HostConfig) -> Shared {
     std::fs::create_dir_all(&settings).ok();
     let authority = crate::tls::Authority::load(&settings).ok();
     let library = yunari_library::Library::new(config.themes_dir());
-    let registry = Arc::new(providers(&config.lhm_url, &config.presentmon_path));
+    let registry = Arc::new(providers(
+        &config.lhm_url,
+        &config.presentmon_path,
+        &settings,
+    ));
     let frames = Arc::new(crate::panels::PanelFrames::new(
         library.clone(),
         Arc::clone(&registry),
@@ -112,6 +116,7 @@ pub fn app(config: HostConfig) -> Shared {
 fn providers(
     lhm_url: &str,
     presentmon_path: &std::path::Path,
+    settings_dir: &std::path::Path,
 ) -> yunari_providers::registry::Registry {
     let mut registry = yunari_providers::registry::Registry::new();
     registry.add(yunari_providers::clock::ClockProvider::new());
@@ -127,7 +132,22 @@ fn providers(
             presentmon_path,
         )),
     ]));
+    registry.add(weather(settings_dir));
     registry
+}
+
+/// Weather reads its place from `weather.json` on every poll, so a settings
+/// write is seen without a restart.
+fn weather(settings_dir: &std::path::Path) -> yunari_providers::weather::WeatherProvider {
+    let path = settings_dir.join("weather.json");
+    let settings: yunari_providers::weather::SettingsLoader = Arc::new(move || {
+        let stored: serde_json::Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+        yunari_providers::weather::WeatherSettings::from_json(&stored)
+    });
+    yunari_providers::weather::WeatherProvider::new(settings)
 }
 
 pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
