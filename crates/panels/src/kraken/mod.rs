@@ -1,6 +1,7 @@
 //! NZXT Kraken Z53/Z63/Z73: HID control reports and a bulk pixel stream.
 
 pub mod device;
+pub mod lighting;
 pub mod transport;
 
 use crate::family::{PanelFamily, PanelHint};

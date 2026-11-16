@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::family::{CommandKind, PanelCommand, PanelDevice, PanelFamily, StillFormat, for_device};
+use crate::family::{
+    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, PanelFamily, StillFormat,
+    Telemetry, for_device,
+};
 use crate::open_device;
 use crate::runner::{Capture, Runner};
 
@@ -120,11 +123,40 @@ struct Inner {
     stopping: bool,
 }
 
+/// One running panel as the SignalRGB seam sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SinkDevice {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub lighting: Option<Lighting>,
+    pub controls: Option<Controls>,
+    pub display: Geometry,
+}
+
 pub struct Manager {
     inner: Mutex<Inner>,
     open: OpenDevice,
     frame_source: FrameSource,
     on_error: Report,
+}
+
+impl crate::signalrgb::Sinks for Manager {
+    fn describe(&self) -> Vec<SinkDevice> {
+        self.sinks()
+    }
+
+    fn write_colors(&self, id: &str, rgb: &[u8]) -> Result<(), String> {
+        Manager::write_colors(self, id, rgb)
+    }
+
+    fn set_controls(&self, id: &str, pump: Option<f64>, fan: Option<f64>) -> Result<(), String> {
+        Manager::set_controls(self, id, pump, fan)
+    }
+
+    fn telemetry(&self, id: &str) -> Result<Telemetry, String> {
+        Manager::telemetry(self, id)
+    }
 }
 
 impl Manager {
@@ -393,6 +425,73 @@ impl Manager {
     pub fn running(&self) -> Vec<String> {
         let inner = self.inner.lock().expect("the manager");
         inner.entries.keys().cloned().collect()
+    }
+
+    /// The running panels that expose more than a picture, in a stable order so
+    /// a sender's device index means one device.
+    pub fn sinks(&self) -> Vec<SinkDevice> {
+        let mut entries: Vec<(String, Arc<Entry>)> = self
+            .inner
+            .lock()
+            .expect("the manager")
+            .entries
+            .iter()
+            .map(|(id, entry)| (id.clone(), Arc::clone(entry)))
+            .collect();
+        entries.sort_by(|first, second| first.0.cmp(&second.0));
+
+        entries
+            .into_iter()
+            .filter_map(|(id, entry)| {
+                let family = for_device(entry.device.vendor_id, entry.device.product_id)?;
+                let (lighting, controls, display) = entry
+                    .runner
+                    .call(|device| Ok((device.lighting(), device.controls(), device.geometry())))
+                    .ok()?;
+                if lighting.is_none() && controls.is_none() {
+                    return None;
+                }
+                Some(SinkDevice {
+                    // The display id, not a family constant: two panels of one
+                    // family are two sinks and each sender index must reach one.
+                    id,
+                    kind: family.id.to_owned(),
+                    name: family.label.to_owned(),
+                    lighting,
+                    controls,
+                    display,
+                })
+            })
+            .collect()
+    }
+
+    /// Writes one colour frame to a running panel's LEDs.
+    pub fn write_colors(&self, display: &str, rgb: &[u8]) -> Result<(), String> {
+        let entry = self
+            .entry(display)
+            .ok_or_else(|| format!("No device {display} is open."))?;
+        entry.runner.call(|device| device.write_colors(rgb))
+    }
+
+    /// Sets a running device's pump and fan levels.
+    pub fn set_controls(
+        &self,
+        display: &str,
+        pump: Option<f64>,
+        fan: Option<f64>,
+    ) -> Result<(), String> {
+        let entry = self
+            .entry(display)
+            .ok_or_else(|| format!("No device {display} is open."))?;
+        entry.runner.call(|device| device.set_controls(pump, fan))
+    }
+
+    /// Asks a running device what it is doing.
+    pub fn telemetry(&self, display: &str) -> Result<Telemetry, String> {
+        let entry = self
+            .entry(display)
+            .ok_or_else(|| format!("No device {display} is open."))?;
+        entry.runner.call(|device| device.telemetry())
     }
 
     pub fn stop_all(&self) {

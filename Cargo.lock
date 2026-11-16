@@ -8966,6 +8966,7 @@ dependencies = [
  "image",
  "rusb",
  "serde",
+ "serde_json",
  "serialport",
 ]
 

@@ -124,6 +124,11 @@ enum Overlay {
         field: String,
         rows: Vec<binding_keys::KeyRow>,
     },
+    /// The SignalRGB receiver's UDP port, typed in.
+    BridgePort {
+        dialog: Box<SettingsDialog>,
+        prompt: Prompt,
+    },
     /// A weather place typed as `label|latitude|longitude`, with the settings
     /// dialog it was opened from.
     WeatherPlace {
@@ -373,13 +378,18 @@ impl EditorWindow {
                             .collect()
                     })
                     .unwrap_or_default();
-                self.overlay = Some(Overlay::Settings(Box::new(SettingsDialog::new(
+                let mut dialog = SettingsDialog::new(
                     self.settings_dir(),
                     monitors,
                     displays,
                     options,
                     providers,
-                ))));
+                );
+                if let Some(host) = self.host.as_ref() {
+                    dialog =
+                        dialog.with_bridge(host.signalrgb.is_some(), host.signalrgb_error.clone());
+                }
+                self.overlay = Some(Overlay::Settings(Box::new(dialog)));
             }
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
@@ -888,6 +898,33 @@ impl EditorWindow {
             },
         );
         cx.notify();
+    }
+
+    /// Asks for the SignalRGB receiver's UDP port.
+    fn edit_bridge_port(&mut self) {
+        let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
+            return;
+        };
+        self.overlay = Some(Overlay::BridgePort {
+            prompt: Prompt::new(
+                "SignalRGB port",
+                "The UDP port the receiver binds, from 1 to 65535",
+                dialog.bridge_port.to_string(),
+            ),
+            dialog,
+        });
+    }
+
+    fn save_bridge_port(&mut self, mut dialog: SettingsDialog, value: &str) {
+        let settings = self.settings_dir();
+        dialog.message = Some(match settings_dialog::set_bridge_port(&settings, value) {
+            Ok(port) => {
+                dialog.bridge_port = port;
+                format!("SignalRGB port {port} is saved; it applies on the next host start.")
+            }
+            Err(message) => message,
+        });
+        self.overlay = Some(Overlay::Settings(Box::new(dialog)));
     }
 
     /// Asks for a place as `label|latitude|longitude`.
@@ -2517,6 +2554,17 @@ impl EditorWindow {
                     self.overlay = Some(Overlay::Confirm { message, resume });
                 }
             }
+            Overlay::BridgePort { dialog, mut prompt } => {
+                match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                    Outcome::Pending => {
+                        self.overlay = Some(Overlay::BridgePort { dialog, prompt });
+                    }
+                    Outcome::Cancel => self.overlay = Some(Overlay::Settings(dialog)),
+                    Outcome::Submit(value) => {
+                        self.save_bridge_port(*dialog, &value);
+                    }
+                }
+            }
             Overlay::WeatherPlace { dialog, mut prompt } => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => {
@@ -2962,7 +3010,8 @@ impl EditorWindow {
             Some(
                 Overlay::WeatherPlace { prompt, .. }
                 | Overlay::Credential { prompt, .. }
-                | Overlay::DisplayName { prompt, .. },
+                | Overlay::DisplayName { prompt, .. }
+                | Overlay::BridgePort { prompt, .. },
             ) => Self::prompt_panel(prompt, cx),
             Some(Overlay::Import(prompt) | Overlay::ImportAsset(prompt)) => {
                 Self::prompt_panel(prompt, cx)

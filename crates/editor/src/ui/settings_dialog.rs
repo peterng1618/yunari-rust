@@ -62,6 +62,12 @@ pub struct SettingsDialog {
     pub options: Vec<yunari_providers::provider::Device>,
     /// Each sensor provider and where it stands, so a gap says who owns it.
     pub providers: Vec<(String, String)>,
+    /// The SignalRGB receiver's configured port, and whether this host bound
+    /// it (`None` when no host is attached to the editor).
+    pub bridge_port: u16,
+    pub bridge_listening: Option<bool>,
+    /// Why the receiver did not bind, when it did not.
+    pub bridge_error: Option<String>,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
@@ -88,10 +94,28 @@ impl SettingsDialog {
             devices: yunari_providers::devices::Assignment::load(&settings),
             options,
             providers,
-            settings,
+            settings: settings.clone(),
+            bridge_port: yunari_host::signalrgb::Settings::load(&settings).port(),
+            bridge_listening: None,
+            bridge_error: None,
             message: None,
         }
     }
+
+    /// Adds what the running host says about the SignalRGB receiver.
+    pub fn with_bridge(mut self, listening: bool, error: Option<String>) -> Self {
+        self.bridge_listening = Some(listening);
+        self.bridge_error = error;
+        self
+    }
+}
+
+/// Stores the port the next host start binds. A port no socket can bind is
+/// refused rather than clamped to one the owner never named.
+pub fn set_bridge_port(settings: &Path, value: &str) -> Result<u16, String> {
+    let mut store = yunari_host::signalrgb::Settings::load(settings);
+    let port = store.write_udp_port(&serde_json::json!(value.trim().parse::<u32>().ok()))?;
+    Ok(port)
 }
 
 /// Writes which drive answers a slot (`system-disk` or `data-disk`) and reports
@@ -437,6 +461,18 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
             cx.listener(|this, _: &ClickEvent, _, _| this.edit_weather_key()),
         ));
     }
+    let bridge = match (dialog.bridge_listening, dialog.bridge_error.as_deref()) {
+        (Some(true), _) => format!("SignalRGB bridge: listening on UDP {}", dialog.bridge_port),
+        (Some(false), Some(error)) => {
+            format!("SignalRGB bridge: not listening — {error}")
+        }
+        _ => format!("SignalRGB bridge: UDP port {}", dialog.bridge_port),
+    };
+    column = column.child(row(
+        "settings-signalrgb-port",
+        format!("{bridge}  ·  click to change"),
+        cx.listener(|this, _: &ClickEvent, _, _| this.edit_bridge_port()),
+    ));
     for (index, (slot, label)) in [
         ("gpu", "GPU"),
         ("system-disk", "System disk"),

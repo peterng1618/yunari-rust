@@ -7,7 +7,9 @@
 
 use std::time::{Duration, Instant};
 
-use crate::family::{CommandKind, Geometry, PanelCommand, PanelDevice, StillFormat};
+use crate::family::{
+    CommandKind, Controls, Geometry, Lighting, PanelCommand, PanelDevice, StillFormat, Telemetry,
+};
 
 pub const SIZE: u32 = 320;
 /// The transfer header every upload begins with.
@@ -418,6 +420,53 @@ impl<H: Hid, B: BulkStream> PanelDevice for KrakenZ3<H, B> {
         // A HID handle is a file; closing it is the release.
         self.control.close();
         Ok(())
+    }
+
+    fn lighting(&self) -> Option<Lighting> {
+        Some(crate::kraken::lighting::lighting())
+    }
+
+    fn write_colors(&mut self, rgb: &[u8]) -> Result<(), String> {
+        // Validate and pack first: a short frame is refused before a report
+        // reaches the wire.
+        let reports = crate::kraken::lighting::lighting_reports(rgb)?;
+        for report in &reports {
+            self.write(report)?;
+        }
+        self.write(&crate::kraken::lighting::lighting_commit())
+    }
+
+    fn controls(&self) -> Option<Controls> {
+        Some(Controls {
+            pump: true,
+            fans: true,
+            telemetry: true,
+        })
+    }
+
+    fn set_controls(&mut self, pump: Option<f64>, fan: Option<f64>) -> Result<(), String> {
+        // Both reports are packed before either is written, so a bad value
+        // cannot leave half a request on the wire.
+        let pump = pump.map(crate::kraken::lighting::pump_report).transpose()?;
+        let fan = fan.map(crate::kraken::lighting::fan_report).transpose()?;
+        if pump.is_none() && fan.is_none() {
+            return Err("A controls request needs pumpPercent or fanPercent.".to_owned());
+        }
+        if let Some(report) = pump {
+            self.write(&report)?;
+        }
+        if let Some(report) = fan {
+            self.write(&report)?;
+        }
+        Ok(())
+    }
+
+    fn telemetry(&mut self) -> Result<Telemetry, String> {
+        self.write(&[0x74, 0x01])?;
+        let reply = self
+            .read_until(0x75, 0x01)
+            .ok_or_else(|| "The Kraken did not answer its status query.".to_owned())?;
+        crate::kraken::lighting::parse_status(&reply)
     }
 }
 

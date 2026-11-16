@@ -98,6 +98,20 @@ impl<D: PanelDevice> Runner<D> {
         self.device.lock().expect("the panel").accepts(kind)
     }
 
+    /// Runs one operation on the device under the runner's own lock, so a
+    /// lighting write cannot interleave with a frame's reports.
+    pub fn call<T>(&self, work: impl FnOnce(&mut D) -> Result<T, String>) -> Result<T, String> {
+        let opened = {
+            let state = self.state.lock().expect("the runner state");
+            state.running && !state.lost && !state.closed
+        };
+        if !opened {
+            return Err("The panel is not connected.".to_owned());
+        }
+        let mut device = self.device.lock().expect("the panel");
+        work(&mut device)
+    }
+
     pub fn interval_ms(&self) -> u32 {
         self.interval_ms
     }

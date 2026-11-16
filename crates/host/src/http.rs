@@ -47,6 +47,10 @@ pub struct App {
     pub credentials: crate::credentials::Credentials,
     /// Theme drafts the agent surface composes before a save.
     pub drafts: Mutex<crate::drafts::Drafts>,
+    /// The SignalRGB colour receiver, when it bound at start.
+    pub signalrgb: Option<Arc<yunari_panels::signalrgb::SignalRgbBridge>>,
+    /// Why it did not bind, in the host's own words.
+    pub signalrgb_error: Option<String>,
 }
 
 pub type Shared = Arc<App>;
@@ -105,6 +109,27 @@ pub fn router(app: Shared) -> axum::Router {
         .route(
             "/api/displays/{id}/panel/reset-device",
             post(crate::panels_routes::reset_device),
+        )
+        // The SignalRGB seam: the descriptor and the actions on one device.
+        .route(
+            "/api/devices",
+            get(crate::device_routes::devices).put(crate::device_routes::assign),
+        )
+        .route(
+            "/api/devices/{id}/controls",
+            post(crate::device_routes::act),
+        )
+        .route(
+            "/api/devices/{id}/lighting-mode",
+            post(crate::device_routes::act),
+        )
+        .route(
+            "/api/devices/{id}/telemetry",
+            get(crate::device_routes::telemetry),
+        )
+        .route(
+            "/api/signalrgb-bridge",
+            axum::routing::put(crate::device_routes::port),
         )
         .route(
             "/api/displays/{id}",

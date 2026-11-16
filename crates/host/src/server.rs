@@ -50,6 +50,8 @@ pub struct Server {
     pub certificate_pem: Option<String>,
     /// The panels this host is driving, stopped when the server stops.
     panels: Arc<yunari_panels::manager::Manager>,
+    /// The SignalRGB receiver, stopped with the host.
+    signalrgb: Option<Arc<yunari_panels::signalrgb::SignalRgbBridge>>,
     shutdown: Option<oneshot::Sender<()>>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -69,6 +71,9 @@ impl Server {
         // A panel left open would keep showing the last frame after the host
         // that claims to drive it is gone.
         self.panels.stop_all();
+        if let Some(bridge) = self.signalrgb.take() {
+            bridge.close();
+        }
     }
 }
 
@@ -99,6 +104,21 @@ pub fn app(config: HostConfig) -> Shared {
             eprintln!("Panel {display}: {message}");
         }),
     );
+    // Before any panel opens, so a sender finds the seam as soon as the host
+    // answers; the descriptor fills in as each device runs. A port already in
+    // use is reported and the host otherwise runs: it is an optional seam, not
+    // the reason this process exists.
+    let (signalrgb, signalrgb_error) = {
+        let port = crate::signalrgb::Settings::load(&settings).port();
+        let manager_sinks: Arc<yunari_panels::manager::Manager> = Arc::clone(&manager);
+        let sinks: Arc<dyn yunari_panels::signalrgb::Sinks> = manager_sinks;
+        match yunari_panels::signalrgb::SignalRgbBridge::start(port, sinks, |message| {
+            eprintln!("SignalRGB bridge: {message}");
+        }) {
+            Ok(bridge) => (Some(Arc::new(bridge)), None),
+            Err(error) => (None, Some(error)),
+        }
+    };
     let store = crate::store::Store::load(&settings);
     let account = crate::store_routes::Account::new(
         &settings,
@@ -110,6 +130,8 @@ pub fn app(config: HostConfig) -> Shared {
         account,
         credentials: crate::credentials::Credentials::at(&settings),
         drafts: std::sync::Mutex::new(crate::drafts::Drafts::default()),
+        signalrgb,
+        signalrgb_error,
         identity: crate::identity::HostIdentity::load_or_mint(&settings),
         displays: std::sync::Mutex::new(crate::displays::DisplayStore::load(&settings)),
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),
@@ -303,6 +325,7 @@ pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
             .as_ref()
             .map(|authority| authority.certificate_pem().to_owned()),
         panels: Arc::clone(&app.manager),
+        signalrgb: app.signalrgb.clone(),
         shutdown: Some(shutdown),
         handle,
     })

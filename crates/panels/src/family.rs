@@ -223,6 +223,49 @@ pub enum StillFormat {
     Rgba,
 }
 
+/// One channel of LEDs a device drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct LightingChannel {
+    pub name: &'static str,
+    pub leds: u32,
+}
+
+/// How the LEDs are laid out, for a sender that wants to paint them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct LightingLayout {
+    pub shape: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub count: u32,
+}
+
+/// The LEDs a device drives: one frame is `led_count` RGB triples.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lighting {
+    pub led_count: u32,
+    pub channels: &'static [LightingChannel],
+    pub layout: LightingLayout,
+}
+
+/// Which controls a device accepts besides its own picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Controls {
+    pub pump: bool,
+    pub fans: bool,
+    pub telemetry: bool,
+}
+
+/// What a device reports about itself, in the units its own reply carries.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Telemetry {
+    pub liquid_temp_c: f64,
+    pub pump_rpm: u32,
+    pub pump_percent: u8,
+    pub fan_rpm: u32,
+    pub fan_percent: u8,
+}
+
 /// One panel, open or not. Every driver is generic over its transport so a test
 /// can hand it a fake and read back exactly what it wrote.
 pub trait PanelDevice: Send {
@@ -249,6 +292,33 @@ pub trait PanelDevice: Send {
     fn run(&mut self, command: PanelCommand) -> Result<String, String>;
 
     fn close(&mut self) -> Result<(), String>;
+
+    /// The LEDs this device drives, when it drives any.
+    fn lighting(&self) -> Option<Lighting> {
+        None
+    }
+
+    /// Writes one frame of RGB triples, `led_count` of them.
+    fn write_colors(&mut self, rgb: &[u8]) -> Result<(), String> {
+        let _ = rgb;
+        Err("That device has no lighting.".to_owned())
+    }
+
+    /// The controls beyond the picture this device accepts.
+    fn controls(&self) -> Option<Controls> {
+        None
+    }
+
+    /// Sets the pump and fan levels, each one already a whole percent.
+    fn set_controls(&mut self, pump: Option<f64>, fan: Option<f64>) -> Result<(), String> {
+        let _ = (pump, fan);
+        Err("That device accepts no controls.".to_owned())
+    }
+
+    /// Asks the device what it is doing right now.
+    fn telemetry(&mut self) -> Result<Telemetry, String> {
+        Err("That device reports no telemetry.".to_owned())
+    }
 }
 
 /// A boxed driver is a driver: the manager keeps one runner per panel and only
@@ -284,6 +354,26 @@ impl PanelDevice for Box<dyn PanelDevice> {
 
     fn close(&mut self) -> Result<(), String> {
         (**self).close()
+    }
+
+    fn lighting(&self) -> Option<Lighting> {
+        (**self).lighting()
+    }
+
+    fn write_colors(&mut self, rgb: &[u8]) -> Result<(), String> {
+        (**self).write_colors(rgb)
+    }
+
+    fn controls(&self) -> Option<Controls> {
+        (**self).controls()
+    }
+
+    fn set_controls(&mut self, pump: Option<f64>, fan: Option<f64>) -> Result<(), String> {
+        (**self).set_controls(pump, fan)
+    }
+
+    fn telemetry(&mut self) -> Result<Telemetry, String> {
+        (**self).telemetry()
     }
 }
 
