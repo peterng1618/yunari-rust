@@ -16,6 +16,8 @@ pub enum Pick {
     File(PathBuf),
     /// A Wallpaper Engine item's id; its preview is the picture.
     Wallpaper(String),
+    /// A subscribed scene to write out as an editable project.
+    Project(String),
 }
 
 #[derive(Debug, Clone)]
@@ -62,9 +64,20 @@ impl AssetFinder {
         match yunari_host::wallpaper_engine::locate() {
             Some(install) => {
                 let scan = yunari_host::wallpaper_engine::scan(&install);
-                choices.extend(scan.items.into_iter().map(|item| Choice {
-                    label: format!("{}  ·  wallpaper", item.title),
-                    pick: Pick::Wallpaper(item.workshop_id),
+                choices.extend(scan.items.into_iter().flat_map(|item| {
+                    let mut rows = vec![Choice {
+                        label: format!("{}  ·  wallpaper", item.title),
+                        pick: Pick::Wallpaper(item.workshop_id.clone()),
+                    }];
+                    // A scene is a package, not a picture: its own action is
+                    // writing it out as a project the engine can edit.
+                    if item.kind == yunari_host::wallpaper_engine::Kind::Scene {
+                        rows.push(Choice {
+                            label: format!("{}  ·  convert to a project", item.title),
+                            pick: Pick::Project(item.workshop_id),
+                        });
+                    }
+                    rows
                 }));
             }
             None => {
@@ -114,6 +127,8 @@ pub fn bytes_of(pick: &Pick) -> Result<(String, Vec<u8>), String> {
             let bytes = std::fs::read(path).map_err(|error| format!("{error}"))?;
             Ok((name, bytes))
         }
+        // A project is not bytes to place; it is a write on the host.
+        Pick::Project(_) => Err("That row is not a picture.".to_owned()),
         Pick::Wallpaper(id) => {
             let (bytes, _) = yunari_host::wallpaper_engine::bytes(id, true)
                 .ok_or_else(|| "That wallpaper has no preview to place.".to_owned())?;
