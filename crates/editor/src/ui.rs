@@ -131,6 +131,12 @@ enum Overlay {
         id: String,
         prompt: Prompt,
     },
+    /// A stored display's label, typed in.
+    DisplayName {
+        dialog: Box<SettingsDialog>,
+        id: String,
+        prompt: Prompt,
+    },
     /// An action that would throw unsaved work away, waiting for an answer.
     Confirm {
         message: String,
@@ -339,6 +345,7 @@ impl EditorWindow {
             }
             Command::Settings => {
                 let monitors = settings_dialog::monitor_rows(self.host.as_ref(), cx);
+                let displays = settings_dialog::display_rows(self.host.as_ref());
                 let options = self
                     .host
                     .as_ref()
@@ -363,6 +370,7 @@ impl EditorWindow {
                 self.overlay = Some(Overlay::Settings(Box::new(SettingsDialog::new(
                     self.settings_dir(),
                     monitors,
+                    displays,
                     options,
                     providers,
                 ))));
@@ -737,8 +745,10 @@ impl EditorWindow {
         };
         drop(displays);
         let monitors = settings_dialog::monitor_rows(Some(&host), cx);
+        let displays = settings_dialog::display_rows(Some(&host));
         if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
             dialog.monitors = monitors;
+            dialog.displays = displays;
             dialog.message = Some(message);
         }
         cx.notify();
@@ -775,8 +785,10 @@ impl EditorWindow {
         };
         drop(displays);
         let monitors = settings_dialog::monitor_rows(Some(&host), cx);
+        let displays = settings_dialog::display_rows(Some(&host));
         if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
             dialog.monitors = monitors;
+            dialog.displays = displays;
             dialog.message = Some(message);
         }
         cx.notify();
@@ -1007,6 +1019,49 @@ impl EditorWindow {
         );
         dialog.weather_key_set = settings_dialog::read_weather_key_set(&settings, &dialog.weather);
         dialog.source_credentials = settings_dialog::read_source_credentials(&settings);
+        self.overlay = Some(Overlay::Settings(Box::new(dialog)));
+    }
+
+    /// Asks for a stored display's new label.
+    fn edit_display_name(&mut self, id: String) {
+        let Some(Overlay::Settings(dialog)) = self.overlay.take() else {
+            return;
+        };
+        let current = dialog
+            .displays
+            .iter()
+            .find(|display| display.id == id)
+            .map(|display| display.label.clone())
+            .unwrap_or_default();
+        self.overlay = Some(Overlay::DisplayName {
+            dialog,
+            prompt: Prompt::new("Display name", "What this display is called", &current),
+            id,
+        });
+    }
+
+    /// Stores a display's label. The store trims it and refuses an empty one,
+    /// so the row shows the sentence the store answered rather than a guess.
+    fn save_display_name(
+        &mut self,
+        mut dialog: SettingsDialog,
+        id: &str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let message = match self.host.clone() {
+            Some(host) => match host.displays.lock() {
+                Ok(mut displays) => match displays.patch(id, Some(value), None, None) {
+                    Ok(record) => format!("Renamed to {}.", record.label),
+                    Err(refusal) => refusal.0,
+                },
+                Err(_) => "The display list is busy; try again.".to_owned(),
+            },
+            None => "No host is running, so the label was not saved.".to_owned(),
+        };
+        dialog.message = Some(message);
+        dialog.monitors = settings_dialog::monitor_rows(self.host.as_ref(), cx);
+        dialog.displays = settings_dialog::display_rows(self.host.as_ref());
         self.overlay = Some(Overlay::Settings(Box::new(dialog)));
     }
 
@@ -2402,6 +2457,17 @@ impl EditorWindow {
                     self.save_credential(*dialog, &id, &value);
                 }
             },
+            Overlay::DisplayName {
+                dialog,
+                id,
+                mut prompt,
+            } => match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
+                Outcome::Pending => {
+                    self.overlay = Some(Overlay::DisplayName { dialog, id, prompt });
+                }
+                Outcome::Cancel => self.overlay = Some(Overlay::Settings(dialog)),
+                Outcome::Submit(value) => self.save_display_name(*dialog, &id, &value, cx),
+            },
             Overlay::Field(mut prompt) => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => self.overlay = Some(Overlay::Field(prompt)),
@@ -2809,9 +2875,11 @@ impl EditorWindow {
             Some(Overlay::SaveAs(prompt) | Overlay::Rename(prompt) | Overlay::Field(prompt)) => {
                 Self::prompt_panel(prompt, cx)
             }
-            Some(Overlay::WeatherPlace { prompt, .. } | Overlay::Credential { prompt, .. }) => {
-                Self::prompt_panel(prompt, cx)
-            }
+            Some(
+                Overlay::WeatherPlace { prompt, .. }
+                | Overlay::Credential { prompt, .. }
+                | Overlay::DisplayName { prompt, .. },
+            ) => Self::prompt_panel(prompt, cx),
             Some(Overlay::Import(prompt) | Overlay::ImportAsset(prompt)) => {
                 Self::prompt_panel(prompt, cx)
             }

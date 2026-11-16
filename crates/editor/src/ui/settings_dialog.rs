@@ -27,6 +27,16 @@ pub struct DisplayRow {
     pub rotation: u16,
 }
 
+/// A stored display that is not a monitor's own record, with the presentation
+/// the panels follow.
+pub struct NamedDisplay {
+    pub id: String,
+    pub label: String,
+    pub kind: &'static str,
+    pub shape: DisplayShape,
+    pub rotation: u16,
+}
+
 /// The switches, read once when the dialog opens.
 pub struct SettingsDialog {
     pub settings: PathBuf,
@@ -35,6 +45,8 @@ pub struct SettingsDialog {
     /// Whether the app starts with Windows.
     pub autostart: bool,
     pub monitors: Vec<MonitorRow>,
+    /// The stored displays no monitor row carries: paired phones and panels.
+    pub displays: Vec<NamedDisplay>,
     /// Where this PC's weather comes from and the place it is for.
     pub weather: WeatherSettings,
     /// Whether the selected backend has a stored key; the key itself is never
@@ -58,6 +70,7 @@ impl SettingsDialog {
     pub fn new(
         settings: PathBuf,
         monitors: Vec<MonitorRow>,
+        displays: Vec<NamedDisplay>,
         options: Vec<yunari_providers::provider::Device>,
         providers: Vec<(String, String)>,
     ) -> Self {
@@ -68,6 +81,7 @@ impl SettingsDialog {
             lan: Hosting::load(&settings).lan,
             autostart: yunari_host::autostart::enabled(),
             monitors,
+            displays,
             weather,
             weather_key_set,
             source_credentials,
@@ -229,6 +243,29 @@ pub fn monitor_rows(host: Option<&Shared>, cx: &App) -> Vec<MonitorRow> {
         .collect()
 }
 
+/// Every stored display a monitor row does not already carry: a paired phone
+/// or a panel, whose shape and rotation the panels follow like a monitor's.
+pub fn display_rows(host: Option<&Shared>) -> Vec<NamedDisplay> {
+    let records = host
+        .and_then(|host| host.displays.lock().ok().map(|store| store.list().to_vec()))
+        .unwrap_or_default();
+    records
+        .into_iter()
+        .filter(|record| record.kind != DisplayKind::Local)
+        .map(|record| NamedDisplay {
+            kind: match record.kind {
+                DisplayKind::Paired => "phone",
+                DisplayKind::Panel => "panel",
+                DisplayKind::Local => "monitor",
+            },
+            id: record.id,
+            label: record.label,
+            shape: record.shape.unwrap_or(DisplayShape::Rect),
+            rotation: record.rotation.unwrap_or(0),
+        })
+        .collect()
+}
+
 /// The presentation one click on a shape or rotation row makes. A rectangle
 /// turns in quarter steps and keeps only a rotation it accepts; a circle turns
 /// in fifteen-degree steps.
@@ -288,6 +325,41 @@ fn row(
         .bg(rgb(0x22222a))
         .child(label)
         .on_click(on_click)
+        .into_any_element()
+}
+
+fn shape_text(shape: DisplayShape) -> String {
+    format!(
+        "Shape: {}",
+        match shape {
+            DisplayShape::Rect => "Rectangle",
+            DisplayShape::Circle => "Circle",
+        }
+    )
+}
+
+/// One clickable presentation row. Clicking it switches the shape, or turns the
+/// record a step when `switch_shape` is false.
+fn presentation_row(
+    cx: &mut Context<EditorWindow>,
+    id: (&'static str, usize),
+    text: String,
+    display: String,
+    switch_shape: bool,
+) -> AnyElement {
+    div()
+        .id(id)
+        .w_full()
+        .px_3()
+        .py_2()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_color(rgb(0xe8e8ea))
+        .bg(rgb(0x22222a))
+        .child(text)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.change_presentation(&display, switch_shape, cx);
+        }))
         .into_any_element()
 }
 
@@ -464,44 +536,56 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
         // A record's shape and rotation are what the panel follows, so both
         // are one click away from the monitor that holds it.
         if let Some(record) = &monitor.record {
-            let shape_id = record.id.clone();
-            let shape = match record.shape {
-                DisplayShape::Rect => "Rectangle",
-                DisplayShape::Circle => "Circle",
-            };
-            column = column.child(
-                div()
-                    .id(("settings-shape", index))
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .text_color(rgb(0xe8e8ea))
-                    .bg(rgb(0x22222a))
-                    .child(format!("Shape: {shape}"))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.change_presentation(&shape_id, true, cx);
-                    })),
-            );
-            let turn_id = record.id.clone();
-            let rotation = record.rotation;
-            column = column.child(
-                div()
-                    .id(("settings-rotation", index))
-                    .w_full()
-                    .px_3()
-                    .py_2()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .text_color(rgb(0xe8e8ea))
-                    .bg(rgb(0x22222a))
-                    .child(format!("Rotation: {rotation}°"))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.change_presentation(&turn_id, false, cx);
-                    })),
-            );
+            column = column.child(presentation_row(
+                cx,
+                ("settings-shape", index),
+                shape_text(record.shape),
+                record.id.clone(),
+                true,
+            ));
+            column = column.child(presentation_row(
+                cx,
+                ("settings-rotation", index),
+                format!("Rotation: {}°", record.rotation),
+                record.id.clone(),
+                false,
+            ));
         }
+    }
+    for (index, display) in dialog.displays.iter().enumerate() {
+        let rename = display.id.clone();
+        column = column.child(
+            div()
+                .id(("settings-display", index))
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(rgb(0xe8e8ea))
+                .bg(rgb(0x22222a))
+                .child(format!(
+                    "{}  ·  {}  ·  click to rename",
+                    display.label, display.kind
+                ))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
+                    this.edit_display_name(rename.clone());
+                })),
+        );
+        column = column.child(presentation_row(
+            cx,
+            ("settings-display-shape", index),
+            shape_text(display.shape),
+            display.id.clone(),
+            true,
+        ));
+        column = column.child(presentation_row(
+            cx,
+            ("settings-display-rotation", index),
+            format!("Rotation: {}°", display.rotation),
+            display.id.clone(),
+            false,
+        ));
     }
     let mut footer = div()
         .flex()
