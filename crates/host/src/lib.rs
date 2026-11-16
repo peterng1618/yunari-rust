@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod mcp_compose;
 pub mod mcp_install;
 pub mod monitors;
+pub mod normalize_video;
 pub mod origins;
 pub mod packs_routes;
 pub mod pages;

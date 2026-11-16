@@ -620,6 +620,56 @@ fn read_package(bytes: &[u8]) -> Option<Package<'_>> {
     })
 }
 
+/// A mobile export's own two members: the video, and whatever credit its
+/// descriptor offers. A still-at-rest scene exports as a video too, so this is
+/// the only payload the import reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MobilePackage {
+    pub video: Vec<u8>,
+    pub title: Option<String>,
+    pub workshop_id: Option<String>,
+}
+
+/// The video and credit an `.mpkg` carries, or `None` when the container is
+/// malformed or holds no video. A descriptor this code cannot parse costs the
+/// metadata, never the video.
+pub fn mobile_package(bytes: &[u8]) -> Option<MobilePackage> {
+    let package = read_package(bytes)?;
+    let video = package.member("wallpaper.mp4")?;
+    if video.is_empty() {
+        return None;
+    }
+    let (title, workshop_id) = package
+        .member("project.json")
+        .and_then(project_metadata)
+        .unwrap_or((None, None));
+    Some(MobilePackage {
+        video: video.to_vec(),
+        title,
+        workshop_id,
+    })
+}
+
+/// The two credit fields a mobile export's descriptor may carry. The descriptor
+/// is third-party content: a number that is not a whole id becomes no id.
+fn project_metadata(text: &[u8]) -> Option<(Option<String>, Option<String>)> {
+    let parsed: Value = serde_json::from_slice(text).ok()?;
+    let project = parsed.as_object()?;
+    let title = project
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let workshop_id = project
+        .get("package")
+        .and_then(|package| package.get("workshopId"))
+        .and_then(|id| match id {
+            Value::String(id) if !id.is_empty() => Some(id.clone()),
+            Value::Number(id) => id.as_u64().map(|n| n.to_string()),
+            _ => None,
+        });
+    Some((title, workshop_id))
+}
+
 /// True when `key` appears at any depth in the parsed tree.
 fn has_key_anywhere(value: &Value, key: &str) -> bool {
     match value {

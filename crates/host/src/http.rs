@@ -1,6 +1,7 @@
 //! The routes and the state they answer from.
 
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -10,6 +11,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -84,6 +86,8 @@ pub fn router(app: Shared) -> axum::Router {
             "/api/wallpaper-engine/item/{id}/project",
             post(wallpaper_engine_project),
         )
+        // A mobile export the author saved by hand: read its video and normalize it.
+        .route("/api/wallpaper-engine/mpkg", post(wallpaper_engine_mpkg))
         .route("/api/path-presets", get(path_presets).post(add_path_preset))
         .route("/api/path-presets/packs", post(import_path_preset_pack))
         .route(
@@ -938,6 +942,71 @@ async fn wallpaper_item(
     response
 }
 
+/// One `.mpkg` is read whole before it is unpacked, so the source ceiling is
+/// the transport's, not the theme's.
+const MAX_VIDEO_SOURCE_BYTES: usize = 512 * 1024 * 1024;
+const LARGE_BODY_BUSY: &str = "Another large upload is still in progress.";
+/// Normalizing spawns the encoder, so one package runs at a time.
+static MPKG_BUSY: AtomicBool = AtomicBool::new(false);
+
+struct BusyGuard;
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        MPKG_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// A mobile export's video, normalized into the publish envelope.
+async fn wallpaper_engine_mpkg(ConnectInfo(peer): ConnectInfo<SocketAddr>, body: Body) -> Response {
+    if let Some(refusal) = loopback_only(peer) {
+        return refusal;
+    }
+    if MPKG_BUSY.swap(true, Ordering::SeqCst) {
+        return (StatusCode::TOO_MANY_REQUESTS, LARGE_BODY_BUSY).into_response();
+    }
+    let _busy = BusyGuard;
+    let Ok(source) = axum::body::to_bytes(body, MAX_VIDEO_SOURCE_BYTES).await else {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "That package is too large to import.",
+        )
+            .into_response();
+    };
+    let Some(package) = crate::wallpaper_engine::mobile_package(&source) else {
+        return Json(json!({
+            "ok": false,
+            "message": "That file is not a Wallpaper Engine mobile package with a video.",
+        }))
+        .into_response();
+    };
+    let normalized = match crate::normalize_video::normalize(&package.video) {
+        Ok(normalized) => normalized,
+        Err(message) => return Json(json!({ "ok": false, "message": message })).into_response(),
+    };
+    // The package and the theme have different ceilings: the video the theme
+    // carries must fit the store's per-asset bound or the save would refuse it.
+    if normalized.bytes.len() as u64 > yunari_library::store::MAX_ASSET_BYTES {
+        return Json(json!({
+            "ok": false,
+            "message": "That video is larger than the 80 MB one theme asset may carry; re-encode it and try again.",
+        }))
+        .into_response();
+    }
+    let mut answer = json!({
+        "ok": true,
+        "videoBase64": base64::engine::general_purpose::STANDARD.encode(&normalized.bytes),
+        "reencoded": normalized.reencoded,
+    });
+    if let Some(title) = package.title {
+        answer["title"] = json!(title);
+    }
+    if let Some(workshop_id) = package.workshop_id {
+        answer["workshopId"] = json!(workshop_id);
+    }
+    Json(answer).into_response()
+}
+
 async fn path_presets(
     State(app): State<Shared>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -1734,6 +1803,97 @@ mod tests {
         assert!(body.contains("\"id\""), "{body}");
         let (status, _) = ask(app, "/", phone).await;
         assert_eq!(status, StatusCode::FOUND);
+    }
+
+    async fn post_bytes(
+        app: Shared,
+        uri: &str,
+        peer: SocketAddr,
+        body: Vec<u8>,
+    ) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let request = Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(uri)
+            .header(header::HOST, "localhost:5227")
+            .body(Body::from(body))
+            .unwrap();
+        let (mut parts, body) = request.into_parts();
+        parts.extensions.insert(ConnectInfo(peer));
+        let response = router(app)
+            .oneshot(Request::from_parts(parts, body))
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// A `PKGM` package holding these members, in the format the engine writes.
+    fn package(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let magic = b"PKGM0001";
+        let mut table = Vec::new();
+        table.extend_from_slice(&(magic.len() as u32).to_le_bytes());
+        table.extend_from_slice(magic);
+        table.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        let mut data = Vec::new();
+        for (name, bytes) in entries {
+            table.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            table.extend_from_slice(name.as_bytes());
+            table.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            table.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            data.extend_from_slice(bytes);
+        }
+        table.extend_from_slice(&data);
+        table
+    }
+
+    #[tokio::test]
+    async fn the_mpkg_route_is_local_only_and_post_only() {
+        let app = app("mpkg-guards");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let (status, _) = ask(app.clone(), "/api/wallpaper-engine/mpkg", here).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50_000));
+        let (status, _) = post_bytes(app, "/api/wallpaper-engine/mpkg", phone, Vec::new()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_mobile_package_hands_back_its_video_and_its_credit() {
+        let app = app("mpkg-import");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50_000));
+        let video: &[u8] = include_bytes!("../../model/tests/video-fixtures/conforming.mp4");
+        let project = br#"{"title":"Aurora","package":{"workshopId":"12345"}}"#;
+        let body = package(&[("project.json", project), ("wallpaper.mp4", video)]);
+        let (status, answer) =
+            post_bytes(app.clone(), "/api/wallpaper-engine/mpkg", here, body).await;
+        assert_eq!(status, StatusCode::OK);
+        let answer: Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(answer["ok"], true);
+        assert_eq!(answer["reencoded"], false);
+        assert_eq!(answer["title"], "Aurora");
+        assert_eq!(answer["workshopId"], "12345");
+        let encoded = answer["videoBase64"].as_str().unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        assert_eq!(bytes, video);
+
+        // A table with no video is its own answer, not an error status.
+        let body = package(&[("project.json", project)]);
+        let (status, answer) = post_bytes(app, "/api/wallpaper-engine/mpkg", here, body).await;
+        assert_eq!(status, StatusCode::OK);
+        let answer: Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(answer["ok"], false);
+        assert!(
+            answer["message"]
+                .as_str()
+                .unwrap()
+                .contains("mobile package")
+        );
     }
 
     #[tokio::test]

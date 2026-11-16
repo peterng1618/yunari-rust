@@ -32,6 +32,8 @@ pub const UNREADABLE_MESSAGE: &str = "That file could not be read: ";
 pub fn limit(kind: AssetKind) -> u64 {
     match kind {
         AssetKind::Svg => MAX_SVG_BYTES,
+        // A theme video answers the store's per-asset bound, not the picture's.
+        AssetKind::Video => yunari_library::store::MAX_ASSET_BYTES,
         _ => MAX_IMAGE_BYTES,
     }
 }
@@ -50,6 +52,10 @@ pub fn sniff(name: &str, bytes: &[u8]) -> Result<AssetKind, String> {
     }
     if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
         return Ok(AssetKind::Image);
+    }
+    // A video is proven by its own boxes, not by the `.mp4` name.
+    if bytes.get(4..8) == Some(b"ftyp") && yunari_model::video::read(bytes).is_some() {
+        return Ok(AssetKind::Video);
     }
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".svg")
@@ -167,6 +173,16 @@ mod tests {
         assert_eq!(
             sniff("a.svg", b"<html>"),
             Err(NOT_A_FILE_MESSAGE.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_video_is_proven_by_its_own_boxes() {
+        let video: &[u8] = include_bytes!("../../model/tests/video-fixtures/conforming.mp4");
+        assert_eq!(sniff("clip.bin", video), Ok(AssetKind::Video));
+        assert_eq!(
+            limit(AssetKind::Video),
+            yunari_library::store::MAX_ASSET_BYTES
         );
     }
 

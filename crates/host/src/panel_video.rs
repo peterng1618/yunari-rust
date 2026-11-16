@@ -268,7 +268,7 @@ pub fn clip_seconds(stderr: &str) -> f64 {
     0.0
 }
 
-fn spawn(ffmpeg: &Path) -> impl Fn(&[String]) -> Result<Outcome, String> + '_ {
+pub(crate) fn spawn(ffmpeg: &Path) -> impl Fn(&[String]) -> Result<Outcome, String> + '_ {
     move |args| {
         let mut child = Command::new(ffmpeg)
             .args(args)
@@ -301,12 +301,12 @@ fn spawn(ffmpeg: &Path) -> impl Fn(&[String]) -> Result<Outcome, String> + '_ {
 
 /// A scratch directory that removes itself, named so two encodes cannot
 /// collide.
-struct Scratch {
-    path: PathBuf,
+pub(crate) struct Scratch {
+    pub(crate) path: PathBuf,
 }
 
 impl Scratch {
-    fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         let count = SCRATCH.fetch_add(1, Ordering::SeqCst);
         let path =
             std::env::temp_dir().join(format!("yunari-panel-video-{}-{count}", std::process::id()));

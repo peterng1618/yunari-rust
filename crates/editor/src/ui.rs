@@ -415,7 +415,7 @@ impl EditorWindow {
             Command::ImportAsset => {
                 self.overlay = Some(Overlay::ImportAsset(Prompt::new(
                     "Import asset",
-                    "Path to a picture on this PC",
+                    "Path to a picture, video or Wallpaper Engine .mpkg on this PC",
                     "",
                 )));
             }
@@ -1207,9 +1207,15 @@ impl EditorWindow {
 
     /// Takes a file from this PC into the open theme. The bytes are held until
     /// the next save, so an imported picture draws before the theme is stored.
+    /// A `.mpkg` is a mobile Wallpaper Engine export: its video is extracted and
+    /// normalized, then becomes the theme's background.
     fn import_asset(&mut self, value: &str) {
         self.overlay = None;
         let path = value.trim();
+        if path.to_ascii_lowercase().ends_with(".mpkg") {
+            self.import_package(path);
+            return;
+        }
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -1228,6 +1234,70 @@ impl EditorWindow {
             Ok(id) => {
                 self.point_images();
                 self.status = Some(Status::ok(format!("Imported {id}")));
+                self.refresh();
+            }
+            Err(message) => self.status = Some(Status::error(message)),
+        }
+    }
+
+    /// One picked mobile package: the host's own unpacking and normalization,
+    /// then the same import and background assignment a video makes.
+    fn import_package(&mut self, path: &str) {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.status = Some(Status::error(format!(
+                    "{}{path}: {error}",
+                    assets::UNREADABLE_MESSAGE
+                )));
+                return;
+            }
+        };
+        let Some(package) = yunari_host::wallpaper_engine::mobile_package(&bytes) else {
+            self.status = Some(Status::error(
+                "That file is not a Wallpaper Engine mobile package with a video.",
+            ));
+            return;
+        };
+        let normalized = match yunari_host::normalize_video::normalize(&package.video) {
+            Ok(normalized) => normalized,
+            Err(message) => {
+                self.status = Some(Status::error(message));
+                return;
+            }
+        };
+        let title = package.title.unwrap_or_else(|| {
+            Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("wallpaper")
+                .to_owned()
+        });
+        let credit = crate::assets::ImportCredit {
+            kind: "wallpaper".to_owned(),
+            title,
+            license: "unknown".to_owned(),
+            source_url: package
+                .workshop_id
+                .map(|id| format!("https://steamcommunity.com/sharedfiles/filedetails/?id={id}")),
+            author: None,
+        };
+        match self
+            .editor
+            .import_asset_with("wallpaper.mp4", normalized.bytes, Some(credit))
+        {
+            Ok(id) => {
+                // A video import is a background: the same consequence every
+                // video import the source makes has.
+                let mut placed = None;
+                self.editor.edit(|document| {
+                    placed = inspector::apply_document(document, "background.media", &id).err();
+                });
+                match placed {
+                    None => self.status = Some(Status::ok(format!("Imported {id}"))),
+                    Some(message) => self.status = Some(Status::error(message)),
+                }
+                self.point_images();
                 self.refresh();
             }
             Err(message) => self.status = Some(Status::error(message)),
