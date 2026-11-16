@@ -3,6 +3,8 @@
 
 use rusb::UsbContext;
 
+pub mod protocol;
+
 use crate::family::{PanelFamily, PanelHint};
 
 /// The panels of this family attached right now.

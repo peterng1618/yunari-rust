@@ -10,4 +10,5 @@ rusb = "0.9"
 hidapi = "2"
 serialport = "4"
 des = "0.8"
-cbc = "0.1"
+cipher = "0.4"
+cbc = { version = "0.1", features = ["alloc"] }

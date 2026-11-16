@@ -8925,6 +8925,7 @@ name = "yunari-panels"
 version = "0.1.0"
 dependencies = [
  "cbc",
+ "cipher 0.4.4",
  "des",
  "hidapi",
  "rusb",
