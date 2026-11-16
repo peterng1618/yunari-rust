@@ -313,5 +313,4 @@ mod tests {
             Paint::Solid { .. }
         ));
     }
-
 }

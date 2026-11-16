@@ -75,7 +75,8 @@ fn the_rotation_wraps_into_zero_to_three_sixty() { /* "400" -> 40.0 */ }
 - [x] Appearance rows: fill, stroke, stroke width, opacity; rectangle corner radius; image asset + fit; video asset + loop/muted.
 - [x] Text layout rows: align, overflow, vertical align, vertical, node line height; per-run size and colour.
 - [x] Tests: `a_fill_takes_a_hex_or_a_palette_reference`, `opacity_stays_between_zero_and_one`, `a_rectangle_has_a_radius_and_an_ellipse_does_not`, `run_text_and_a_known_token_are_written`, `alignment_and_overflow_take_their_named_values`.
-- [ ] Deferred: shadow, border width and frosted-glass fields (the model carries `glass`, the renderer plans it, but the source's four-row paint band is not ported yet); polygon/triangle kinds do not exist in the Rust model. Both wait for the parity sweep (phase 7), since adding shapes changes the model and every renderer.
+- [x] Frosted glass: `glass.blur` (0 to `MAX_GLASS_BLUR_RADIUS`, zero clears the treatment) and `glass.sampling` (static/dynamic); test `a_panel_takes_a_blur_and_a_sampling`.
+- [ ] Deferred: shadow and border width — the source has no renderer or model key for either, so there is nothing to port. Polygon/triangle node kinds likewise: the source only has a radar chart's `shape: "polygon" | "circle"` setting, not a shape node.
 - [x] Deliberate difference: the source inspector orders Content/Position/Layer/Paint; this panel keeps Transform first, then Appearance, then the kind's section. Same fields, different grouping.
 
 ### Task 3: Palette tokens

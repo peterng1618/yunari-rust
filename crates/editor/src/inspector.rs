@@ -115,6 +115,30 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                 },
                 value: format_number(style_number(node, "opacity").unwrap_or(1.0)),
             },
+            Field {
+                key: "glass.blur".to_owned(),
+                label: "Glass blur",
+                kind: FieldKind::Number {
+                    min: 0.0,
+                    max: yunari_model::document::MAX_GLASS_BLUR_RADIUS,
+                    step: 1.0,
+                },
+                value: format_number(node.glass.as_ref().map_or(0.0, |glass| glass.blur_radius)),
+            },
+            Field {
+                key: "glass.sampling".to_owned(),
+                label: "Glass follows",
+                kind: FieldKind::Choice(vec!["static", "dynamic"]),
+                value: node
+                    .glass
+                    .as_ref()
+                    .and_then(|glass| glass.sampling)
+                    .map(|sampling| match sampling {
+                        yunari_model::document::GlassSampling::Static => "static".to_owned(),
+                        yunari_model::document::GlassSampling::Dynamic => "dynamic".to_owned(),
+                    })
+                    .unwrap_or_default(),
+            },
         ],
     });
     match &node.kind {
@@ -1179,6 +1203,9 @@ fn token_id(value: &str) -> &str {
 }
 
 fn apply_to_node(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
+    if key.starts_with("glass.") {
+        return apply_glass(node, key, value);
+    }
     if key.starts_with("style.") {
         return apply_style(node, key, value);
     }
@@ -1263,6 +1290,54 @@ fn apply_style(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
         _ => return Err(format!("{} is not editable yet", friendly(key))),
     }
     Ok(())
+}
+
+/// A frosted panel's blur and sampling. A blur of zero removes the treatment:
+/// the renderer paints nothing special at zero anyway, and a record that
+/// lingers in the save would be a setting nobody can see.
+fn apply_glass(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "glass.blur" => {
+            let text = value.trim();
+            let radius = if text.is_empty() {
+                0.0
+            } else {
+                text.parse::<f64>()
+                    .map_err(|_| "Glass blur needs a number".to_owned())?
+            };
+            if !radius.is_finite()
+                || !(0.0..=yunari_model::document::MAX_GLASS_BLUR_RADIUS).contains(&radius)
+            {
+                return Err(format!(
+                    "Glass blur runs from 0 to {}",
+                    yunari_model::document::MAX_GLASS_BLUR_RADIUS
+                ));
+            }
+            if radius == 0.0 {
+                node.glass = None;
+            } else {
+                let sampling = node.glass.as_ref().and_then(|glass| glass.sampling);
+                node.glass = Some(yunari_model::document::GlassTreatment {
+                    blur_radius: radius,
+                    sampling,
+                });
+            }
+            Ok(())
+        }
+        "glass.sampling" => {
+            let Some(glass) = &mut node.glass else {
+                return Err("A glass panel needs a blur first".to_owned());
+            };
+            glass.sampling = match value.trim() {
+                "" => None,
+                "static" => Some(yunari_model::document::GlassSampling::Static),
+                "dynamic" => Some(yunari_model::document::GlassSampling::Dynamic),
+                _ => return Err("Glass follows static or dynamic".to_owned()),
+            };
+            Ok(())
+        }
+        _ => Err(format!("{} is not editable yet", friendly(key))),
+    }
 }
 
 fn apply_kind(node: &mut Node, key: &str, value: &str) -> Result<(), String> {
@@ -1887,6 +1962,25 @@ mod tests {
         assert_eq!(sections[0].rows[0].key, "transform.x");
         assert_eq!(sections[0].rows[0].value, "10");
         assert_eq!(sections[0].rows[2].value, "30");
+    }
+
+    #[test]
+    fn a_panel_takes_a_blur_and_a_sampling() {
+        let mut document = document(vec![rect("a", 0.0, 0.0, 10.0, 10.0)]);
+        assert_eq!(
+            apply(&mut document, "a", "glass.sampling", "static").unwrap_err(),
+            "A glass panel needs a blur first"
+        );
+        apply(&mut document, "a", "glass.blur", "12").unwrap();
+        assert_eq!(document.nodes[0].glass.as_ref().unwrap().blur_radius, 12.0);
+        apply(&mut document, "a", "glass.sampling", "dynamic").unwrap();
+        assert_eq!(
+            document.nodes[0].glass.as_ref().unwrap().sampling,
+            Some(yunari_model::document::GlassSampling::Dynamic)
+        );
+        assert!(apply(&mut document, "a", "glass.blur", "49").is_err());
+        apply(&mut document, "a", "glass.blur", "0").unwrap();
+        assert!(document.nodes[0].glass.is_none());
     }
 
     #[test]
