@@ -1,0 +1,27 @@
+[package]
+name = "yunari-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+axum = "0.8.9"
+axum-server = { version = "0.9.2", features = ["tls-rustls"] }
+base64 = "0.22"
+bytes = "1"
+http-body-util = "0.1"
+jiff.workspace = true
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["server-auto", "http1", "http2", "tokio", "service"] }
+rand = "0.10.4"
+rcgen = "0.14.10"
+rustls = "0.23.46"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11.1"
+sysinfo.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net", "io-util", "sync"] }
+tokio-rustls = "0.26"
+tower = "0.5"

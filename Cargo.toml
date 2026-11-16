@@ -12,6 +12,7 @@ members = [
     "crates/raster",
     "crates/render-gpui",
     "crates/app",
+    "crates/host",
 ]
 
 [workspace.package]
