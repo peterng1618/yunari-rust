@@ -1,0 +1,12 @@
+[package]
+name = "yunari-packs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+sha2 = "0.11"
+yunari-model.workspace = true
+zip = { version = "9", default-features = false, features = ["deflate"] }

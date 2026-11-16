@@ -8855,6 +8855,7 @@ name = "yunari-editor"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "image",
  "serde_json",
  "yunari-library",
  "yunari-model",
@@ -8925,6 +8926,16 @@ dependencies = [
  "serde_ignored",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "yunari-packs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.11.1",
+ "yunari-model",
+ "zip",
 ]
 
 [[package]]
