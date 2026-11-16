@@ -14,6 +14,7 @@ pub mod instant;
 mod path;
 pub mod plan;
 pub mod text;
+pub mod video;
 
 pub use affine::Affine;
 pub use color::{Color, parse_color};
