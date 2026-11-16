@@ -22,6 +22,8 @@ pub const WAITING_MESSAGE: &str = "Waiting for the first reading.";
 pub const STALE_MESSAGE: &str = "The last reading is out of date.";
 pub const NO_SOURCES_MESSAGE: &str = "No custom sources are configured.";
 pub const NOT_JSON_MESSAGE: &str = "The source answered something that is not JSON.";
+/// What a display shows when a source needs a credential the store lacks.
+pub const MISSING_CREDENTIAL_MESSAGE: &str = "credential is missing";
 pub const PAGE_NOT_ARRAY_MESSAGE: &str = "A page of the source was not an array.";
 pub const ITEMS_PATH_MESSAGE: &str = "The source's items path did not resolve to an array.";
 
@@ -50,6 +52,10 @@ pub struct Loaded {
 /// How the file is read. A seam so a test holds it still, and so a file edited
 /// mid-session is picked up on the next poll.
 pub type SettingsLoader = Arc<dyn Fn() -> Loaded + Send + Sync>;
+
+/// One credential the host holds, by the id a source names. Resolved at fetch
+/// time: the secret stays with the store, not with the source.
+pub type Secrets = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 struct Runtime {
     source: CustomSource,
@@ -89,6 +95,8 @@ struct State {
 pub struct CustomProvider {
     settings: SettingsLoader,
     fetch: Fetch,
+    /// Empty until the host hands this provider its credential store.
+    secrets: Secrets,
     clock: Arc<dyn Fn() -> u64 + Send + Sync>,
     state: Arc<Mutex<State>>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -115,11 +123,20 @@ impl CustomProvider {
         Self {
             settings,
             fetch,
+            secrets: Arc::new(|_| None),
             clock,
             state: Arc::new(Mutex::new(State::default())),
             worker: Mutex::new(None),
             auto,
         }
+    }
+
+    /// The credentials a source's `auth` block may name. Without this, a
+    /// source that asks for one fails with its own reason instead of fetching
+    /// unauthenticated.
+    pub fn with_credentials(mut self, secrets: Secrets) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     /// Fetches every source that is due, and reports how many were fetched.
@@ -129,7 +146,7 @@ impl CustomProvider {
             let mut state = self.state.lock().expect("the custom state");
             sync(&mut state, loaded);
         }
-        refresh(&self.state, &self.fetch, now_ms)
+        refresh(&self.state, &self.fetch, &self.secrets, now_ms)
     }
 
     /// Starts the refresher unless one is already running. It ends by itself
@@ -143,6 +160,7 @@ impl CustomProvider {
         let state = Arc::clone(&self.state);
         let clock = Arc::clone(&self.clock);
         let fetch = Arc::clone(&self.fetch);
+        let secrets = Arc::clone(&self.secrets);
         *worker = Some(thread::spawn(move || {
             loop {
                 let now = clock();
@@ -155,7 +173,7 @@ impl CustomProvider {
                 if !demanded {
                     return;
                 }
-                refresh(&state, &fetch, now);
+                refresh(&state, &fetch, &secrets, now);
                 thread::sleep(WORKER_TICK);
             }
         }));
@@ -295,14 +313,14 @@ fn sync(state: &mut State, loaded: Loaded) {
 /// One source's document: its single answer, or every page merged in order. A
 /// page that fails fails the whole read, because a partial body is not a
 /// complete reading.
-fn fetch_source(fetch: &Fetch, source: &CustomSource) -> Result<Value, String> {
+fn fetch_source(fetch: &Fetch, secrets: &Secrets, source: &CustomSource) -> Result<Value, String> {
     let Some(paging) = &source.paging else {
-        return fetch_json(fetch, source, None);
+        return fetch_json(fetch, secrets, source, None);
     };
     let mut merged = Vec::new();
     for offset in 0..paging.max_pages {
         let page = paging.first_page.saturating_add(offset);
-        let body = fetch_json(fetch, source, Some(page))?;
+        let body = fetch_json(fetch, secrets, source, Some(page))?;
         let items = match &paging.items_path {
             None => body
                 .as_array()
@@ -318,19 +336,77 @@ fn fetch_source(fetch: &Fetch, source: &CustomSource) -> Result<Value, String> {
     Ok(Value::Array(merged))
 }
 
-/// One page's JSON, with the source's headers and deadline.
-fn fetch_json(fetch: &Fetch, source: &CustomSource, page: Option<u32>) -> Result<Value, String> {
+/// One page's JSON, with the source's headers, deadline and credential.
+fn fetch_json(
+    fetch: &Fetch,
+    secrets: &Secrets,
+    source: &CustomSource,
+    page: Option<u32>,
+) -> Result<Value, String> {
+    let mut url = source.request_url(page);
+    let mut headers = source.headers.clone();
+    apply_auth(&source.auth, secrets, &mut url, &mut headers)?;
     let request = crate::http::Get {
-        url: source.request_url(page),
-        headers: source.headers.clone(),
+        url,
+        headers,
         timeout_ms: source.timeout_ms,
+        // A source's address is typed by a person, so it is checked before it
+        // is dialled: this PC's own network and metadata services are refused.
+        public_only: true,
     };
     let body = fetch(&request)?;
     serde_json::from_str::<Value>(&body).map_err(|_| NOT_JSON_MESSAGE.to_owned())
 }
 
+/// The credential a source's `auth` block asks for, attached only to a request
+/// to the address the person typed. A missing one is a reason, never a request
+/// without it.
+fn apply_auth(
+    auth: &sources::Auth,
+    secrets: &Secrets,
+    url: &mut String,
+    headers: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    use base64::Engine;
+    use sources::AuthKind;
+
+    if auth.kind == AuthKind::None {
+        return Ok(());
+    }
+    let Some(secret) = auth.credential_id.as_deref().and_then(|id| secrets(id)) else {
+        return Err(MISSING_CREDENTIAL_MESSAGE.to_owned());
+    };
+    match auth.kind {
+        AuthKind::None => {}
+        AuthKind::Bearer => headers.push(("authorization".to_owned(), format!("Bearer {secret}"))),
+        AuthKind::Basic => headers.push((
+            "authorization".to_owned(),
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode(secret)
+            ),
+        )),
+        AuthKind::Header => match &auth.header_name {
+            Some(name) => headers.push((name.clone(), secret)),
+            None => return Err("the source's auth header has no name".to_owned()),
+        },
+        AuthKind::Query => match &auth.query_name {
+            Some(name) => {
+                let separator = if url.contains('?') { '&' } else { '?' };
+                url.push_str(&format!(
+                    "{separator}{}={}",
+                    crate::http::encode(name),
+                    crate::http::encode(&secret)
+                ));
+            }
+            None => return Err("the source's auth query has no name".to_owned()),
+        },
+    }
+    Ok(())
+}
+
 /// Fetches every source that is due. One source's failure is its own keys'.
-fn refresh(state: &Mutex<State>, fetch: &Fetch, now_ms: u64) -> usize {
+fn refresh(state: &Mutex<State>, fetch: &Fetch, secrets: &Secrets, now_ms: u64) -> usize {
     let due: Vec<(usize, CustomSource, u64)> = {
         let state = state.lock().expect("the custom state");
         state
@@ -345,7 +421,7 @@ fn refresh(state: &Mutex<State>, fetch: &Fetch, now_ms: u64) -> usize {
     for (index, source, interval_ms) in &due {
         let outcome = match crate::http::refusal(&source.url) {
             Some(refusal) => Err(refusal),
-            None => fetch_source(fetch, source),
+            None => fetch_source(fetch, secrets, source),
         };
         let mut state = state.lock().expect("the custom state");
         let Some(runtime) = state.runtimes.get_mut(*index) else {
@@ -631,6 +707,7 @@ mod tests {
             headers: Vec::new(),
             query: Vec::new(),
             paging: None,
+            auth: sources::Auth::default(),
             fields: vec![CustomField {
                 id: "x".to_owned(),
                 label: "X".to_owned(),
@@ -852,5 +929,103 @@ mod tests {
         let (provider, ..) = provider(loaded, |_request| Ok(body()));
         assert!(matches!(provider.health(), Health::Unavailable(_)));
         assert!(provider.describe().is_empty());
+    }
+
+    fn authed(auth: serde_json::Value) -> Loaded {
+        Loaded {
+            sources: sources::parse(&serde_json::json!({
+                "sources": [{
+                    "id": "lab",
+                    "url": "http://127.0.0.1:9000/status",
+                    "auth": auth,
+                    "fields": [{"id": "x", "pointer": "/x", "type": "number"}]
+                }]
+            }))
+            .0,
+            issues: Vec::new(),
+        }
+    }
+
+    fn holder(secret: Option<&'static str>) -> Secrets {
+        Arc::new(move |_| secret.map(str::to_owned))
+    }
+
+    #[test]
+    fn a_credential_is_attached_in_the_shape_the_source_named() {
+        let cases = [
+            (
+                serde_json::json!({"kind": "bearer", "credentialId": "c"}),
+                ("authorization", "Bearer s3cret"),
+                false,
+            ),
+            (
+                serde_json::json!({"kind": "basic", "credentialId": "c"}),
+                ("authorization", "Basic czNjcmV0"),
+                false,
+            ),
+            (
+                serde_json::json!({"kind": "header", "credentialId": "c", "headerName": "x-api-key"}),
+                ("x-api-key", "s3cret"),
+                false,
+            ),
+            (
+                serde_json::json!({"kind": "query", "credentialId": "c", "queryName": "api_key"}),
+                ("", ""),
+                true,
+            ),
+        ];
+        for (auth, (name, value), in_query) in cases {
+            let seen: Arc<Mutex<Option<crate::http::Get>>> = Arc::new(Mutex::new(None));
+            let record = Arc::clone(&seen);
+            let (provider, ..) = provider(authed(auth.clone()), move |request| {
+                *record.lock().unwrap() = Some(request.clone());
+                Ok(serde_json::json!({"x": 1}).to_string())
+            });
+            let provider = provider.with_credentials(holder(Some("s3cret")));
+            provider.sample(&keys(&["custom.lab.x"]), 1_000).unwrap();
+            provider.refresh(1_000);
+            let request = seen.lock().unwrap().clone().expect("one request");
+            let (url, headers) = (request.url, request.headers);
+            if in_query {
+                assert!(url.ends_with("api_key=s3cret"), "{auth}: {url}");
+                assert!(headers.is_empty(), "{auth}: {headers:?}");
+            } else {
+                assert!(
+                    headers.contains(&(name.to_owned(), value.to_owned())),
+                    "{auth}: {headers:?}"
+                );
+                assert_eq!(url, "http://127.0.0.1:9000/status");
+            }
+        }
+    }
+
+    #[test]
+    fn a_missing_credential_is_a_reason_and_not_a_request_without_it() {
+        let (provider, calls, _) = provider(
+            authed(serde_json::json!({"kind": "bearer", "credentialId": "c"})),
+            |_request| Ok(serde_json::json!({"x": 1}).to_string()),
+        );
+        provider.sample(&keys(&["custom.lab.x"]), 1_000).unwrap();
+        provider.refresh(1_000);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let readings = provider.sample(&keys(&["custom.lab.x"]), 1_100).unwrap();
+        assert_eq!(readings[0].status, Status::Error);
+        assert_eq!(
+            readings[0].message.as_deref(),
+            Some(MISSING_CREDENTIAL_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn a_source_request_is_marked_for_the_public_address_check() {
+        let seen = Arc::new(Mutex::new(true));
+        let record = Arc::clone(&seen);
+        let (provider, ..) = provider(loaded(), move |request| {
+            *record.lock().unwrap() = request.public_only;
+            Ok(body())
+        });
+        provider.sample(&keys(&["custom.lab.temp"]), 1_000).unwrap();
+        provider.refresh(1_000);
+        assert!(*seen.lock().unwrap());
     }
 }

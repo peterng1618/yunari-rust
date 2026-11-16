@@ -54,6 +54,42 @@ pub struct CustomField {
 
 pub const MAX_PAGES: u32 = 100;
 
+/// How a source asks the host to attach a credential. The secret itself lives
+/// in the host's protected store under `credential_id`; this file holds only
+/// the reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuthKind {
+    #[default]
+    None,
+    Bearer,
+    Basic,
+    Header,
+    Query,
+}
+
+impl AuthKind {
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "none" => Some(Self::None),
+            "bearer" => Some(Self::Bearer),
+            "basic" => Some(Self::Basic),
+            "header" => Some(Self::Header),
+            "query" => Some(Self::Query),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Auth {
+    pub kind: AuthKind,
+    pub credential_id: Option<String>,
+    /// The header `Header` writes the secret to.
+    pub header_name: Option<String>,
+    /// The query parameter `Query` adds it under.
+    pub query_name: Option<String>,
+}
+
 /// Pages fetched in order and merged only when every one succeeded: a partial
 /// body is not a complete reading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +116,8 @@ pub struct CustomSource {
     pub query: Vec<(String, String)>,
     /// How several pages become one document, when the source is paged.
     pub paging: Option<Paging>,
+    /// The credential reference the host resolves at fetch time.
+    pub auth: Auth,
     pub fields: Vec<CustomField>,
 }
 
@@ -229,6 +267,95 @@ fn parse_query(id: &str, value: Option<&Value>) -> Result<Vec<(String, String)>,
     Ok(query)
 }
 
+/// The credential reference a source names. The value is never in this file,
+/// so an entry that asks for one the store does not hold still loads: the
+/// missing secret is a reason at fetch time, not a source skipped at parse.
+fn parse_auth(id: &str, value: Option<&Value>) -> Result<Auth, String> {
+    let Some(value) = value else {
+        return Ok(Auth::default());
+    };
+    let Some(record) = value.as_object() else {
+        return Err(format!(
+            "The source {id} has an auth block that is not an object."
+        ));
+    };
+    let Some(kind) = record
+        .get("kind")
+        .and_then(Value::as_str)
+        .and_then(AuthKind::parse)
+    else {
+        return Err(format!(
+            "The source {id} names an auth kind that is not none, bearer, basic, header or query."
+        ));
+    };
+    let credential_id = match record.get("credentialId") {
+        None => None,
+        Some(Value::String(credential_id)) if valid_credential_id(credential_id) => {
+            Some(credential_id.clone())
+        }
+        Some(_) => {
+            return Err(format!(
+                "The source {id} names a credential id that is not usable."
+            ));
+        }
+    };
+    let header_name = match record.get("headerName") {
+        None => None,
+        Some(Value::String(name)) if valid_header_name(name) => Some(name.clone()),
+        Some(_) => {
+            return Err(format!(
+                "The source {id} has an auth header name that is not usable."
+            ));
+        }
+    };
+    let query_name = match record.get("queryName") {
+        None => None,
+        Some(Value::String(name)) if valid_query_name(name) => Some(name.clone()),
+        Some(_) => {
+            return Err(format!(
+                "The source {id} has an auth query name that is not usable."
+            ));
+        }
+    };
+    if kind == AuthKind::Header && header_name.is_none() {
+        return Err(format!(
+            "The source {id} has header auth without a header name."
+        ));
+    }
+    if kind == AuthKind::Query && query_name.is_none() {
+        return Err(format!(
+            "The source {id} has query auth without a query name."
+        ));
+    }
+    Ok(Auth {
+        kind,
+        credential_id,
+        header_name,
+        query_name,
+    })
+}
+
+/// The same `[a-z0-9_-]{1,32}` the source file uses for its own ids.
+fn valid_credential_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 32
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+}
+
+fn valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_HEADER_NAME
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+fn valid_query_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_HEADER_NAME && !name.chars().any(char::is_control)
+}
+
 /// The sources this build can read, and one line per entry it skipped.
 pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
     let mut sources = Vec::new();
@@ -270,6 +397,13 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
         };
         let paging = match parse_paging(id, record.get("paging")) {
             Ok(paging) => paging,
+            Err(issue) => {
+                issues.push(issue);
+                continue;
+            }
+        };
+        let auth = match parse_auth(id, record.get("auth")) {
+            Ok(auth) => auth,
             Err(issue) => {
                 issues.push(issue);
                 continue;
@@ -321,6 +455,7 @@ pub fn parse(value: &Value) -> (Vec<CustomSource>, Vec<String>) {
             headers,
             query,
             paging,
+            auth,
             fields,
         });
     }
@@ -444,5 +579,54 @@ mod tests {
     fn a_file_that_is_not_an_object_yields_no_sources_rather_than_a_panic() {
         assert_eq!(parse(&serde_json::json!(null)).0, Vec::new());
         assert_eq!(parse(&serde_json::json!({"sources": 7})).0, Vec::new());
+    }
+
+    fn source_with_auth(auth: Value) -> (Vec<CustomSource>, Vec<String>) {
+        parse(&serde_json::json!({
+            "sources": [{
+                "id": "lab",
+                "url": "http://127.0.0.1:9000/status",
+                "auth": auth,
+                "fields": [{"id": "x", "pointer": "", "type": "number"}]
+            }]
+        }))
+    }
+
+    #[test]
+    fn an_auth_block_names_a_credential_and_never_holds_one() {
+        let (sources, issues) = source_with_auth(serde_json::json!({
+            "kind": "header", "credentialId": "user_token", "headerName": "x-api-key"
+        }));
+        assert_eq!(sources.len(), 1, "{issues:?}");
+        let auth = &sources[0].auth;
+        assert_eq!(auth.kind, AuthKind::Header);
+        assert_eq!(auth.credential_id.as_deref(), Some("user_token"));
+        assert_eq!(auth.header_name.as_deref(), Some("x-api-key"));
+
+        // A source with no auth block says so rather than guessing one.
+        let (sources, _) = parse(&serde_json::json!({
+            "sources": [{
+                "id": "lab",
+                "url": "http://127.0.0.1:9000/status",
+                "fields": [{"id": "x", "pointer": "", "type": "number"}]
+            }]
+        }));
+        assert_eq!(sources[0].auth, Auth::default());
+    }
+
+    #[test]
+    fn an_auth_block_that_could_not_be_sent_is_a_parse_issue() {
+        for auth in [
+            serde_json::json!({"kind": "digest"}),
+            serde_json::json!({"kind": "bearer", "credentialId": "Bad Id"}),
+            serde_json::json!({"kind": "header"}),
+            serde_json::json!({"kind": "header", "headerName": "bad name"}),
+            serde_json::json!({"kind": "query"}),
+            serde_json::json!("bearer"),
+        ] {
+            let (sources, issues) = source_with_auth(auth.clone());
+            assert!(sources.is_empty(), "{auth}");
+            assert_eq!(issues.len(), 1, "{auth}: {issues:?}");
+        }
     }
 }

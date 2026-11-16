@@ -178,7 +178,8 @@ fn weather(settings_dir: &std::path::Path) -> yunari_providers::weather::Weather
 }
 
 /// Custom sources read `sources.json` on every poll, so a settings write is
-/// seen without a restart.
+/// seen without a restart. A source's `auth` block names a credential in the
+/// protected store; the secret never reaches the file.
 fn custom(settings_dir: &std::path::Path) -> yunari_providers::custom::CustomProvider {
     let path = settings_dir.join(yunari_providers::custom::sources::FILE);
     let settings: yunari_providers::custom::SettingsLoader = Arc::new(move || {
@@ -189,7 +190,9 @@ fn custom(settings_dir: &std::path::Path) -> yunari_providers::custom::CustomPro
         let (sources, issues) = yunari_providers::custom::sources::parse(&stored);
         yunari_providers::custom::Loaded { sources, issues }
     });
-    yunari_providers::custom::CustomProvider::new(settings)
+    let store = crate::credentials::Credentials::at(settings_dir);
+    let secrets: yunari_providers::custom::Secrets = Arc::new(move |id| store.get(id));
+    yunari_providers::custom::CustomProvider::new(settings).with_credentials(secrets)
 }
 
 pub async fn start(app: Shared, lan: bool) -> Result<Server, HostError> {
