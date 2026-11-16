@@ -37,6 +37,19 @@ impl FrameSource for RtssSource {
     }
 }
 
+/// Whether RTSS is running: it publishes its mapping only while it is, and
+/// reading it changes nothing.
+pub fn running() -> bool {
+    #[cfg(windows)]
+    {
+        yunari_rtss::windows::read(yunari_rtss::MAP_NAME).is_some()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(windows)]
 fn poll(sender: Sender<FrameEvent>, stopped: Arc<AtomicBool>) {
     use yunari_rtss::{MAP_NAME, Status, decode, frames_since, newest_index, windows};

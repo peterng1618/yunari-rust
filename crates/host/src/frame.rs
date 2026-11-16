@@ -10,6 +10,12 @@ pub const MISSING_MESSAGE: &str = "no provider on this PC reports that sensor; c
 
 /// The readings a display needs: every key it asked for, with a gap that says
 /// why when nothing on this PC reads it.
+/// Whether RTSS is running, read from its own mapping rather than a frame. The
+/// tray uses it to say so and to not offer a second start.
+pub fn rtss_running() -> bool {
+    yunari_providers::frame::rtss::running()
+}
+
 pub fn readings(cycle: &Cycle, keys: &[String]) -> Vec<Reading> {
     let mut readings = Vec::with_capacity(keys.len());
     for key in keys {

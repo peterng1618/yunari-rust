@@ -18,14 +18,32 @@ pub enum Action {
     Editor,
     Themes,
     Settings,
+    /// The page that says how an agent reaches this host.
+    Mcp,
+    /// Start an external program this PC has, by the action it names.
+    StartExternal(usize),
     Folder,
     Exit,
+}
+
+/// One external program the tray can offer: hidden when it is neither
+/// installed nor running, disabled while it runs, "Start" otherwise.
+#[derive(Clone)]
+pub struct External {
+    pub label: String,
+    pub running: bool,
+    /// Where the program lives, so a Start is the same file presence named the
+    /// row.
+    pub executable: std::path::PathBuf,
 }
 
 #[derive(Clone)]
 pub struct Status {
     pub tooltip: String,
     pub autostart: bool,
+    /// The MCP bridge ships beside the app, so its page is always offered.
+    pub mcp: bool,
+    pub externals: Vec<External>,
 }
 
 /// A tray whose icon could not be created: the app still runs, with one surface
@@ -280,12 +298,34 @@ mod platform {
                 (ITEM_EDITOR, "Theme Editor"),
                 (ITEM_THEMES, "Theme Store"),
                 (ITEM_SETTINGS, "Host Settings"),
-                (ITEM_FOLDER, "Open Yunari folder"),
-                (ITEM_EXIT, "Exit"),
             ] {
                 let text = wide(label);
                 // Every action is live; a row the app cannot complete says so
                 // in the window it opens rather than here.
+                AppendMenuW(menu, MF_STRING, id, text.as_ptr());
+            }
+            if status.mcp {
+                let label = wide("Agent tools (MCP)…");
+                AppendMenuW(menu, MF_STRING, ITEM_MCP, label.as_ptr());
+            }
+            if !status.externals.is_empty() {
+                AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+            }
+            for (index, external) in status.externals.iter().enumerate() {
+                let (label, flags) = if external.running {
+                    (
+                        format!("{} — running", external.label),
+                        MF_STRING | MF_GRAYED,
+                    )
+                } else {
+                    (format!("Start {}", external.label), MF_STRING)
+                };
+                let text = wide(&label);
+                AppendMenuW(menu, flags, ITEM_EXTERNAL + index, text.as_ptr());
+            }
+            AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+            for (id, label) in [(ITEM_FOLDER, "Open Yunari folder"), (ITEM_EXIT, "Exit")] {
+                let text = wide(label);
                 AppendMenuW(menu, MF_STRING, id, text.as_ptr());
             }
             GetCursorPos(&mut point);
@@ -307,8 +347,16 @@ mod platform {
                 ITEM_EDITOR => Some(Action::Editor),
                 ITEM_THEMES => Some(Action::Themes),
                 ITEM_SETTINGS => Some(Action::Settings),
+                ITEM_MCP => Some(Action::Mcp),
                 ITEM_FOLDER => Some(Action::Folder),
                 ITEM_EXIT => Some(Action::Exit),
+                command if command >= ITEM_EXTERNAL => {
+                    let index = command - ITEM_EXTERNAL;
+                    status
+                        .externals
+                        .get(index)
+                        .map(|_| Action::StartExternal(index))
+                }
                 _ => None,
             };
             if let Some(action) = action {
@@ -324,23 +372,46 @@ mod platform {
     const ITEM_SETTINGS: usize = 5;
     const ITEM_FOLDER: usize = 6;
     const ITEM_EXIT: usize = 7;
+    const ITEM_MCP: usize = 8;
+    const ITEM_EXTERNAL: usize = 16;
+
+    /// Starts a program the tray row names, with no console window: the app
+    /// keeps running whether or not the child does. A program whose manifest
+    /// demands elevation is refused by a plain spawn; the shell verb is the
+    /// one path that can ask the machine's owner, and they answer it.
+    pub fn start_external(path: &Path) -> bool {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const ELEVATION_REQUIRED: i32 = 740;
+        match std::process::Command::new(path)
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn()
+        {
+            Ok(_) => true,
+            Err(error) if error.raw_os_error() == Some(ELEVATION_REQUIRED) => {
+                shell("runas", &path.display().to_string())
+            }
+            Err(_) => false,
+        }
+    }
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
     pub fn open_url(url: &str) -> bool {
-        shell_open(url)
+        shell("open", url)
     }
 
     pub fn open_folder(path: &Path) -> bool {
-        shell_open(&path.display().to_string())
+        shell("open", &path.display().to_string())
     }
 
-    fn shell_open(target: &str) -> bool {
+    fn shell(operation: &str, target: &str) -> bool {
         use windows_sys::Win32::UI::Shell::ShellExecuteW;
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let operation = wide("open");
+        let operation = wide(operation);
         let file = wide(target);
         // SAFETY: both strings outlive the call, and the return value is only
         // compared with the error boundary.
@@ -359,7 +430,7 @@ mod platform {
 }
 
 #[cfg(windows)]
-pub use platform::{open_folder, open_url, spawn, update};
+pub use platform::{open_folder, open_url, spawn, start_external, update};
 
 #[cfg(not(windows))]
 pub fn spawn(_status: Status) -> Option<Tray> {
@@ -376,5 +447,10 @@ pub fn open_url(_url: &str) -> bool {
 
 #[cfg(not(windows))]
 pub fn open_folder(_path: &std::path::Path) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn start_external(_path: &std::path::Path) -> bool {
     false
 }

@@ -54,6 +54,14 @@ pub fn run(host: Shared, editor: Option<AnyWindowHandle>, cx: &mut App) {
                     yunari_tray::Action::Settings => {
                         open_editor_command(&host, yunari_editor::Command::Settings, cx);
                     }
+                    yunari_tray::Action::Mcp => {
+                        open_editor_command(&host, yunari_editor::Command::Mcp, cx);
+                    }
+                    yunari_tray::Action::StartExternal(index) => {
+                        if let Some(external) = externals(&host).get(index) {
+                            yunari_tray::start_external(&external.executable);
+                        }
+                    }
                     yunari_tray::Action::Exit => {
                         cx.update(|app| app.quit());
                         return;
@@ -82,5 +90,57 @@ fn status(host: &Shared) -> yunari_tray::Status {
             if lan { "LAN on" } else { "local only" }
         ),
         autostart: yunari_host::autostart::enabled(),
+        // The bridge ships beside the app, so the page is always offered.
+        mcp: true,
+        externals: externals(host),
     }
+}
+
+/// The external programs this PC can offer the tray: each row is a program the
+/// app reads but never bundles. A program that is neither installed nor running
+/// has no row, and one that is running is disabled rather than hidden.
+fn externals(host: &Shared) -> Vec<yunari_tray::External> {
+    let status = host.registry.status();
+    let healthy = |id: &str| {
+        status
+            .iter()
+            .find(|(provider, _, _)| *provider == id)
+            .is_some_and(|(_, _, health)| health.reason().is_none())
+    };
+    let mut rows = Vec::new();
+    // LHM answers through its web server, so "healthy" is the running signal.
+    let lhm = find(
+        "YUNARI_LHM",
+        "LibreHardwareMonitor/LibreHardwareMonitor.exe",
+    );
+    if let Some(executable) = lhm {
+        rows.push(yunari_tray::External {
+            label: "LibreHardwareMonitor".to_owned(),
+            running: healthy("lhm"),
+            executable,
+        });
+    }
+    let rtss = find("YUNARI_RTSS", "RivaTuner Statistics Server/RTSS.exe");
+    if let Some(executable) = rtss {
+        rows.push(yunari_tray::External {
+            label: "RivaTuner Statistics Server".to_owned(),
+            running: yunari_host::frame::rtss_running(),
+            executable,
+        });
+    }
+    rows
+}
+
+/// The first place `relative` exists under an override or this PC's program
+/// directories. The override is a full path; the rest are standard installs.
+fn find(variable: &str, relative: &str) -> Option<std::path::PathBuf> {
+    let named = std::env::var_os(variable).map(std::path::PathBuf::from);
+    let standard = ["ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|root| std::path::PathBuf::from(root).join(relative));
+    named
+        .into_iter()
+        .chain(standard)
+        .find(|path| path.is_file())
 }
