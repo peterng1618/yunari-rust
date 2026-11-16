@@ -134,7 +134,7 @@ impl Library {
             )));
         }
         let base = sha256_hex(&bytes);
-        let document: ThemeDocument = serde_json::from_slice(&bytes)
+        let document: ThemeDocument = read_document(&bytes)
             .map_err(|error| LibraryError::Unreadable(format!("{id}/theme.json: {error}")))?;
         let entry = entry_of(id, &document, file_time(&directory.join("theme.json")));
         Ok(StoredTheme {
@@ -403,6 +403,19 @@ fn asset_path_is_safe(path: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
 }
 
+/// A stored theme, lifted from the source app's envelope when it is one. A
+/// theme written by the TypeScript editor carries the same palette, tokens,
+/// assets and bindings but a different envelope and flat scene objects, so it
+/// is read through the model's source reader instead of being refused.
+fn read_document(bytes: &[u8]) -> Result<ThemeDocument, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if yunari_model::source::looks_like_source(&value) {
+        return yunari_model::source::from_source_value(value);
+    }
+    serde_json::from_value(value).map_err(|error| error.to_string())
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -495,6 +508,34 @@ mod tests {
         let stored = temp.library.read("alpha").expect("a readable theme");
         assert_eq!(stored.document, document("alpha"));
         assert_eq!(stored.base, saved.base);
+    }
+
+    #[test]
+    fn a_theme_stored_by_the_source_editor_reads() {
+        let temp = TempLibrary::new();
+        let directory = temp.library.root().join("stored");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("theme.json"),
+            r##"{"schemaVersion":"3.0.0","fabricVersion":"7.4.0",
+                "id":"stored","metadata":{"name":"Stored"},
+                "artboard":{"width":480,"height":480},
+                "background":{"color":{"ref":"palette.bg"}},
+                "globals":{"palette":{"bg":{"name":"Backdrop",
+                    "value":{"kind":"solid","color":"#0c0e13"}}}},
+                "assets":[],"bindings":{},
+                "scene":{"version":"7.4.0","objects":[
+                    {"type":"Rect","id":"plate","left":8,"top":8,"width":464,"height":464,
+                     "rx":12,"yunariPaint":{"fill":"palette.bg"}}]}}"##,
+        )
+        .unwrap();
+        let listed = temp.library.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Stored");
+        let stored = temp.library.read("stored").expect("a readable theme");
+        assert_eq!(stored.document.nodes.len(), 1);
+        assert_eq!(stored.document.palette["bg"].name, "Backdrop");
+        assert_eq!(validate_document(&stored.document), Ok(()));
     }
 
     #[test]

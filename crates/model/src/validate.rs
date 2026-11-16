@@ -742,18 +742,23 @@ pub fn semantic_key_refusal(value: &str) -> Option<&'static str> {
     if is_semantic_key(value) {
         None
     } else {
-        Some("A semantic key is family.quantity[.qualifier] in lower case.")
+        Some("A semantic key is family.quantity[.qualifier].")
     }
 }
 
+/// The shape of a key, not its case: a stored theme may bind `weather.feelsLike`
+/// and a provider's own catalogue decides which keys it answers. Refusing the
+/// spelling would throw away a theme whose sensor merely is not on this PC.
 fn is_semantic_key(value: &str) -> bool {
     let parts: Vec<&str> = value.split('.').collect();
     parts.len() >= 2
+        && parts.len() <= 6
         && parts.iter().all(|part| {
             !part.is_empty()
+                && part.len() <= 64
                 && part
                     .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         })
 }
 
@@ -1456,6 +1461,23 @@ mod tests {
             paths(validate_document(&document)),
             vec!["background/media/fallbackFrame"]
         );
+    }
+
+    #[test]
+    fn a_camel_case_sensor_key_is_family_and_quantity() {
+        let mut document = with_nodes(vec![group("weather", vec![])]);
+        document.bindings.insert(
+            "weather".to_owned(),
+            vec![
+                binding("x", "weather.feelsLike"),
+                binding("y", "weather.windDirection.compass"),
+            ],
+        );
+        assert_eq!(validate_document(&document), Ok(()));
+        assert!(semantic_key_refusal("weather.Load").is_none());
+        assert!(semantic_key_refusal("weather").is_some());
+        assert!(semantic_key_refusal("weather..load").is_some());
+        assert!(semantic_key_refusal("weather.load now").is_some());
     }
 
     #[test]
