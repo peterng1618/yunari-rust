@@ -39,6 +39,8 @@ pub struct SettingsDialog {
     pub devices: yunari_providers::devices::Assignment,
     /// The physical devices any provider could name, for the slot rows.
     pub options: Vec<yunari_providers::provider::Device>,
+    /// Each sensor provider and where it stands, so a gap says who owns it.
+    pub providers: Vec<(String, String)>,
     /// The last result of flipping a switch, for the row under it.
     pub message: Option<String>,
 }
@@ -48,6 +50,7 @@ impl SettingsDialog {
         settings: PathBuf,
         monitors: Vec<MonitorRow>,
         options: Vec<yunari_providers::provider::Device>,
+        providers: Vec<(String, String)>,
     ) -> Self {
         let weather = read_weather(&settings);
         let weather_key_set = read_weather_key_set(&settings, &weather);
@@ -61,6 +64,7 @@ impl SettingsDialog {
             source_credentials,
             devices: yunari_providers::devices::Assignment::load(&settings),
             options,
+            providers,
             settings,
             message: None,
         }
@@ -369,6 +373,19 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, _| {
                     this.edit_credential(credential.clone());
                 })),
+        );
+    }
+    for (index, (label, state)) in dialog.providers.iter().enumerate() {
+        column = column.child(
+            div()
+                .id(("settings-provider", index))
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded_sm()
+                .text_color(rgb(0xe8e8ea))
+                .bg(rgb(0x22222a))
+                .child(format!("{label}: {state}")),
         );
     }
     for (index, monitor) in dialog.monitors.iter().enumerate() {

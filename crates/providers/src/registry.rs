@@ -82,6 +82,15 @@ impl Registry {
             .collect()
     }
 
+    /// Each provider's name and whether it can read right now. A settings
+    /// surface shows the reason a provider is unavailable without knowing why.
+    pub fn status(&self) -> Vec<(&str, &str, Health)> {
+        self.providers
+            .iter()
+            .map(|provider| (provider.id(), provider.label(), provider.health()))
+            .collect()
+    }
+
     /// Every physical device any provider can name, deduplicated.
     pub fn devices(&self) -> Vec<crate::provider::Device> {
         let mut devices: Vec<crate::provider::Device> = self

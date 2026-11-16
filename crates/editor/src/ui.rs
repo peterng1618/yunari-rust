@@ -331,10 +331,27 @@ impl EditorWindow {
                     .as_ref()
                     .map(|host| host.registry.devices())
                     .unwrap_or_default();
+                let providers = self
+                    .host
+                    .as_ref()
+                    .map(|host| {
+                        host.registry
+                            .status()
+                            .into_iter()
+                            .map(|(_, label, health)| {
+                                (
+                                    label.to_owned(),
+                                    health.reason().unwrap_or("ready").to_owned(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 self.overlay = Some(Overlay::Settings(Box::new(SettingsDialog::new(
                     self.settings_dir(),
                     monitors,
                     options,
+                    providers,
                 ))));
             }
             Command::Widgets => {
