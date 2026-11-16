@@ -613,6 +613,36 @@ Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-6-providers.md`.
   is no `lighting.*` vocabulary to bind, and the source bridge writes panel LEDs,
   not readings).
 
+## Phase 7 — assets and release notes — met (2026-11-16)
+
+Picture import sniffs the bytes rather than trusting the extension, caps size by
+kind, and refuses an SVG whose text names an active construct; the accepted
+bytes are declared as an asset with their SHA-256 and seeded into the raster
+cache so the picture draws before the theme is saved. `docs/install.md` records
+what a release build needs.
+
+The shipped release artifact is blocked, not faked: GPUI compiles HLSL with
+`fxc.exe` only when `debug_assertions` is off, and this machine has no Windows
+SDK. Measurements were taken with `--config 'profile.release.debug-assertions=true'`
+and are reported above.
+
+## Phase 8 — widget packs — met (2026-11-16)
+
+`yunari-packs` reads the source package format through the same gates the source
+reader applied: 128 entries, 95 MiB archive, 80 MiB entry, 180 MiB expanded, no
+climbing or duplicate names, a SHA-256 per asset, and units from the manifest's
+list or the widget's own provenance. Each unit lifts to a scene this editor
+draws, with its assets' bytes.
+
+The host owns the installed folder: `GET/POST /api/widget-packs` list and install
+for this PC only, and a fresh settings folder receives the committed "Starter
+cards" pack. The editor's picker (`Ctrl+Shift+W`) inserts a unit, merging only the
+tokens and assets the document lacks, remapping asset ids, and keeping every id
+fresh so two insertions stay distinct and undo removes the second.
+
+Not ported: writing a package back out (row 8), the path-preset store and
+`user:`/`pack:` refs (row 9).
+
 ## Parity sweep against `product.md` (2026-11-16)
 
 Every capability `docs/product.md` names, with what this port does today. "Met"
@@ -623,15 +653,15 @@ recorded product decision.
 | # | `product.md` capability | Status | Where / why |
 |---|---|---|---|
 | 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes are carried but report `UnsupportedContent` until a decoder lands |
-| 2 | Card widgets from installed widget packs | Deferred | No pack format, pack store or widget library; the Add menu offers the built-in path presets only |
+| 2 | Card widgets from installed widget packs | Met | `yunari-packs` reads the source `.yunari-widget-package` format; the host owns the installed folder and the editor inserts any unit (`Ctrl+Shift+W`) |
 | 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry |
 | 4 | Rich text and typography presets | Partial | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored; the only presets are the three role tokens |
 | 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C; glass is a display-list op resolved by the raster backend |
 | 6 | Rectangular or circular artboard, disc cropping | Met | Model validation refuses a non-square circle artboard; raster and GPUI crop to the disc |
-| 7 | New theme blank or from a bundled starter template | Partial | Blank matches the source's seeded tokens, artboard and background; no template package ships |
-| 8 | Export a selection as `yunari-widget-package` | Deferred | Waits for the widget pack format |
-| 9 | Host-owned widget packs and path-preset list, `user:`/`pack:` refs, one-time browser migration | Deferred | Path presets are built into the Add menu; there is no preset store or pack API |
-| 10 | Starter theme and default widget pack as committed packages | Deferred | Same pack work as 9; nothing generates them at runtime either |
+| 7 | New theme blank or from a bundled starter template | Met | A new document starts from the built-in starter: the blank theme's tokens, a title and a clock bound to `time.now` |
+| 8 | Export a selection as `yunari-widget-package` | Deferred | The reader and installer are met; nothing writes a package back out |
+| 9 | Host-owned widget packs and path-preset list, `user:`/`pack:` refs, one-time browser migration | Partial | Packs are host-owned and installed per PC; the path-preset store, `user:`/`pack:` refs and the browser migration are not ported |
+| 10 | Starter theme and default widget pack as committed packages | Met | `yunari_packs::STARTER` is a committed package the host installs on an empty folder; the starter theme is built in Rust beside `blank()` |
 | 11 | Local-first theme library | Met | `yunari-library` writes `themes/<id>/theme.json` + `assets/`; source themes are lifted on read |
 | 12 | Browse the store catalogue | Partial | `GET /api/store/themes` proxies and caches the configured origin; no catalogue UI, versions or thumbnails |
 | 13 | Install a package, sign in, submit a theme, see own submissions | Deferred | Store account and install path are not ported (phase 6 note) |
@@ -655,7 +685,7 @@ recorded product decision.
 | 31 | Readings are truthful | Met | Non-negotiable in `sample::{Reading, Status}` and every provider test |
 | 32 | The theme is portable | Partial | Native JSON envelope plus `.yunari-theme` import/export with validation before write; background framing is authored document state, not yet split into `background-media.json` |
 | 33 | The previous major is the compatibility floor | Deviation | The native schema is `1.0.0`; a source `3.0.0` theme is lifted on read and re-saved in the native shape, with the original beside it as `theme.fabric.json`. No 2.x migration, and any other major is refused |
-| 34 | Data packs are host state | Deferred | With the pack work (9, 10) |
+| 34 | Data packs are host state | Partial | Installed widget packs live in `<settings>/widget-packs`; there is no other data-pack kind |
 | 35 | Local by default | Met | Loopback bind; `--host` opts into LAN |
 | 36 | Secure origin mandatory for install and wake lock | Met | Local CA and leaf, HTTPS beside HTTP on one port, `/yunari-ca.crt`; the root is ECDSA P-256 where the source used RSA-2048. Installing the root on a real phone was not exercised |
 | 37 | Authoring state is what persists | Met | View state (zoom, lens, grouping view) lives in the editor shell, never in the document |
