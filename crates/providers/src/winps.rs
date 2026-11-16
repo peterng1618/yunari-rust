@@ -7,11 +7,15 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{ChildStdout, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub const POWERSHELL: &str = "powershell.exe";
+/// A one-shot helper still running after this is killed; the catalogue moves
+/// on without it.
+pub const RUN_TIMEOUT: Duration = Duration::from_secs(15);
 /// A line larger than this is drained and dropped rather than buffered without
 /// bound; the media helper's artwork line is derived from it.
 pub const LINE_CAP: usize = 1_048_576;
@@ -54,6 +58,33 @@ pub fn spawn(script: &str) -> Result<(Receiver<String>, Stop), String> {
             let _ = child.wait();
         }),
     ))
+}
+
+/// Runs `script` to completion and answers everything it printed. A script
+/// that outlives [`RUN_TIMEOUT`] is killed, so a catalogue read cannot wedge
+/// the caller.
+pub fn run(script: &str) -> Result<String, String> {
+    let (lines, stop) = spawn(script)?;
+    let mut stop = Some(stop);
+    let mut output = String::new();
+    loop {
+        match lines.recv_timeout(RUN_TIMEOUT) {
+            Ok(line) => {
+                output.push_str(&line);
+                output.push('\n');
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(output),
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(stop) = stop.take() {
+                    stop();
+                }
+                return Err(format!(
+                    "it did not finish within {} seconds.",
+                    RUN_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    }
 }
 
 fn read(stdout: ChildStdout, sender: mpsc::Sender<String>) {

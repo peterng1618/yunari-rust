@@ -598,7 +598,8 @@ Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-6-providers.md`.
   shared memory, PresentMon ETW fallback), weather (Open-Meteo), media (the
   source's SMTC PowerShell helper, content-addressed artwork cache), custom HTTP
   sources (`sources.json`, RFC 6901 pointers) and the running game (foreground
-  window plus Steam's own library files and cached box art). A key nothing can
+  window plus the installed-game catalogue — Steam, Epic, GOG, itch and Xbox —
+  with Steam's cached box art). A key nothing can
   read is `missing` with an owner-actionable sentence, never a zero.
 - Media and game helpers share one PowerShell runner (`yunari_providers::winps`),
   so the line cap, the encoded command and the process kill exist once. Helper
@@ -694,7 +695,7 @@ recorded product decision.
 | 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
 | 23 | Kraken paletted mode B | Deferred | Comes with video |
 | 24 | Wallpaper Engine Workshop library and previews | Deferred | No provider; the asset finder that would show them is also deferred |
-| 25 | Steam presence and metadata | Partial | The foreground game is named from Steam's local library with cached box art; store metadata and non-Steam launchers (Epic/GOG/Itch/Xbox) are deferred |
+| 25 | Steam presence and metadata | Partial | The foreground game is named from Steam's local library plus Epic manifests, GOG registry keys, itch app folders and Xbox packages; Steam's cached box art is served, other launchers' artwork and store metadata are deferred. The engine-window classifier is not ported |
 | 26 | Weather backends and places | Partial | Open-Meteo with the place from `weather.json`; WeatherAPI/OpenWeatherMap, Windows location and condition translations deferred |
 | 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
 | 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | GET sources with pointers, plain-text `headers` and `query` (both validated, a query value percent-encoded so it cannot add a parameter), and a per-source `timeoutMs` (500 ms–30 s). Paged sources fetch every page in order and merge them, failing whole when one page fails. `auth` is deferred: it needs the encrypted credential store |

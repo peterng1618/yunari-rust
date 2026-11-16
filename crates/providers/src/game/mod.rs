@@ -1,14 +1,14 @@
 //! The game the user is playing, identified from local evidence.
 //!
 //! One PowerShell helper reports the foreground process once a second while a
-//! display binds a `game.*` key; Steam's installed-app catalogue is read once
-//! per demand window. A match names the game and serves the cover Steam already
-//! cached — never a network fetch.
+//! display binds a `game.*` key; the installed-game catalogue is read once per
+//! demand window. A match names the game and, for a Steam title, serves the
+//! cover Steam already cached — never a network fetch.
 //!
-//! ponytail: identification is the Steam install folder. The catalogue of
-//! launcher games (Epic/GOG/Itch/Xbox) and the engine-window classifier are not
-//! ported yet; a non-Steam game is `missing`, not the previous game.
+//! ponytail: the engine-window classifier is not ported; a foreground window
+//! that no install folder claims is `missing`, not the previous game.
 
+pub mod catalogue;
 pub mod script;
 pub mod steam;
 pub mod vdf;
@@ -22,8 +22,8 @@ use crate::provider::{Descriptor, Health, Provider};
 use crate::sample::Reading;
 use crate::vocabulary;
 use crate::winps;
+use catalogue::Game;
 use script::Foreground;
-use steam::SteamApp;
 
 pub const KEYS: &[&str] = &["game.name", "game.artwork", "game.running", "game.app"];
 
@@ -43,11 +43,11 @@ const LIVENESS_MS: u64 = 60_000;
 /// The installed catalogue is read once per demand window, not per poll.
 const LIBRARY_TTL_MS: u64 = 300_000;
 
-/// What one read of Steam's library found. The root is kept so a cover's
+/// What one read of the catalogue found. Steam's root is kept so a cover's
 /// existence can be checked without reading the catalogue again.
 pub struct Library {
     pub root: Option<PathBuf>,
-    pub apps: Vec<SteamApp>,
+    pub games: Vec<Game>,
 }
 
 /// Launches the foreground helper. A seam so a test scripts its lines.
@@ -73,9 +73,10 @@ fn spawn_helper() -> Result<(Receiver<Foreground>, winps::Stop), String> {
 }
 
 fn read_library() -> Library {
-    let root = steam::root();
-    let apps = root.as_deref().map(steam::apps).unwrap_or_default();
-    Library { root, apps }
+    Library {
+        root: steam::root(),
+        games: catalogue::read_all(),
+    }
 }
 
 struct Helper {
@@ -266,11 +267,11 @@ impl Provider for GameProvider {
     }
 }
 
-/// The app whose install folder holds the foreground executable.
-fn matched_app(state: &State) -> Option<&SteamApp> {
+/// The game whose install folder holds the foreground executable.
+fn matched_app(state: &State) -> Option<&Game> {
     let executable = state.foreground.as_ref()?.path.as_deref()?;
     let library = state.library.as_ref()?;
-    steam::app_for(&library.apps, Path::new(executable))
+    catalogue::app_for(&library.games, Path::new(executable))
 }
 
 fn reading_of(state: &State, key: &str) -> Reading {
@@ -300,14 +301,18 @@ fn reading_of(state: &State, key: &str) -> Reading {
                 return Reading::text(key, app.name.clone());
             }
             // The cover is named only when Steam's cache actually holds it, so
-            // a display never draws a broken picture.
-            let cover = state
-                .library
-                .as_ref()
-                .and_then(|library| library.root.as_deref())
-                .is_some_and(|root| steam::box_art(root, &app.app_id).is_some());
-            if cover {
-                Reading::text(key, format!("/api/game/artwork/{}", app.app_id))
+            // a display never draws a broken picture. Other launchers store
+            // their art where this build does not look yet.
+            let app_id = app.steam_app_id.as_deref();
+            let cover = match (
+                state.library.as_ref().and_then(|l| l.root.as_deref()),
+                app_id,
+            ) {
+                (Some(root), Some(app_id)) => steam::box_art(root, app_id).is_some(),
+                _ => false,
+            };
+            if let (true, Some(app_id)) = (cover, app_id) {
+                Reading::text(key, format!("/api/game/artwork/{app_id}"))
             } else {
                 Reading::missing(key, NO_ARTWORK_MESSAGE)
             }
@@ -356,7 +361,7 @@ mod tests {
     }
 
     impl Fixture {
-        fn new(apps: Vec<SteamApp>) -> Self {
+        fn new(games: Vec<Game>) -> Self {
             let starts = Arc::new(AtomicUsize::new(0));
             let stops = Arc::new(AtomicUsize::new(0));
             let sender = Arc::new(Mutex::new(None));
@@ -381,7 +386,7 @@ mod tests {
             // disk lookup, which is what a machine without Steam sees.
             let library: LibraryLoader = Arc::new(move || Library {
                 root: None,
-                apps: apps.clone(),
+                games: games.clone(),
             });
             Self {
                 provider: GameProvider::with_parts(spawn, library, 1_000, 0),
@@ -402,11 +407,21 @@ mod tests {
         }
     }
 
-    fn steam_app(app_id: &str, name: &str, install: &str) -> SteamApp {
-        SteamApp {
+    fn steam_app(app_id: &str, name: &str, install: &str) -> Game {
+        Game::from_steam(steam::SteamApp {
             app_id: app_id.to_owned(),
             name: name.to_owned(),
             install_dir: PathBuf::from(install),
+        })
+    }
+
+    fn epic_app(name: &str, install: &str, executable: &str) -> Game {
+        Game {
+            source: catalogue::Source::Epic,
+            name: name.to_owned(),
+            install_dir: PathBuf::from(install),
+            executables: vec![PathBuf::from(install).join(executable)],
+            steam_app_id: None,
         }
     }
 
@@ -466,6 +481,33 @@ mod tests {
     }
 
     #[test]
+    fn a_launcher_game_is_named_and_its_artwork_stays_a_gap() {
+        let fixture = Fixture::new(vec![epic_app(
+            "Fortnite",
+            r"D:\Epic\Fortnite",
+            r"FortniteClient-Win64-Shipping.exe",
+        )]);
+        fixture.sample(KEYS, 1_000);
+        fixture.push(foreground(
+            r"D:\Epic\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe",
+        ));
+        let readings = fixture.sample(KEYS, 1_100);
+        assert_eq!(
+            reading(&readings, "game.name").text.as_deref(),
+            Some("Fortnite")
+        );
+        assert_eq!(
+            reading(&readings, "game.running").text.as_deref(),
+            Some("on")
+        );
+        // No Steam app id, so there is no cached cover to serve.
+        assert_eq!(
+            reading(&readings, "game.artwork").message.as_deref(),
+            Some(NO_ARTWORK_MESSAGE)
+        );
+    }
+
+    #[test]
     fn an_unknown_foreground_executable_is_missing_not_the_last_game() {
         let fixture = Fixture::new(vec![steam_app(
             "730",
@@ -515,7 +557,7 @@ mod tests {
         let spawn: Spawn = Arc::new(|| Err("PowerShell is not installed.".to_owned()));
         let library: LibraryLoader = Arc::new(|| Library {
             root: None,
-            apps: Vec::new(),
+            games: Vec::new(),
         });
         let provider = GameProvider::with_parts(spawn, library, 30_000, 60_000);
         let readings = provider
