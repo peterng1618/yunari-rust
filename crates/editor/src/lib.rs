@@ -9,6 +9,7 @@ pub mod grouping;
 pub mod history;
 pub mod inspector;
 pub mod layers;
+pub mod palette;
 pub mod persistence;
 pub mod selection;
 pub mod snap;
