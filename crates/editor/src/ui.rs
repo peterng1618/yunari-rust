@@ -36,6 +36,8 @@ use self::prompt::{Outcome, Prompt};
 use crate::document::{Editor, Source};
 use crate::persistence::import_package;
 use crate::selection::{self, Selection};
+use crate::snap;
+use crate::transform::{self, Handle};
 use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 
 /// How often the window looks at the sampler; the sampler decides when a poll
@@ -43,6 +45,11 @@ use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 const TICK: Duration = Duration::from_millis(250);
 
 const ACCENT: u32 = 0x4f9cf9;
+/// Arrow-key steps, in artboard units.
+const NUDGE_STEP: f64 = 1.0;
+const NUDGE_STEP_LARGE: f64 = 10.0;
+/// How long the arrow-key burst waits for another press.
+const NUDGE_IDLE_MS: u64 = 300;
 const PANEL: u32 = 0x1d1d24;
 const INK: u32 = 0xe8e8ea;
 const MUTED: u32 = 0x8a8a94;
@@ -92,6 +99,31 @@ enum Resume {
     Quit,
 }
 
+/// An artboard box: x, y, width, height.
+type Rect = (f64, f64, f64, f64);
+
+/// A pointer gesture in flight. Each one records one history entry.
+enum Gesture {
+    /// The pressed node was already selected (or just became it).
+    Move {
+        start: (f64, f64),
+        anchor: (f64, f64),
+        starts: Vec<(String, Transform)>,
+    },
+    Resize {
+        id: String,
+        handle: Handle,
+        start: Transform,
+        rect: (f64, f64, f64, f64),
+    },
+    Rotate {
+        id: String,
+        start: Transform,
+        angle: f64,
+        centre: (f64, f64),
+    },
+}
+
 pub struct EditorWindow {
     editor: Editor,
     library: Library,
@@ -105,6 +137,11 @@ pub struct EditorWindow {
     selection: Selection,
     /// Canvas-local pixels the selection marquee started at and has reached.
     marquee: Option<((f32, f32), (f32, f32))>,
+    gesture: Option<Gesture>,
+    /// Lines the last drag step was pulled to, for painting.
+    guides: Vec<snap::Guide>,
+    /// Bumped per arrow press so a stale idle timer ends nothing.
+    nudge_epoch: u64,
     overlay: Option<Overlay>,
     status: Option<Status>,
     focus: FocusHandle,
@@ -148,6 +185,9 @@ impl EditorWindow {
             issues,
             selection: Selection::new(),
             marquee: None,
+            gesture: None,
+            guides: Vec::new(),
+            nudge_epoch: 0,
             overlay: None,
             status: None,
             focus: cx.focus_handle(),
@@ -429,21 +469,110 @@ impl EditorWindow {
         )
     }
 
-    /// A press on the canvas: a node under the pointer joins or replaces the
-    /// selection, and empty canvas starts a marquee.
-    fn canvas_down(&mut self, position: Point<Pixels>, shift: bool, cx: &mut Context<Self>) {
+    /// The primary selection's box and rotation, for its control chrome.
+    fn primary_rect(&self) -> Option<(String, Rect, f64)> {
+        let id = self.selection.first()?.to_owned();
+        let node = selection::find(self.editor.document(), &id)?;
+        let transform = node.transform;
+        Some((
+            id,
+            (
+                transform.x,
+                transform.y,
+                transform.width * transform.scale_x,
+                transform.height * transform.scale_y,
+            ),
+            transform.rotation,
+        ))
+    }
+
+    /// The transforms a move or nudge may change: the unlocked selected nodes.
+    fn start_transforms(&self) -> Vec<(String, Transform)> {
+        let document = self.editor.document();
+        self.selection
+            .ids()
+            .iter()
+            .filter_map(|id| {
+                let node = selection::find(document, id)?;
+                (!node.locked).then(|| (id.clone(), node.transform))
+            })
+            .collect()
+    }
+
+    fn begin_handle(
+        &mut self,
+        id: String,
+        rect: (f64, f64, f64, f64),
+        handle: Handle,
+        pointer: (f64, f64),
+    ) {
+        let centre = (rect.0 + rect.2 / 2.0, rect.1 + rect.3 / 2.0);
+        let Some(node) = selection::find(self.editor.document(), &id).map(|node| node.transform)
+        else {
+            return;
+        };
+        self.editor.begin_burst();
+        self.gesture = Some(match handle {
+            Handle::Rotate => Gesture::Rotate {
+                id,
+                start: node,
+                angle: transform::rotate(centre, pointer),
+                centre,
+            },
+            handle => Gesture::Resize {
+                id,
+                handle,
+                start: node,
+                rect,
+            },
+        });
+    }
+
+    /// A press on the canvas: a handle starts a transform, a node joins or
+    /// replaces the selection and may be dragged, and empty canvas starts a
+    /// marquee.
+    fn canvas_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
-        let local = point(position.x - bounds.origin.x, position.y - bounds.origin.y);
+        let local = point(event.position.x - bounds.origin.x, event.position.y - bounds.origin.y);
         let (x, y) = self.viewport.to_scene(local);
+        let shift = event.modifiers.shift;
+        if let Some((id, rect, rotation)) = self.primary_rect()
+            && let Some(handle) = transform::handle_at(rect, rotation, x, y, self.viewport.scale)
+            // Resizing a turned box would need the pointer in its own space;
+            // rotation is affordable, so only the turn handle shows when turned.
+            && (handle == Handle::Rotate || rotation.abs() < 1e-6)
+        {
+            self.marquee = None;
+            self.begin_handle(id, rect, handle, (x, y));
+            cx.notify();
+            return;
+        }
         match selection::hit(self.editor.document(), x, y) {
             Some(id) => {
                 self.marquee = None;
                 if shift {
                     self.selection.toggle(&id);
-                } else {
-                    self.selection.replace(id);
+                } else if !self.selection.contains(&id) {
+                    self.selection.replace(id.clone());
+                }
+                let locked = selection::find(self.editor.document(), &id)
+                    .is_some_and(|node| node.locked);
+                if !shift && !locked {
+                    let starts = self.start_transforms();
+                    if let Some(anchor) = starts
+                        .iter()
+                        .find(|(held, _)| *held == id)
+                        .map(|(_, transform)| (transform.x, transform.y))
+                    {
+                        self.editor.begin_burst();
+                        self.gesture = Some(Gesture::Move {
+                            start: (x, y),
+                            anchor,
+                            starts,
+                        });
+                    }
                 }
             }
             None => {
@@ -457,7 +586,154 @@ impl EditorWindow {
         cx.notify();
     }
 
+    /// One step of the gesture in flight, through the editor so the whole drag
+    /// stays one history entry.
+    fn gesture_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let local = point(event.position.x - bounds.origin.x, event.position.y - bounds.origin.y);
+        let scene = self.viewport.to_scene(local);
+        let Some(gesture) = self.gesture.take() else {
+            return;
+        };
+        let mut guides = Vec::new();
+        let changes: Vec<(String, Transform)> = match &gesture {
+            Gesture::Move {
+                start,
+                anchor,
+                starts,
+            } => {
+                let raw = (
+                    anchor.0 + scene.0 - start.0,
+                    anchor.1 + scene.1 - start.1,
+                );
+                let enabled = !event.modifiers.control;
+                let moving: Vec<String> = starts.iter().map(|(id, _)| id.clone()).collect();
+                let (snapped_x, snapped_y, found) = snap::snap_move(
+                    self.editor.document(),
+                    &moving,
+                    raw,
+                    self.viewport.scale,
+                    enabled,
+                );
+                let (rounded_x, rounded_y) = transform::move_to(raw, raw, enabled);
+                let guided = |axis| found.iter().any(|guide| guide.axis == axis);
+                let x = if guided(snap::Axis::X) { snapped_x } else { rounded_x };
+                let y = if guided(snap::Axis::Y) { snapped_y } else { rounded_y };
+                guides = found;
+                let (dx, dy) = (x - anchor.0, y - anchor.1);
+                starts
+                    .iter()
+                    .map(|(id, transform)| {
+                        let mut next = *transform;
+                        next.x += dx;
+                        next.y += dy;
+                        (id.clone(), next)
+                    })
+                    .collect()
+            }
+            Gesture::Resize {
+                id,
+                handle,
+                start,
+                rect,
+            } => {
+                let uniform = !event.modifiers.shift;
+                let from_centre = event.modifiers.alt;
+                let next = transform::resize(*rect, *handle, scene, uniform, from_centre);
+                let mut transform = *start;
+                transform.x = next.0;
+                transform.y = next.1;
+                transform.width = (next.2 / start.scale_x.max(1e-6)).max(1.0);
+                transform.height = (next.3 / start.scale_y.max(1e-6)).max(1.0);
+                vec![(id.clone(), transform)]
+            }
+            Gesture::Rotate {
+                id,
+                start,
+                angle,
+                centre,
+            } => {
+                let now = transform::rotate(*centre, scene);
+                let mut transform = *start;
+                transform.rotation = (start.rotation + now - angle).rem_euclid(360.0);
+                vec![(id.clone(), transform)]
+            }
+        };
+        if self.editor.apply_transforms(&changes) {
+            self.refresh();
+        }
+        self.guides = guides;
+        self.gesture = Some(gesture);
+        cx.notify();
+    }
+
+    /// Arrow keys move the selection; one burst of presses is one history entry.
+    fn nudge(
+        &mut self,
+        key: &str,
+        large: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let step = if large { NUDGE_STEP_LARGE } else { NUDGE_STEP };
+        let (dx, dy) = match key {
+            "left" => (-step, 0.0),
+            "right" => (step, 0.0),
+            "up" => (0.0, -step),
+            "down" => (0.0, step),
+            _ => return false,
+        };
+        let changes: Vec<(String, Transform)> = self
+            .start_transforms()
+            .into_iter()
+            .map(|(id, mut transform)| {
+                let (x, y) = transform::nudge(
+                    (
+                        transform.x,
+                        transform.y,
+                        transform.width,
+                        transform.height,
+                    ),
+                    dx,
+                    dy,
+                );
+                transform.x = x;
+                transform.y = y;
+                (id, transform)
+            })
+            .collect();
+        if changes.is_empty() {
+            return false;
+        }
+        self.editor.begin_burst();
+        self.editor.apply_transforms(&changes);
+        self.refresh();
+        self.nudge_epoch += 1;
+        let epoch = self.nudge_epoch;
+        cx.spawn_in(window, async move |weak, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(NUDGE_IDLE_MS))
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.nudge_epoch == epoch {
+                    this.editor.end_burst();
+                    this.refresh();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+        true
+    }
+
     fn canvas_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.gesture.is_some() {
+            self.gesture_move(event, cx);
+            return;
+        }
         if self.panning.is_some() {
             self.pan_drag(event, cx);
             return;
@@ -478,9 +754,16 @@ impl EditorWindow {
         cx.notify();
     }
 
-    /// Releasing the marquee takes every node wholly inside it.
+    /// Releases the gesture or the marquee, whichever was in flight.
     fn canvas_up(&mut self, shift: bool, cx: &mut Context<Self>) {
         self.panning = None;
+        if self.gesture.take().is_some() {
+            self.guides.clear();
+            self.editor.end_burst();
+            self.refresh();
+            cx.notify();
+            return;
+        }
         let Some((anchor, current)) = self.marquee.take() else {
             return;
         };
@@ -588,6 +871,9 @@ impl EditorWindow {
         let Some(overlay) = self.overlay.take() else {
             if keystroke.key == "space" {
                 self.space_held = true;
+                return;
+            }
+            if self.nudge(&keystroke.key, keystroke.modifiers.shift, window, cx) {
                 return;
             }
             if keystroke.modifiers.control && keystroke.key == "a" {
@@ -708,6 +994,18 @@ impl EditorWindow {
         let bounds_cell = self.canvas_bounds.clone();
         let selections = self.selection_rects();
         let marquee = self.marquee;
+        let guides = self.guides.clone();
+        let handles: Vec<(Handle, (f64, f64))> = self
+            .primary_rect()
+            .map(|(_, rect, rotation)| {
+                Handle::at(rect, rotation)
+                    .into_iter()
+                    .filter(|(handle, _)| {
+                        *handle == Handle::Rotate || rotation.abs() < 1e-6
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let view = self.viewport;
         div()
             .id("canvas")
@@ -723,7 +1021,7 @@ impl EditorWindow {
                     if this.space_held {
                         this.pan_start(event.position);
                     } else {
-                        this.canvas_down(event.position, event.modifiers.shift, cx);
+                        this.canvas_down(event, cx);
                     }
                 }),
             )
@@ -777,6 +1075,12 @@ impl EditorWindow {
                                 border_color: rgb(ACCENT).into(),
                                 border_style: BorderStyle::Solid,
                             });
+                        }
+                        for guide in &guides {
+                            paint_guide(guide, &view, bounds, window);
+                        }
+                        for (handle, (x, y)) in &handles {
+                            paint_handle(*handle, *x, *y, &view, bounds, window);
                         }
                         let Some((anchor, current)) = marquee else {
                             return;
@@ -1151,6 +1455,68 @@ fn text_node(document: &ThemeDocument) -> Node {
         glass: None,
         children: Vec::new(),
     }
+}
+
+/// A line of the snap, dashed 4 on and 4 off so it reads as a guide.
+fn paint_guide(guide: &snap::Guide, view: &Viewport, bounds: Bounds<Pixels>, window: &mut Window) {
+    const DASH: f32 = 4.0;
+    let (from, to) = (guide.from as f32 * view.scale, guide.to as f32 * view.scale);
+    let at = guide.at as f32 * view.scale;
+    let mut walked = from;
+    while walked < to {
+        let run = DASH.min(to - walked);
+        let quad = match guide.axis {
+            snap::Axis::X => Bounds {
+                origin: point(bounds.origin.x + px(view.offset.0 + at), bounds.origin.y + px(view.offset.1 + walked)),
+                size: size(px(1.0), px(run)),
+            },
+            snap::Axis::Y => Bounds {
+                origin: point(bounds.origin.x + px(view.offset.0 + walked), bounds.origin.y + px(view.offset.1 + at)),
+                size: size(px(run), px(1.0)),
+            },
+        };
+        window.paint_quad(PaintQuad {
+            bounds: quad,
+            corner_radii: Corners::default(),
+            background: rgb(0x3d8bf4).into(),
+            border_widths: Edges::default(),
+            border_color: transparent_black(),
+            border_style: BorderStyle::Solid,
+        });
+        walked += DASH * 2.0;
+    }
+}
+
+/// A control handle: white with the accent stroke.
+fn paint_handle(
+    handle: Handle,
+    x: f64,
+    y: f64,
+    view: &Viewport,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+) {
+    let (width, height) = match handle {
+        Handle::TopLeft | Handle::TopRight | Handle::BottomRight | Handle::BottomLeft => (12.0, 12.0),
+        Handle::Top | Handle::Bottom => (20.0, 8.0),
+        Handle::Left | Handle::Right => (8.0, 20.0),
+        Handle::Rotate => (32.0, 32.0),
+    };
+    let screen = view.to_screen(x, y);
+    window.paint_quad(PaintQuad {
+        bounds: Bounds {
+            origin: point(
+                bounds.origin.x + screen.x - px(width / 2.0),
+                bounds.origin.y + screen.y - px(height / 2.0),
+            ),
+            size: size(px(width), px(height)),
+        },
+        corner_radii: Corners::default(),
+        background: rgb(0xffffff).into(),
+        border_widths: Edges::all(px(1.0)),
+        border_color: rgb(ACCENT).into(),
+        border_style: BorderStyle::Solid,
+    });
 }
 
 fn find_node<'a>(nodes: &'a [Node], id: &str) -> Option<&'a Node> {

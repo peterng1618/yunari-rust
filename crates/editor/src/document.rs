@@ -192,6 +192,19 @@ impl Editor {
         })
     }
 
+    /// Replaces the transforms of the named nodes in one edit, which is what a
+    /// drag step is.
+    pub fn apply_transforms(&mut self, changes: &[(String, yunari_model::document::Transform)]) -> bool {
+        if changes.is_empty() {
+            return false;
+        }
+        self.edit(|document| {
+            for node in &mut document.nodes {
+                apply_one(node, changes);
+            }
+        })
+    }
+
     pub fn rename_theme(&mut self, name: &str) -> bool {
         let name = name.trim().to_owned();
         self.edit(|document| document.metadata.name = Some(name))
@@ -201,6 +214,15 @@ impl Editor {
 /// The document as the clean test sees it: one canonical JSON spelling.
 fn canonical(document: &ThemeDocument) -> String {
     serde_json::to_string(document).unwrap_or_default()
+}
+
+fn apply_one(node: &mut Node, changes: &[(String, yunari_model::document::Transform)]) {
+    if let Some((_, transform)) = changes.iter().find(|(id, _)| *id == node.id) {
+        node.transform = *transform;
+    }
+    for child in &mut node.children {
+        apply_one(child, changes);
+    }
 }
 
 fn collect_ids(node: &Node, into: &mut Vec<String>) {
@@ -297,6 +319,23 @@ mod tests {
         assert!(editor.undo());
         assert_eq!(editor.document().metadata.description, None);
         assert!(!editor.can_undo());
+    }
+
+    #[test]
+    fn a_drag_is_one_undo_step() {
+        let mut editor = Editor::new(document());
+        let start = rectangle("a");
+        editor.add_node(start.clone());
+        editor.begin_burst();
+        for step in 1..=3 {
+            let mut moved = start.transform;
+            moved.x = start.transform.x + f64::from(step);
+            editor.apply_transforms(&[(start.id.clone(), moved)]);
+        }
+        assert!(editor.end_burst());
+        assert_eq!(editor.document().nodes[0].transform.x, 13.0);
+        assert!(editor.undo());
+        assert_eq!(editor.document().nodes[0].transform.x, 10.0);
     }
 
     #[test]

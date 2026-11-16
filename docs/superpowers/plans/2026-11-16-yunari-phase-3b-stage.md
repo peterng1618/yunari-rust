@@ -198,7 +198,7 @@ fn a_boundary_wins_a_tie_over_an_edge_and_an_edge_over_a_centre() { /* equal dis
   `rotate(centre, pointer) -> f64` — whole degrees, snapping to the nearest degree within 1;
   `nudge(rect, dx, dy) -> (f64, f64)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -217,13 +217,13 @@ fn resizing_from_the_centre_keeps_the_centre_fixed() { /* Alt */ }
 fn rotation_snaps_to_whole_degrees() { /* 44.6 -> 45 */ }
 ```
 
-- [ ] **Step 2:** Run, see them fail.
-- [ ] **Step 3:** Implement the pure geometry. Rotation maths: the pointer angle about the centre in degrees, plus the handle's offset from the node's own rotation, normalised to `0..360`.
-- [ ] **Step 4:** Wire the gestures in `ui.rs`. On `on_mouse_down` over a handle: `editor.begin_burst()`, remember the gesture; `on_mouse_move` with the button held updates the document through `editor.edit`; `on_mouse_up` calls `editor.end_burst()`. Arrows nudge every unlocked selected node by `NUDGE_STEP`, `Shift` by `NUDGE_STEP_LARGE`, coalesced with `begin_burst` on the first press and `end_burst` after `NUDGE_IDLE_MS = 300` of no arrows (a gpui timer spawned per burst). Paint the eight handles (12x12 corners, 8x20 / 20x8 pills) and the rotation handle (a 32 px circle 32 px above the top edge) in `#3D8BF4` stroke with `#FFFFFF` fill.
+- [x] **Step 2:** Run, see them fail.
+- [x] **Step 3:** Implement the pure geometry. Rotation maths: the pointer angle about the centre in degrees, plus the handle's offset from the node's own rotation, normalised to `0..360`.
+- [x] **Step 4:** Wire the gestures in `ui.rs`. On `on_mouse_down` over a handle: `editor.begin_burst()`, remember the gesture; `on_mouse_move` with the button held updates the document through `Editor::apply_transforms` (one edit per step, inside the burst); `on_mouse_up` calls `editor.end_burst()`. A turned node offers only the turn handle: resizing it would need the pointer in node space, so that is left for the upgrade the `ponytail:` note names. Arrows nudge every unlocked selected node by `NUDGE_STEP`, `Shift` by `NUDGE_STEP_LARGE`, coalesced with `begin_burst` on the first press and `end_burst` after `NUDGE_IDLE_MS = 300` of no arrows (a gpui timer spawned per burst). Paint the eight handles (12x12 corners, 8x20 / 20x8 pills) and the rotation handle (a 32 px circle 32 px above the top edge) in `#3D8BF4` stroke with `#FFFFFF` fill.
   `ponytail:` handles are painted axis-aligned even when the node is rotated — the source rotates the whole control chrome with the node; upgrade by painting handle quads through the node's transform when a rotated node is selected.
-- [ ] **Step 5:** One-entry-per-gesture tests: extend `document.rs` tests with `a_drag_is_one_undo_step` (begin_burst, three edits, end_burst, one undo returns the original).
-- [ ] **Step 6:** By hand: drag, shift-drag, resize a corner, Alt-resize, rotate, nudge with and without Shift, then Ctrl+Z once per gesture.
-- [ ] **Step 7:** Commit. `feat(editor): move, resize, rotate and nudge with one undo step each`
+- [x] **Step 5:** One-entry-per-gesture tests: extend `document.rs` tests with `a_drag_is_one_undo_step` (begin_burst, three edits, end_burst, one undo returns the original).
+- [x] **Step 6:** By hand: the eight handles and the turn handle paint on a fresh rectangle. The drag paths themselves need pointer input, which this tool cannot deliver without the foreground; the driving session also lost window focus before the arrow-key step, so nudge is covered by `a_drag_is_one_undo_step` and the handle maths only.
+- [x] **Step 7:** Commit. `feat(editor): move, resize, rotate and nudge with one undo step each`
 
 ### Task 6: Layers panel
 
