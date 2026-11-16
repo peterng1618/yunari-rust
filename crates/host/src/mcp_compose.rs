@@ -519,8 +519,8 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "add_icon" => add_icon(app, args),
         "import_asset" => import_asset(app, args),
         "list_asset_sources" => list_asset_sources(),
-        "search_assets" => search_assets(args),
-        "preview_asset" => preview_asset(args),
+        "search_assets" => search_assets(app, args),
+        "preview_asset" => preview_asset(app, args),
         "remove_asset" => remove_asset(app, args),
         "add_image" => add_image(app, args),
         "add_chart" => add_chart(app, args),
@@ -1178,42 +1178,57 @@ fn asset_stem(name: &str) -> String {
     }
 }
 
-/// The sources this host can search. Each row is a settled local source: no
-/// remote catalogue and no credential is configured here.
+/// The sources this host can search: the two local libraries and every stock
+/// source it serves in-process.
 fn list_asset_sources() -> Result<Value, String> {
-    Ok(json!({"sources": [
-        {
+    let mut sources = vec![
+        json!({
             "id": "pictures",
             "label": "This PC's Pictures",
             "category": "image",
             "body": "grid",
             "requires": null,
             "configurable": false
-        },
-        {
+        }),
+        json!({
             "id": "wallpaper-engine",
             "label": "Wallpaper Engine",
             "category": "image",
             "body": "wallpaper-engine",
             "requires": null,
             "configurable": false
-        }
-    ]}))
+        }),
+    ];
+    for stock in crate::assets::STOCKS {
+        sources.push(json!({
+            "id": stock.id,
+            "label": stock.label,
+            "category": stock.category,
+            "body": stock.body,
+            "requires": stock.requires,
+            "presetKind": stock.preset,
+            "configurable": false,
+        }));
+    }
+    Ok(json!({"sources": sources}))
 }
 
 /// An opaque, hand-carryable reference to one finder row: base64 JSON, as the
 /// source's own pointer, never a file path a caller can forge past the source
 /// it names.
-fn asset_reference(source: &str, id: &str, name: &str, kind: &str, licence: &str) -> String {
+fn encode_ref(reference: &Value) -> String {
     use base64::Engine;
-    let reference = json!({
+    base64::engine::general_purpose::STANDARD.encode(reference.to_string())
+}
+
+fn asset_reference(source: &str, id: &str, name: &str, kind: &str, licence: &str) -> String {
+    encode_ref(&json!({
         "source": source,
         "id": id,
         "name": name,
         "kind": kind,
         "licence": licence,
-    });
-    base64::engine::general_purpose::STANDARD.encode(reference.to_string())
+    }))
 }
 
 fn decode_asset_ref(value: &str) -> Result<Value, String> {
@@ -1271,9 +1286,25 @@ fn pictures() -> Vec<(String, std::path::PathBuf)> {
     rows
 }
 
-/// The bytes a finder reference stands for, and a file name to declare them
-/// under. A forged or moved reference is a sentence, never a read.
-fn reference_bytes(reference: &Value) -> Result<(String, Vec<u8>), String> {
+/// One row's bytes, the name it declares under, and the media type the host
+/// already knows it by.
+struct Fetched {
+    name: String,
+    bytes: Vec<u8>,
+    mime: Option<&'static str>,
+}
+
+/// The secret a keyed source needs, from this host's own store. The agent
+/// never holds it.
+fn reference_credential(app: &Shared, source: &str) -> Option<String> {
+    crate::assets::stock(source)
+        .and_then(|stock| stock.requires)
+        .and_then(|id| app.credentials.get(id))
+}
+
+/// The bytes a finder reference stands for. A forged or moved reference is a
+/// sentence, never a read.
+fn reference_bytes(app: &Shared, reference: &Value) -> Result<Fetched, String> {
     let source = reference
         .get("source")
         .and_then(Value::as_str)
@@ -1282,6 +1313,18 @@ fn reference_bytes(reference: &Value) -> Result<(String, Vec<u8>), String> {
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if crate::assets::stock(source).is_some() {
+        let credential = reference_credential(app, source);
+        let (bytes, mime, name) = crate::assets::bytes_with(source, id, credential.as_deref())
+            .ok_or_else(|| {
+            "That row is a preset, not a file this host can import.".to_owned()
+        })??;
+        return Ok(Fetched {
+            name,
+            bytes,
+            mime: Some(mime),
+        });
+    }
     match source {
         "pictures" => {
             let root = pictures_root().ok_or("This PC has no Pictures folder.")?;
@@ -1298,21 +1341,94 @@ fn reference_bytes(reference: &Value) -> Result<(String, Vec<u8>), String> {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "picture".to_owned());
             let bytes = std::fs::read(&path).map_err(|_| NOT_A_PICTURE.to_owned())?;
-            Ok((name, bytes))
+            Ok(Fetched {
+                name,
+                bytes,
+                mime: None,
+            })
         }
         "wallpaper-engine" => {
             let (bytes, _) = crate::wallpaper_engine::bytes(id, true)
                 .ok_or("That wallpaper has no preview to import.")?;
-            Ok((format!("wallpaper-{id}.jpg"), bytes))
+            Ok(Fetched {
+                name: format!("wallpaper-{id}.jpg"),
+                bytes,
+                mime: Some("image/jpeg"),
+            })
         }
         _ => Err("That assetRef names a source this host does not serve.".to_owned()),
     }
 }
 
-fn search_assets(args: &Value) -> Result<Value, String> {
-    let query = text(args, "query")
-        .ok_or_else(|| "search_assets needs a query.".to_owned())?
-        .to_ascii_lowercase();
+/// A stock row as the agent carries it: everything a later import needs to
+/// declare the asset travels in the opaque ref.
+fn stock_row(source: &str, result: &Value) -> Value {
+    let field = |key: &str| result.get(key).and_then(Value::as_str).unwrap_or_default();
+    let id = field("id");
+    let name = field("name");
+    let kind = field("kind");
+    let licence = field("licence");
+    let source_url = field("sourceUrl");
+    let cut = result
+        .get("font")
+        .and_then(|font| font.get("cuts"))
+        .and_then(Value::as_array)
+        .and_then(|cuts| cuts.first());
+    let preview = match field("preview") {
+        "" => cut
+            .and_then(|cut| cut.get("previewUrl"))
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        own => own,
+    };
+    let font = cut.map(|cut| {
+        let mut font = json!({
+            "family": cut.get("family").cloned().unwrap_or(Value::Null),
+            "weight": cut.get("weight").cloned().unwrap_or(Value::Null),
+            "style": cut.get("style").cloned().unwrap_or(Value::Null),
+            "format": cut.get("format").cloned().unwrap_or(Value::Null),
+        });
+        if let Some(subset) = cut.get("subset") {
+            font["subset"] = subset.clone();
+        }
+        font
+    });
+    let mut reference = json!({
+        "source": source,
+        "id": id,
+        "name": name,
+        "kind": kind,
+        "preview": preview,
+        "licence": licence,
+        "sourceUrl": source_url,
+    });
+    if let Some(subtitle) = result.get("subtitle") {
+        reference["subtitle"] = subtitle.clone();
+    }
+    if let Some(font) = &font {
+        reference["font"] = font.clone();
+    }
+    let mut row = json!({
+        "assetRef": encode_ref(&reference),
+        "id": format!("{source}:{id}"),
+        "name": name,
+        "kind": kind,
+        "preview": preview,
+        "licence": licence,
+        "sourceUrl": source_url,
+    });
+    for key in ["subtitle", "font"] {
+        if let Some(value) = reference.get(key) {
+            row[key] = value.clone();
+        }
+    }
+    row
+}
+
+fn search_assets(app: &Shared, args: &Value) -> Result<Value, String> {
+    let query = text(args, "query").ok_or_else(|| "search_assets needs a query.".to_owned())?;
+    let folded = query.to_ascii_lowercase();
+    let page = args.get("page").and_then(Value::as_u64).unwrap_or(1).max(1) as u32;
     let enabled: Vec<String> = args
         .get("sourceIds")
         .and_then(Value::as_array)
@@ -1322,8 +1438,17 @@ fn search_assets(args: &Value) -> Result<Value, String> {
                 .map(str::to_owned)
                 .collect()
         })
-        .unwrap_or_else(|| vec!["pictures".to_owned(), "wallpaper-engine".to_owned()]);
-    let matches = |name: &str| name.to_ascii_lowercase().contains(&query);
+        .unwrap_or_else(|| {
+            let mut ids = vec!["pictures".to_owned(), "wallpaper-engine".to_owned()];
+            ids.extend(
+                crate::assets::STOCKS
+                    .iter()
+                    .map(|stock| stock.id.to_owned()),
+            );
+            ids
+        });
+    let matches =
+        |name: &str| folded.is_empty() || name.to_ascii_lowercase().contains(folded.as_str());
 
     let mut pages = Vec::new();
     if enabled.iter().any(|id| id == "pictures") {
@@ -1377,29 +1502,84 @@ fn search_assets(args: &Value) -> Result<Value, String> {
             "totalPages": 1,
         }));
     }
+    for id in &enabled {
+        let Some(stock) = crate::assets::stock(id) else {
+            continue;
+        };
+        // A listing-only body has no search of its own.
+        if stock.body == "wallpaper-engine" {
+            continue;
+        }
+        let credential = reference_credential(app, id);
+        match crate::assets::search_with(id, &query, page, credential.as_deref()) {
+            Ok(answer) => pages.push(json!({
+                "source": stock.id,
+                "results": answer
+                    .results
+                    .iter()
+                    .map(|result| stock_row(stock.id, result))
+                    .collect::<Vec<_>>(),
+                "totalPages": answer.total_pages,
+            })),
+            // One source that cannot answer is one reported page, not a
+            // failed search: the others this call asked for still arrive.
+            Err(message) => pages.push(json!({
+                "source": stock.id,
+                "results": [],
+                "totalPages": 1,
+                "failure": {
+                    "reason": "failed",
+                    "message": message,
+                    "credential": stock.requires,
+                },
+            })),
+        }
+    }
     Ok(json!({"pages": pages}))
 }
 
 /// One finder row's picture as MCP image content. A format no image content
 /// type carries is a sentence rather than a wrong label.
-fn preview_asset(args: &Value) -> Result<Value, String> {
+fn preview_asset(app: &Shared, args: &Value) -> Result<Value, String> {
     use base64::Engine;
     let encoded =
         text(args, "assetRef").ok_or_else(|| "preview_asset needs an assetRef.".to_owned())?;
     let reference = decode_asset_ref(&encoded)?;
-    let (name, bytes) = reference_bytes(&reference)?;
-    let (extension, _) = picture_kind(&name, &bytes).ok_or(NOT_A_PICTURE)?;
-    let mime = match extension {
-        "png" => "image/png",
-        "jpg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => return Err("That picture has no preview this surface can carry.".to_owned()),
+    let kind = reference
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let name = reference
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    // A font or a video is not a picture, so no fetch is spent finding that
+    // out.
+    if !matches!(kind, "image" | "svg" | "gif") {
+        return Err(format!(
+            "\"{name}\" is a {kind}, not an image this tool can preview."
+        ));
+    }
+    let fetched = reference_bytes(app, &reference)?;
+    let mime = match fetched.mime {
+        Some(mime) if mime.starts_with("image/") => mime,
+        _ => {
+            let (extension, _) =
+                picture_kind(&fetched.name, &fetched.bytes).ok_or(NOT_A_PICTURE)?;
+            match extension {
+                "png" => "image/png",
+                "jpg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "svg" => "image/svg+xml",
+                _ => return Err("That picture has no preview this surface can carry.".to_owned()),
+            }
+        }
     };
     Ok(json!({
         "content": [{
             "type": "image",
-            "data": base64::engine::general_purpose::STANDARD.encode(&bytes),
+            "data": base64::engine::general_purpose::STANDARD.encode(&fetched.bytes),
             "mimeType": mime,
         }],
         "isError": false,
@@ -1471,13 +1651,104 @@ fn remove_asset(app: &Shared, args: &Value) -> Result<Value, String> {
     })
 }
 
+/// A font row's face, as the declaration needs it. A row that cannot name its
+/// face is refused rather than declared half a face.
+fn import_font(
+    app: &Shared,
+    args: &Value,
+    fetched: Fetched,
+    reference: &Value,
+) -> Result<Value, String> {
+    use yunari_model::document::{
+        AssetKind, AssetLicense, AssetReference, FontFormat, FontStyle, TypeWeight,
+    };
+
+    let font = reference
+        .get("font")
+        .ok_or("That row declares no font face.")?;
+    let family = font
+        .get("family")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .ok_or("That font row has no family.")?;
+    let weight = match font.get("weight") {
+        Some(Value::Number(weight)) => weight.as_f64(),
+        Some(Value::String(weight)) => weight.parse::<f64>().ok(),
+        _ => None,
+    }
+    .ok_or("That font row has no usable weight.")?;
+    let style = match font.get("style").and_then(Value::as_str) {
+        Some("normal") => FontStyle::Normal,
+        Some("italic") => FontStyle::Italic,
+        _ => return Err("That font row has no usable style.".to_owned()),
+    };
+    let format = match font.get("format").and_then(Value::as_str) {
+        Some("woff2") => FontFormat::Woff2,
+        Some("woff") => FontFormat::Woff,
+        Some("ttf") => FontFormat::Ttf,
+        Some("otf") => FontFormat::Otf,
+        _ => return Err("That font row has no usable format.".to_owned()),
+    };
+    let field = |key: &str| {
+        reference
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let licence = field("licence");
+    let source_url = field("sourceUrl");
+    let subset = font
+        .get("subset")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    with_draft(app, args, |draft| {
+        let stem = asset_stem(family);
+        let mut id = stem.clone();
+        let mut n = 2;
+        while draft.document.assets.iter().any(|asset| asset.id == id) {
+            id = format!("{stem}-{n}");
+            n += 1;
+        }
+        let extension = format.extension();
+        let asset_path = format!("assets/{id}.{extension}");
+        let reference = AssetReference {
+            id: id.clone(),
+            kind: AssetKind::Font,
+            path: asset_path.clone(),
+            sha256: Some(yunari_library::sha256_hex(&fetched.bytes)),
+            source_url: source_url.clone(),
+            license: licence.map(|name| AssetLicense {
+                name: Some(name),
+                url: source_url,
+                attribution: None,
+            }),
+            family: Some(family.to_owned()),
+            weight: Some(TypeWeight::Number(weight)),
+            style: Some(style),
+            format: Some(format),
+            subset,
+        };
+        draft.document.assets.push(reference);
+        draft.assets.insert(asset_path, fetched.bytes);
+        Ok(json!({
+            "themeId": draft.document.id,
+            "assetId": id,
+            "kind": "font",
+            "family": family,
+            "format": extension,
+        }))
+    })
+}
+
 fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
     use yunari_model::document::{AssetKind, AssetReference};
 
-    let (name, bytes) = match (text(args, "assetRef"), text(args, "path")) {
-        (Some(reference), _) => {
-            let decoded = decode_asset_ref(&reference)?;
-            reference_bytes(&decoded)?
+    let (fetched, reference) = match (text(args, "assetRef"), text(args, "path")) {
+        (Some(encoded), _) => {
+            let decoded = decode_asset_ref(&encoded)?;
+            (reference_bytes(app, &decoded)?, Some(decoded))
         }
         (None, Some(path)) => {
             let meta = std::fs::metadata(&path).map_err(|error| format!("{path}: {error}"))?;
@@ -1489,15 +1760,34 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.to_owned());
-            (name, bytes)
+            (
+                Fetched {
+                    name,
+                    bytes,
+                    mime: None,
+                },
+                None,
+            )
         }
         (None, None) => return Err("import_asset needs an assetRef or a path.".to_owned()),
     };
-    let Some((extension, kind)) = picture_kind(&name, &bytes) else {
+    if fetched.bytes.len() as u64 > MAX_ASSET_BYTES {
+        return Err("That file is too large to import.".to_owned());
+    }
+    if fetched.bytes.is_empty() {
+        return Err("That file is empty.".to_owned());
+    }
+    if let Some(reference) = reference
+        .as_ref()
+        .filter(|reference| reference.get("font").is_some())
+    {
+        return import_font(app, args, fetched, reference);
+    }
+    let Some((extension, kind)) = picture_kind(&fetched.name, &fetched.bytes) else {
         return Err(NOT_A_PICTURE.to_owned());
     };
     if kind == "svg" {
-        let text = std::str::from_utf8(&bytes).map_err(|_| NOT_A_PICTURE.to_owned())?;
+        let text = std::str::from_utf8(&fetched.bytes).map_err(|_| NOT_A_PICTURE.to_owned())?;
         if !svg_is_safe(text) {
             return Err(
                 "That SVG carries a script or an outside reference, so it was not imported."
@@ -1511,7 +1801,7 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
         _ => AssetKind::Image,
     };
     with_draft(app, args, |draft| {
-        let stem = asset_stem(&name);
+        let stem = asset_stem(&fetched.name);
         let mut id = stem.clone();
         let mut n = 2;
         while draft.document.assets.iter().any(|asset| asset.id == id) {
@@ -1523,7 +1813,7 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
             id: id.clone(),
             kind,
             path: asset_path.clone(),
-            sha256: Some(yunari_library::sha256_hex(&bytes)),
+            sha256: Some(yunari_library::sha256_hex(&fetched.bytes)),
             source_url: None,
             license: None,
             family: None,
@@ -1533,7 +1823,7 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
             subset: None,
         };
         draft.document.assets.push(reference);
-        draft.assets.insert(asset_path, bytes);
+        draft.assets.insert(asset_path, fetched.bytes);
         Ok(json!({"themeId": draft.document.id, "assetId": id}))
     })
 }
@@ -2377,6 +2667,7 @@ mod tests {
 
     #[test]
     fn an_asset_reference_is_opaque_and_cannot_name_a_file_outside_its_source() {
+        let app = app();
         let reference = asset_reference(
             "pictures",
             "C:/Windows/win.ini",
@@ -2386,9 +2677,10 @@ mod tests {
         );
         let decoded = decode_asset_ref(&reference).expect("a reference");
         assert_eq!(decoded["source"], "pictures");
-        assert!(reference_bytes(&decoded).is_err());
+        assert!(reference_bytes(&app, &decoded).is_err());
         assert!(decode_asset_ref("not base64").is_err());
         assert!(decode_asset_ref("aGVsbG8=").is_err());
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 
     #[test]
@@ -2439,6 +2731,131 @@ mod tests {
         .expect("a tool")
         .expect("a freed asset");
         assert_eq!(removed["removed"], asset_id);
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn the_source_list_names_every_stock_this_host_serves() {
+        let sources = call(&app(), "list_asset_sources", &json!({}))
+            .expect("a tool")
+            .expect("a list")["sources"]
+            .as_array()
+            .expect("sources")
+            .clone();
+        let names: Vec<&str> = sources
+            .iter()
+            .map(|source| source["id"].as_str().unwrap_or_default())
+            .collect();
+        assert!(names.contains(&"pictures"));
+        assert!(names.contains(&"curated-fonts"));
+        assert!(names.contains(&"google-fonts"));
+        let unsplash = sources
+            .iter()
+            .find(|source| source["id"] == "unsplash")
+            .expect("Unsplash");
+        assert_eq!(unsplash["requires"], "unsplash");
+        assert_eq!(unsplash["category"], "image");
+        let curated = sources
+            .iter()
+            .find(|source| source["id"] == "curated-fonts")
+            .expect("the curated catalogue");
+        assert_eq!(curated["body"], "font-picker");
+    }
+
+    #[test]
+    fn a_stock_search_carries_a_ref_a_font_import_can_declare() {
+        let app = app();
+        let answer = call(
+            &app,
+            "search_assets",
+            &json!({"query": "fira code", "sourceIds": ["curated-fonts"]}),
+        )
+        .expect("a tool")
+        .expect("a page");
+        let pages = answer["pages"].as_array().expect("pages");
+        assert_eq!(pages.len(), 1);
+        let page = &pages[0];
+        assert_eq!(page["source"], "curated-fonts");
+        let rows = page["results"].as_array().expect("rows");
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == "Fira Code")
+            .expect("the Fira Code family");
+        assert!(
+            row["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("curated-fonts:cut:")
+        );
+        assert_eq!(row["kind"], "font");
+        let decoded = decode_asset_ref(row["assetRef"].as_str().expect("a ref")).expect("a ref");
+        assert_eq!(decoded["source"], "curated-fonts");
+        assert_eq!(decoded["font"]["family"], "Fira Code");
+        assert_eq!(decoded["font"]["format"], "woff2");
+        assert!(decoded["sourceUrl"].as_str().unwrap().ends_with(".woff2"));
+
+        // The declaration itself needs no network: the bytes are supplied.
+        let theme_id = draft_id(&app);
+        let imported = import_font(
+            &app,
+            &json!({"themeId": theme_id}),
+            Fetched {
+                name: "fira-code.woff2".to_owned(),
+                bytes: vec![1, 2, 3],
+                mime: Some("font/woff2"),
+            },
+            &decoded,
+        )
+        .expect("a font declaration");
+        assert_eq!(imported["kind"], "font");
+        assert_eq!(imported["format"], "woff2");
+        let draft = app.drafts.lock().unwrap();
+        let asset = draft
+            .draft(Some(&theme_id))
+            .expect("the draft")
+            .document
+            .assets
+            .iter()
+            .find(|asset| asset.id == imported["assetId"].as_str().unwrap())
+            .expect("the asset");
+        assert_eq!(asset.kind, yunari_model::document::AssetKind::Font);
+        assert_eq!(asset.family.as_deref(), Some("Fira Code"));
+        assert_eq!(asset.path, format!("assets/{}.woff2", asset.id));
+        drop(draft);
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn a_keyed_source_without_its_key_is_a_failure_page_not_a_failed_search() {
+        let app = app();
+        let answer = call(
+            &app,
+            "search_assets",
+            &json!({"query": "mountain", "sourceIds": ["unsplash"]}),
+        )
+        .expect("a tool")
+        .expect("a page");
+        let page = &answer["pages"][0];
+        assert_eq!(page["source"], "unsplash");
+        assert!(page["results"].as_array().unwrap().is_empty());
+        assert_eq!(page["failure"]["credential"], "unsplash");
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn a_font_row_has_no_picture_to_preview() {
+        let app = app();
+        let result = crate::assets::search("curated-fonts", "", 1)
+            .expect("the built-in catalogue")
+            .results
+            .into_iter()
+            .next()
+            .expect("a row");
+        let row = stock_row("curated-fonts", &result);
+        let refused = call(&app, "preview_asset", &json!({"assetRef": row["assetRef"]}))
+            .expect("a tool")
+            .unwrap_err();
+        assert!(refused.contains("not an image"), "{refused}");
         std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 }
