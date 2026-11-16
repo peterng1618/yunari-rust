@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::*;
 use yunari_host::credentials::Credentials;
-use yunari_host::displays::DisplayKind;
+use yunari_host::displays::{DisplayKind, DisplayShape};
 use yunari_host::hosting::Hosting;
 use yunari_host::http::Shared;
 use yunari_providers::weather::WeatherSettings;
@@ -16,6 +16,15 @@ pub struct MonitorRow {
     pub uuid: String,
     pub label: String,
     pub shown: bool,
+    /// What the record says about the display it drives, when one follows it.
+    pub record: Option<DisplayRow>,
+}
+
+/// The presentation a local display record holds.
+pub struct DisplayRow {
+    pub id: String,
+    pub shape: DisplayShape,
+    pub rotation: u16,
 }
 
 /// The switches, read once when the dialog opens.
@@ -197,14 +206,55 @@ pub fn monitor_rows(host: Option<&Shared>, cx: &App) -> Vec<MonitorRow> {
                 f32::from(bounds.size.width).round() as i64,
                 f32::from(bounds.size.height).round() as i64
             );
-            let shown = !uuid.is_empty()
-                && records.iter().any(|record| {
-                    record.kind == DisplayKind::Local
-                        && record.monitor.as_deref() == Some(uuid.as_str())
+            let record = (!uuid.is_empty())
+                .then(|| {
+                    records.iter().find(|record| {
+                        record.kind == DisplayKind::Local
+                            && record.monitor.as_deref() == Some(uuid.as_str())
+                    })
+                })
+                .flatten()
+                .map(|record| DisplayRow {
+                    id: record.id.clone(),
+                    shape: record.shape.unwrap_or(DisplayShape::Rect),
+                    rotation: record.rotation.unwrap_or(0),
                 });
-            MonitorRow { uuid, label, shown }
+            MonitorRow {
+                uuid,
+                label,
+                shown: record.is_some(),
+                record,
+            }
         })
         .collect()
+}
+
+/// The presentation one click on a shape or rotation row makes. A rectangle
+/// turns in quarter steps and keeps only a rotation it accepts; a circle turns
+/// in fifteen-degree steps.
+pub fn next_presentation(
+    shape: DisplayShape,
+    rotation: u16,
+    switch_shape: bool,
+) -> (DisplayShape, u16) {
+    if switch_shape {
+        return match shape {
+            DisplayShape::Rect => (DisplayShape::Circle, rotation),
+            DisplayShape::Circle => (
+                DisplayShape::Rect,
+                if rotation.is_multiple_of(90) {
+                    rotation
+                } else {
+                    0
+                },
+            ),
+        };
+    }
+    let rotation = match shape {
+        DisplayShape::Rect => (rotation + 90) % 360,
+        DisplayShape::Circle => (rotation + 15) % 360,
+    };
+    (shape, rotation)
 }
 
 /// Writes the LAN choice where the host reads it on its next bind.
@@ -411,6 +461,47 @@ pub fn view(dialog: &SettingsDialog, cx: &mut Context<EditorWindow>) -> impl Int
                     this.toggle_monitor(&uuid, cx);
                 })),
         );
+        // A record's shape and rotation are what the panel follows, so both
+        // are one click away from the monitor that holds it.
+        if let Some(record) = &monitor.record {
+            let shape_id = record.id.clone();
+            let shape = match record.shape {
+                DisplayShape::Rect => "Rectangle",
+                DisplayShape::Circle => "Circle",
+            };
+            column = column.child(
+                div()
+                    .id(("settings-shape", index))
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(0xe8e8ea))
+                    .bg(rgb(0x22222a))
+                    .child(format!("Shape: {shape}"))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.change_presentation(&shape_id, true, cx);
+                    })),
+            );
+            let turn_id = record.id.clone();
+            let rotation = record.rotation;
+            column = column.child(
+                div()
+                    .id(("settings-rotation", index))
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(0xe8e8ea))
+                    .bg(rgb(0x22222a))
+                    .child(format!("Rotation: {rotation}°"))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.change_presentation(&turn_id, false, cx);
+                    })),
+            );
+        }
     }
     let mut footer = div()
         .flex()
@@ -455,8 +546,8 @@ mod tests {
     use yunari_host::hosting::Hosting;
 
     use super::{
-        read_weather, read_weather_key_set, set_device_slot, set_lan, set_weather_key,
-        weather_key_id, write_weather,
+        DisplayShape, next_presentation, read_weather, read_weather_key_set, set_device_slot,
+        set_lan, set_weather_key, weather_key_id, write_weather,
     };
 
     fn temp_settings(name: &str) -> PathBuf {
@@ -577,5 +668,32 @@ mod tests {
             "an unknown slot"
         );
         std::fs::remove_dir_all(&settings).ok();
+    }
+
+    #[test]
+    fn a_shape_switch_drops_a_rotation_the_shape_cannot_hold() {
+        // A rectangle keeps only quarter turns.
+        assert_eq!(
+            next_presentation(DisplayShape::Circle, 45, true),
+            (DisplayShape::Rect, 0)
+        );
+        assert_eq!(
+            next_presentation(DisplayShape::Circle, 90, true),
+            (DisplayShape::Rect, 90)
+        );
+        // A turn steps by the shape's own increment and wraps.
+        assert_eq!(
+            next_presentation(DisplayShape::Rect, 270, false),
+            (DisplayShape::Rect, 0)
+        );
+        assert_eq!(
+            next_presentation(DisplayShape::Circle, 345, false),
+            (DisplayShape::Circle, 0)
+        );
+        // Every step is one the record's shape accepts.
+        for start in [0_u16, 15, 90, 270, 345] {
+            let (shape, rotation) = next_presentation(DisplayShape::Circle, start, false);
+            assert!(shape.accepts_rotation(rotation));
+        }
     }
 }

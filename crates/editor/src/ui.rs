@@ -6,6 +6,7 @@
 
 pub mod asset_finder;
 pub mod library_dialog;
+pub mod mcp_dialog;
 pub mod menus;
 pub mod path_preset_dialog;
 pub mod prompt;
@@ -40,6 +41,7 @@ use yunari_render_raster::Images;
 
 use self::asset_finder::AssetFinder;
 use self::library_dialog::LibraryDialog;
+use self::mcp_dialog::McpDialog;
 use self::menus::Command;
 use self::path_preset_dialog::PathPresetDialog;
 use self::prompt::{Outcome, Prompt};
@@ -110,6 +112,8 @@ enum Overlay {
     AssetFinder(AssetFinder),
     PathPresets(PathPresetDialog),
     Typography(TypographyDialog),
+    /// How an agent reaches this host.
+    Mcp(McpDialog),
     Settings(Box<SettingsDialog>),
     Store(StoreDialog),
     Rename(Prompt),
@@ -376,6 +380,12 @@ impl EditorWindow {
             }
             Command::TypographyPreset => {
                 self.overlay = Some(Overlay::Typography(TypographyDialog::new()));
+            }
+            Command::Mcp => {
+                let port = self.host.as_ref().map_or(0, |host| {
+                    host.bound_port.load(std::sync::atomic::Ordering::Relaxed)
+                });
+                self.overlay = Some(Overlay::Mcp(McpDialog::new(port)));
             }
             Command::Store => self.open_store(window, cx),
             Command::ImportAsset => {
@@ -734,6 +744,44 @@ impl EditorWindow {
         cx.notify();
     }
 
+    /// Switches a local display record's shape, or turns it a step. The
+    /// rotation stays one the shape accepts: a rectangle turns in quarter
+    /// steps, a circle in fifteen-degree steps.
+    fn change_presentation(&mut self, id: &str, shape: bool, cx: &mut Context<Self>) {
+        use yunari_host::displays::DisplayShape;
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let Ok(mut displays) = host.displays.lock() else {
+            return;
+        };
+        let Some(record) = displays.get(id) else {
+            return;
+        };
+        let current = record.shape.unwrap_or(DisplayShape::Rect);
+        let rotation = record.rotation.unwrap_or(0);
+        let (shape, rotation) = settings_dialog::next_presentation(current, rotation, shape);
+        let message = match displays.patch(id, None, Some(shape), Some(rotation)) {
+            Ok(record) => format!(
+                "{}: {}°, {}.",
+                record.label,
+                rotation,
+                match shape {
+                    DisplayShape::Rect => "rectangle",
+                    DisplayShape::Circle => "circle",
+                }
+            ),
+            Err(refusal) => refusal.0,
+        };
+        drop(displays);
+        let monitors = settings_dialog::monitor_rows(Some(&host), cx);
+        if let Some(Overlay::Settings(dialog)) = &mut self.overlay {
+            dialog.monitors = monitors;
+            dialog.message = Some(message);
+        }
+        cx.notify();
+    }
+
     /// The label the settings row shows for a monitor uuid.
     fn overlay_settings_monitor_label(&self, uuid: &str) -> Option<String> {
         let Overlay::Settings(dialog) = self.overlay.as_ref()? else {
@@ -1056,6 +1104,24 @@ impl EditorWindow {
     /// import so the same sniffing and SVG refusal apply.
     fn place_asset(&mut self, choice: &asset_finder::Choice, cx: &mut Context<Self>) {
         self.overlay = None;
+        if let asset_finder::Pick::Project(id) = &choice.pick {
+            self.status = Some(match yunari_host::wallpaper_engine::project(id) {
+                answer if answer["ok"] == true => {
+                    let name = answer["name"].as_str().unwrap_or(id);
+                    if answer["reused"] == true {
+                        Status::ok(format!("Already unpacked: {name}"))
+                    } else {
+                        Status::ok(format!("Unpacked {name}; open it in Wallpaper Engine."))
+                    }
+                }
+                answer if answer["reason"] == "no-install" => {
+                    Status::error("Wallpaper Engine is not installed on this PC.")
+                }
+                _ => Status::error("That wallpaper's scene could not be unpacked."),
+            });
+            cx.notify();
+            return;
+        }
         match asset_finder::bytes_of(&choice.pick) {
             Ok((name, bytes)) => match self.editor.import_asset(&name, bytes) {
                 Ok(id) => {
@@ -2289,6 +2355,7 @@ impl EditorWindow {
             | Overlay::AssetFinder(_)
             | Overlay::PathPresets(_)
             | Overlay::Typography(_)
+            | Overlay::Mcp(_)
             | Overlay::Settings(_)
             | Overlay::Store(_) => {
                 if keystroke.key == "escape" {
@@ -2757,6 +2824,7 @@ impl EditorWindow {
             Some(Overlay::Typography(dialog)) => {
                 typography_dialog::view(dialog, cx).into_any_element()
             }
+            Some(Overlay::Mcp(dialog)) => mcp_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {

@@ -13,6 +13,8 @@ pub enum Command {
     Widgets,
     AssetFinder,
     Settings,
+    /// The page that says how an agent reaches this host.
+    Mcp,
     Undo,
     Redo,
     AddRectangle,
@@ -52,7 +54,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 47] = [
+    pub const ALL: [Self; 48] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -64,6 +66,7 @@ impl Command {
         Self::Widgets,
         Self::AssetFinder,
         Self::Settings,
+        Self::Mcp,
         Self::Undo,
         Self::Redo,
         Self::AddRectangle,
@@ -115,6 +118,7 @@ impl Command {
             Self::Widgets => "Widgets…",
             Self::AssetFinder => "Asset finder…",
             Self::Settings => "Settings…",
+            Self::Mcp => "Agent tools…",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::AddRectangle => "Rectangle",
@@ -167,6 +171,7 @@ impl Command {
             Self::Widgets => "Ctrl+Shift+W",
             Self::AssetFinder => "Ctrl+Shift+A",
             Self::Settings => "Ctrl+,",
+            Self::Mcp => "",
             Self::Undo => "Ctrl+Z",
             Self::Redo => "Ctrl+Shift+Z",
             Self::AddRectangle => "R",
