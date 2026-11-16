@@ -599,7 +599,9 @@ Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-6-providers.md`.
   source's SMTC PowerShell helper, content-addressed artwork cache), custom HTTP
   sources (`sources.json`, RFC 6901 pointers) and the running game (foreground
   window plus the installed-game catalogue — Steam, Epic, GOG, itch and Xbox —
-  with Steam's cached box art). A key nothing can
+  with Steam's cached box art, and a Steam store search by executable name for
+  a game no catalogue claims, whose portrait is cached after a JPEG/PNG magic
+  check). A key nothing can
   read is `missing` with an owner-actionable sentence, never a zero.
 - Media and game helpers share one PowerShell runner (`yunari_providers::winps`),
   so the line cap, the encoded command and the process kill exist once. Helper
@@ -695,7 +697,7 @@ recorded product decision.
 | 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
 | 23 | Kraken paletted mode B | Deferred | Comes with video |
 | 24 | Wallpaper Engine Workshop library and previews | Deferred | No provider; the asset finder that would show them is also deferred |
-| 25 | Steam presence and metadata | Partial | The foreground game is named from Steam's local library plus Epic manifests, GOG registry keys, itch app folders and Xbox packages; Steam's cached box art is served, other launchers' artwork and store metadata are deferred. The engine-window classifier is not ported |
+| 25 | Steam presence and metadata | Met | The foreground game is named from Steam's local library plus Epic manifests, GOG registry keys, itch app folders and Xbox packages. A game no catalogue claims is looked up by executable name on the Steam store (app-only results, edition-insensitive comparison, `game-metadata.json` cache with a ten-minute failure backoff and 500 entries); its portrait is downloaded once and served from the settings folder. `game.artwork` prefers Steam's cached box art, then the store cover |
 | 26 | Weather backends and places | Met | Open-Meteo, WeatherAPI.com and OpenWeatherMap with faithful condition-code tables, the place from `weather.json`, Windows location as the fallback (a 24 h fix, asked through the embedded WinRT helper), and per-backend attribution. Backend keys live in the protected store and Settings names them. A stream's `?lang=` selects the German, Vietnamese or English condition and Windows-location words; a place the author chose is never translated |
 | 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
 | 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | GET sources with pointers, plain-text `headers` and `query` (both validated, a query value percent-encoded so it cannot add a parameter), and a per-source `timeoutMs` (500 ms–30 s). Paged sources fetch every page in order and merge them, failing whole when one page fails. `auth` kinds `none`/`bearer`/`basic`/`header`/`query` name a `credentialId` in the protected store; the secret is resolved at fetch time and a missing one is a reason, never a request without it. A user-authored address is resolved and refused when it lands on link-local/metadata or on this PC's own network (private, loopback, CGNAT; IPv4 inside mapped, NAT64, 6to4 and Teredo forms decoded). Redirects are not followed, so no credential ever rides a hop. Gap: the name is resolved then dialled by name, so a name that changes its answer in between is not caught |

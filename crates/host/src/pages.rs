@@ -171,14 +171,21 @@ pub fn favicon() -> Response {
     response
 }
 
-/// The cover Steam cached for an installed app. The app id is the whole
-/// allow-list, and the file is only ever read from Steam's own cache.
-pub fn game_artwork(app_id: &str) -> Response {
-    let Some(root) = yunari_providers::game::steam::root() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(path) = yunari_providers::game::steam::box_art(&root, app_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+/// A game's cover: either a name the store cache wrote, in the settings folder,
+/// or a Steam app id whose local cache file Steam already has. Both names are
+/// allow-listed, so no other path is ever read.
+pub fn game_artwork(settings_dir: &std::path::Path, name: &str) -> Response {
+    let path = match store_cover_name(name) {
+        Some(cover) => settings_dir.join(cover),
+        None => {
+            let Some(root) = yunari_providers::game::steam::root() else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            let Some(path) = yunari_providers::game::steam::box_art(&root, name) else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            path
+        }
     };
     let Ok(bytes) = std::fs::read(&path) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -202,6 +209,16 @@ pub fn game_artwork(app_id: &str) -> Response {
         HeaderValue::from_static("public, max-age=3600"),
     );
     response
+}
+
+/// `store-<appid>.jpg` or `.png` is the only name the store cache may have
+/// written; anything else is a Steam app id, checked by `box_art`.
+fn store_cover_name(name: &str) -> Option<&str> {
+    let id = name
+        .strip_prefix("store-")?
+        .strip_suffix(".jpg")
+        .or_else(|| name.strip_prefix("store-")?.strip_suffix(".png"))?;
+    (!id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())).then_some(name)
 }
 
 fn html(body: &'static str) -> Response {

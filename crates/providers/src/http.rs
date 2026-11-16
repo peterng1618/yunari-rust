@@ -65,8 +65,26 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<String, String> {
     })
 }
 
+/// One GET, as its body bytes, for a picture the host will cache.
+pub fn get_bytes(url: &str, timeout_ms: u64, limit: u64) -> Result<Vec<u8>, String> {
+    bytes_with(
+        &Get {
+            url: url.to_owned(),
+            headers: Vec::new(),
+            timeout_ms,
+            public_only: false,
+        },
+        limit,
+    )
+}
+
 /// One GET, with the source's own headers.
 pub fn get_with(request: &Get) -> Result<String, String> {
+    let bytes = bytes_with(request, MAX_BODY_BYTES)?;
+    String::from_utf8(bytes).map_err(|_| "the answer is not UTF-8 text.".to_owned())
+}
+
+fn bytes_with(request: &Get, limit: u64) -> Result<Vec<u8>, String> {
     let url = request.url.as_str();
     if let Some(refusal) = refusal(url) {
         return Err(refusal);
@@ -96,8 +114,8 @@ pub fn get_with(request: &Get) -> Result<String, String> {
     response
         .body_mut()
         .with_config()
-        .limit(MAX_BODY_BYTES)
-        .read_to_string()
+        .limit(limit)
+        .read_to_vec()
         .map_err(|error| match error {
             ureq::Error::BodyExceedsLimit(_) => {
                 "the server answered more than it should.".to_owned()

@@ -874,7 +874,7 @@ async fn game_artwork(
         )
             .into_response();
     }
-    crate::pages::game_artwork(&app_id)
+    crate::pages::game_artwork(&app.config.settings_dir(), &app_id)
 }
 
 async fn manifest() -> Response {
@@ -1226,6 +1226,22 @@ mod tests {
         // An id that is not an app id is a 404, never a filesystem probe.
         let (status, _) = ask(app.clone(), "/api/game/artwork/..%2Fsecrets", here).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        // A store cover is only its own allow-listed file name.
+        let (status, _) = ask(
+            app.clone(),
+            "/api/game/artwork/store-..%2Fsecrets.jpg",
+            here,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        std::fs::create_dir_all(app.config.settings_dir()).unwrap();
+        std::fs::write(
+            app.config.settings_dir().join("store-70.jpg"),
+            [0xff, 0xd8, 0xff, 1],
+        )
+        .unwrap();
+        let (status, _) = ask(app.clone(), "/api/game/artwork/store-70.jpg", here).await;
+        assert_eq!(status, StatusCode::OK);
         // A phone reads it through its credential first.
         let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
         let (status, _) = ask(app, "/api/game/artwork/730", phone).await;

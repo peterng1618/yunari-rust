@@ -2,15 +2,18 @@
 //!
 //! One PowerShell helper reports the foreground process once a second while a
 //! display binds a `game.*` key; the installed-game catalogue is read once per
-//! demand window. A match names the game and, for a Steam title, serves the
-//! cover Steam already cached — never a network fetch.
+//! demand window. A match names the game and serves its cover: Steam's local
+//! cache first, then the store's portrait, cached on disk once downloaded.
 //!
 //! ponytail: the engine-window classifier is not ported; a foreground window
-//! that no install folder claims is `missing`, not the previous game.
+//! that no install folder claims gets a store lookup by its file name, and a
+//! store that answers nothing is `missing`, not the previous game.
 
 pub mod catalogue;
+pub mod name_match;
 pub mod script;
 pub mod steam;
+pub mod store_metadata;
 pub mod vdf;
 
 use std::path::{Path, PathBuf};
@@ -31,6 +34,8 @@ pub const WAITING_GAME_MESSAGE: &str = "Waiting for the game helper.";
 pub const NO_GAME_MESSAGE: &str = "No game process is running.";
 pub const NO_PROCESS_NAME_MESSAGE: &str = "The foreground process could not be named.";
 pub const NO_ARTWORK_MESSAGE: &str = "Game artwork is not available yet.";
+pub const NO_STORE_MATCH_MESSAGE: &str = "No store match for this app.";
+pub const STORE_UNAVAILABLE_MESSAGE: &str = "The game store could not be reached.";
 pub const HELPER_STOPPED_MESSAGE: &str = "The game helper stopped reporting.";
 pub const START_FAILURE: &str = "The game helper could not be started: ";
 
@@ -95,6 +100,9 @@ struct State {
     last_demand_ms: Option<u64>,
     retry_at_ms: u64,
     last_line_ms: u64,
+    /// Absent when the host could not give the provider a settings folder; the
+    /// provider then answers from local evidence alone.
+    store: Option<store_metadata::Store>,
 }
 
 pub struct GameProvider {
@@ -129,6 +137,12 @@ impl GameProvider {
             retry_ms,
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// Gives the provider a name-to-store index, cached in `directory`.
+    pub fn with_store(mut self, store: store_metadata::Store) -> Self {
+        self.state.get_mut().expect("the game state").store = Some(store);
+        self
     }
 
     /// Ends the helper; a later sample starts it again.
@@ -253,9 +267,15 @@ impl Provider for GameProvider {
         self.collect(&mut state, now_ms);
         self.refresh_library(&mut state, now_ms);
 
+        let resolved = resolve(
+            &mut state,
+            wanted
+                .iter()
+                .any(|key| matches!(key.as_str(), "game.name" | "game.artwork")),
+        );
         Ok(wanted
             .into_iter()
-            .map(|key| reading_of(&state, key))
+            .map(|key| reading_of(&state, key, &resolved))
             .collect())
     }
 
@@ -274,9 +294,53 @@ fn matched_app(state: &State) -> Option<&Game> {
     catalogue::app_for(&library.games, Path::new(executable))
 }
 
-fn reading_of(state: &State, key: &str) -> Reading {
+/// What this poll knows about the foreground game.
+enum Resolved {
+    /// A game whose install folder the local catalogue owns.
+    Installed {
+        name: String,
+        steam_app_id: Option<String>,
+    },
+    /// The store's answer for a game no catalogue claims.
+    Store(store_metadata::Lookup),
+    /// Nothing names it.
+    NoGame,
+}
+
+/// Local evidence first: a catalogue entry already has the right name and, for
+/// Steam, a cover on disk. Only a name the catalogue cannot place is searched,
+/// and a search costs two requests at most because the store caches its answer.
+fn resolve(state: &mut State, wants_store: bool) -> Resolved {
+    let installed = matched_app(state).map(|app| (app.name.clone(), app.steam_app_id.clone()));
+    if let Some((name, steam_app_id)) = installed {
+        return Resolved::Installed { name, steam_app_id };
+    }
+    if !wants_store {
+        return Resolved::NoGame;
+    }
+    let Some(store) = state.store.as_mut() else {
+        return Resolved::NoGame;
+    };
+    let Some(name) = state
+        .foreground
+        .as_ref()
+        .and_then(Foreground::executable)
+        .and_then(|file| {
+            Path::new(file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.is_empty())
+        })
+        .map(str::to_owned)
+    else {
+        return Resolved::NoGame;
+    };
+    Resolved::Store(store.lookup(&name, jiff::Timestamp::now().as_millisecond() as u64))
+}
+
+fn reading_of(state: &State, key: &str, resolved: &Resolved) -> Reading {
     let failure = state.failure.as_deref();
-    let app = matched_app(state);
+    let named = matches!(resolved, Resolved::Installed { .. } | Resolved::Store(_));
 
     match key {
         "game.app" => match state.foreground.as_ref().and_then(Foreground::executable) {
@@ -286,37 +350,62 @@ fn reading_of(state: &State, key: &str) -> Reading {
         // A fullscreen D3D app is running even when its install folder is not
         // one Steam wrote; the name stays a gap.
         "game.running" => {
-            let running =
-                app.is_some() || state.foreground.as_ref().is_some_and(|f| f.d3d_fullscreen);
+            let running = named || state.foreground.as_ref().is_some_and(|f| f.d3d_fullscreen);
             Reading::text(key, if running { "on" } else { "off" })
         }
-        _ => {
-            let Some(app) = app else {
-                return match failure {
-                    Some(reason) => Reading::failed(key, reason.to_owned()),
-                    None => Reading::missing(key, NO_GAME_MESSAGE),
-                };
-            };
-            if key == "game.name" {
-                return Reading::text(key, app.name.clone());
+        "game.name" => match resolved {
+            Resolved::Installed { name, .. } => Reading::text(key, name.clone()),
+            Resolved::Store(store_metadata::Lookup::Match { name, .. }) => {
+                Reading::text(key, name.clone())
             }
-            // The cover is named only when Steam's cache actually holds it, so
-            // a display never draws a broken picture. Other launchers store
-            // their art where this build does not look yet.
-            let app_id = app.steam_app_id.as_deref();
-            let cover = match (
-                state.library.as_ref().and_then(|l| l.root.as_deref()),
-                app_id,
-            ) {
-                (Some(root), Some(app_id)) => steam::box_art(root, app_id).is_some(),
-                _ => false,
-            };
-            if let (true, Some(app_id)) = (cover, app_id) {
-                Reading::text(key, format!("/api/game/artwork/{app_id}"))
-            } else {
+            Resolved::Store(store_metadata::Lookup::None) => {
+                Reading::missing(key, NO_STORE_MATCH_MESSAGE)
+            }
+            Resolved::Store(store_metadata::Lookup::Unavailable) => {
+                Reading::missing(key, STORE_UNAVAILABLE_MESSAGE)
+            }
+            Resolved::NoGame => match failure {
+                Some(reason) => Reading::failed(key, reason.to_owned()),
+                None => Reading::missing(key, NO_GAME_MESSAGE),
+            },
+        },
+        // The cover is named only when a file actually exists, so a display
+        // never draws a broken picture.
+        _ => match resolved {
+            // Steam's own cache, whatever the catalogue says; then the store's
+            // portrait, downloaded once and served by the host.
+            Resolved::Installed { steam_app_id, .. } => {
+                let cached = state
+                    .library
+                    .as_ref()
+                    .and_then(|library| library.root.as_deref())
+                    .zip(steam_app_id.as_deref())
+                    .and_then(|(root, app_id)| steam::box_art(root, app_id));
+                match (cached.is_some(), steam_app_id) {
+                    (true, Some(app_id)) => {
+                        Reading::text(key, format!("/api/game/artwork/{app_id}"))
+                    }
+                    _ => Reading::missing(key, NO_ARTWORK_MESSAGE),
+                }
+            }
+            Resolved::Store(store_metadata::Lookup::Match { id, .. }) => {
+                let cover = state.store.as_ref().and_then(|store| store.cover(*id));
+                match cover {
+                    Some(url) => Reading::text(key, url),
+                    None => Reading::missing(key, NO_ARTWORK_MESSAGE),
+                }
+            }
+            Resolved::Store(store_metadata::Lookup::None) => {
                 Reading::missing(key, NO_ARTWORK_MESSAGE)
             }
-        }
+            Resolved::Store(store_metadata::Lookup::Unavailable) => {
+                Reading::missing(key, STORE_UNAVAILABLE_MESSAGE)
+            }
+            Resolved::NoGame => match failure {
+                Some(reason) => Reading::failed(key, reason.to_owned()),
+                None => Reading::missing(key, NO_GAME_MESSAGE),
+            },
+        },
     }
 }
 
@@ -405,6 +494,50 @@ mod tests {
         fn sample(&self, names: &[&str], now_ms: u64) -> Vec<Reading> {
             self.provider.sample(&keys(names), now_ms).expect("a cycle")
         }
+
+        fn with_store(self, store: store_metadata::Store) -> Self {
+            let Self {
+                provider,
+                starts,
+                stops,
+                sender,
+            } = self;
+            Self {
+                provider: provider.with_store(store),
+                starts,
+                stops,
+                sender,
+            }
+        }
+    }
+
+    fn store(answers: bool) -> (store_metadata::Store, PathBuf) {
+        let directory = std::env::temp_dir().join(format!(
+            "yunari-game-store-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_millisecond()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let fetch: store_metadata::Fetch = Arc::new(move |url, _timeout| {
+            if !answers {
+                return Err("refused".to_owned());
+            }
+            if url.contains("storesearch") {
+                Ok(serde_json::json!({
+                    "items": [{"type": "app", "id": 1145360, "name": "Hades"}]
+                })
+                .to_string())
+            } else {
+                Ok(serde_json::json!({
+                    "1145360": {"success": true, "data": {"name": "Hades"}}
+                })
+                .to_string())
+            }
+        });
+        let download: store_metadata::Download =
+            Arc::new(|_url, _timeout| Ok(vec![0xff, 0xd8, 0xff, 1]));
+        let store = store_metadata::Store::new(directory.clone(), fetch, download);
+        (store, directory)
     }
 
     fn steam_app(app_id: &str, name: &str, install: &str) -> Game {
@@ -478,6 +611,52 @@ mod tests {
             reading(&readings, "game.artwork").message.as_deref(),
             Some(NO_ARTWORK_MESSAGE)
         );
+    }
+
+    #[test]
+    fn a_game_no_catalogue_claims_is_named_and_covered_by_the_store() {
+        let (store, directory) = store(true);
+        let fixture = Fixture::new(Vec::new()).with_store(store);
+        fixture.sample(KEYS, 1_000);
+        fixture.push(foreground(r"D:\Games\Hades\Hades.exe"));
+        let readings = fixture.sample(KEYS, 1_100);
+        assert_eq!(
+            reading(&readings, "game.name").text.as_deref(),
+            Some("Hades")
+        );
+        assert_eq!(
+            reading(&readings, "game.artwork").text.as_deref(),
+            Some("/api/game/artwork/store-1145360.jpg")
+        );
+        assert_eq!(
+            reading(&readings, "game.running").text.as_deref(),
+            Some("on")
+        );
+        // The second poll reads the cache: no request, same answer.
+        let readings = fixture.sample(KEYS, 1_200);
+        assert_eq!(
+            reading(&readings, "game.name").text.as_deref(),
+            Some("Hades")
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn an_unreachable_store_is_a_gap_and_not_a_wrong_name() {
+        let (store, directory) = store(false);
+        let fixture = Fixture::new(Vec::new()).with_store(store);
+        fixture.sample(KEYS, 1_000);
+        fixture.push(foreground(r"D:\Games\Unknown\Unknown.exe"));
+        let readings = fixture.sample(KEYS, 1_100);
+        assert_eq!(
+            reading(&readings, "game.name").message.as_deref(),
+            Some(STORE_UNAVAILABLE_MESSAGE)
+        );
+        assert_eq!(
+            reading(&readings, "game.artwork").message.as_deref(),
+            Some(STORE_UNAVAILABLE_MESSAGE)
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

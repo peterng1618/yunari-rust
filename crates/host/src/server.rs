@@ -163,8 +163,25 @@ fn providers(
     // User-authored HTTP sources: each is fetched only while a display asks for
     // one of its keys.
     registry.add(custom(settings_dir));
-    // The game being played, identified from Steam's own installed-app files.
-    registry.add(yunari_providers::game::GameProvider::new());
+    // The game being played, identified from Steam's own installed-app files,
+    // then from the store by the executable's name. The store's answers and
+    // covers are cached beside the settings that name them.
+    let lookup: yunari_providers::game::store_metadata::Fetch =
+        Arc::new(yunari_providers::http::get);
+    let covers: yunari_providers::game::store_metadata::Download = Arc::new(|url, timeout| {
+        yunari_providers::http::get_bytes(
+            url,
+            timeout,
+            yunari_providers::game::store_metadata::MAX_COVER_BYTES,
+        )
+    });
+    registry.add(yunari_providers::game::GameProvider::new().with_store(
+        yunari_providers::game::store_metadata::Store::new(
+            settings_dir.to_path_buf(),
+            lookup,
+            covers,
+        ),
+    ));
     registry
 }
 
