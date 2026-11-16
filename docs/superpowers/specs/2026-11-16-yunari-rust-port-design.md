@@ -714,7 +714,7 @@ recorded product decision.
 | 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
 | 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones and autostart. Publish, the store account, sensor-provider and display settings panels, and the asset finder are not ported |
 | 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Settings lists this PC's monitors and turns each into a display record. Autostart is there too. There is no tray menu and no HTTP monitor enumeration |
-| 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the stdio launcher and skill installer are deferred |
+| 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the `yunari-mcp` binary bridges stdio to it through the port in `host.lock`. A skill installer is deferred |
 | 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |
 | 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |
 | 48 | npm, winget and packaged executable | Deferred | No installer yet; the app runs from a built binary |

@@ -28,6 +28,7 @@ time = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "net", "io-util", "sync"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging"] }
 tower = "0.5"
+ureq.workspace = true
 yunari-library.workspace = true
 yunari-model.workspace = true
 yunari-packs.workspace = true
@@ -36,6 +37,10 @@ yunari-providers.workspace = true
 yunari-render.workspace = true
 yunari-render-raster.workspace = true
 image.workspace = true
+
+[[bin]]
+name = "yunari-mcp"
+path = "src/bin/yunari_mcp.rs"
 
 [dev-dependencies]
 zip = { version = "9", default-features = false, features = ["deflate"] }

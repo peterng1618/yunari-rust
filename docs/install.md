@@ -57,6 +57,12 @@ executable.
 3. Delete the executable.
 4. On a phone, remove the Yunari root certificate from its trusted store.
 
+## Talking to an agent
+
+`yunari-mcp`, built beside the app, bridges JSON-RPC on stdin to the running
+host's `POST /api/mcp`: it finds the port in `%USERPROFILE%\.yunari\settings\host.lock`,
+so point an MCP client at that binary with no arguments while the app is running.
+
 ## Not shipped yet
 
 There is no MSI/MSIX, no winget manifest and no signed binary: signing and a
