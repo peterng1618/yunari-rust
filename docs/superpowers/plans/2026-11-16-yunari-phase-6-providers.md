@@ -146,5 +146,5 @@
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-16-yunari-rust-port-design.md`
 
-- [ ] Walk every `product.md` capability; record implemented / deferred / dropped with the reason.
-- [ ] Commit.
+- [x] Walk every `product.md` capability; record implemented / deferred / dropped with the reason.
+- [x] Commit.

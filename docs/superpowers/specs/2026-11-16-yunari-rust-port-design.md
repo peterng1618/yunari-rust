@@ -235,7 +235,9 @@ gpui-kit shell preserving today's structure and rules:
 - Extension platform: executable plugins, declarative contributions, consent,
   device broker, plugin UI frames.
 - Linux and macOS parity.
-- Reading the old Node/Fabric document format.
+- A byte-compatible Node/Fabric document schema. A source theme is lifted into
+  this model on read (see "Reading a theme stored by the source editor") and
+  written back in the native shape; the original bytes are kept beside it.
 - A second web editor. The native editor replaces the served `/editor` and
   `/settings` surfaces.
 
@@ -561,3 +563,117 @@ has a row unless listed below.
   the UI thread); monitor enumeration over `/api/displays/monitors`; applying a
   LAN toggle without a restart; the admin SPA (`/admin/`) and the store/MCP
   routes (phase 6); panels and video (phase 5).
+
+## Phase 5 — USB panels — met (2026-11-16)
+
+Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-5-panels.md`.
+
+- Four families in `crates/panels/src/family.rs`: Lian Li 9.2", Lian Li
+  Universal Screen 8.8", TURZX 5" and NZXT Kraken Z53/Z63/Z73, each with its own
+  geometry, still format, command list and measured-firmware support row (an
+  empty list is written empty, never guessed).
+- Drivers: Lian Li over HID, Kraken over HID for control plus libusb for its
+  pixel stream, TURZX over its serial protocol. Each keeps the source's packet
+  shape and its refusals (`produced the wrong number of bytes`, HELLO/status
+  sentences).
+- Frames come from the same `render-raster` path the goldens use: the display's
+  assigned theme is resolved, planned with that display's keys, fitted into the
+  family geometry with its rotation, and encoded as the device's still format.
+  A byte-identical frame is not sent; a full frame queue drops rather than grows.
+- One runner per display, newest-frame coalescing, three consecutive failures
+  mark it lost and the manager retries; a command to a stopped display is the
+  source's 409 sentence. Host routes are loopback-only and a phone gets 403.
+- Panel video (Lian Li blocks, TURZX MP4 upload and cache, overlays, Kraken
+  paletted mode B, the Chromium page rasteriser), SignalRGB and device telemetry
+  stay deferred — recorded in the plan's header note and below.
+- Not exercised: real hardware. Driver contracts are covered by protocol tests
+  and the serial/sink seams; plugging each family in is a manual check.
+
+## Phase 6 — providers and integrations — met (2026-11-16)
+
+Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-6-providers.md`.
+
+- Every remaining key family has a provider behind the existing `Provider`
+  trait: LibreHardwareMonitor (caption table, gap reasons), frame timing (RTSS
+  shared memory, PresentMon ETW fallback), weather (Open-Meteo), media (the
+  source's SMTC PowerShell helper, content-addressed artwork cache), custom HTTP
+  sources (`sources.json`, RFC 6901 pointers) and the running game (foreground
+  window plus Steam's own library files and cached box art). A key nothing can
+  read is `missing` with an owner-actionable sentence, never a zero.
+- Media and game helpers share one PowerShell runner (`yunari_providers::winps`),
+  so the line cap, the encoded command and the process kill exist once. Helper
+  output is treated as data: capped lines, typed parsing, base64 decoding, image
+  sniffing and allow-listed routes for artwork.
+- Integrations on the loopback API: `GET /api/store/themes` proxies one
+  configured origin and caches it for five minutes; `POST /api/mcp` answers
+  JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`) over the theme library,
+  one theme document and the sensor catalogue. Both refuse a phone.
+- Deferred with reasons in the plan: the store install path and account flows,
+  the stdio MCP launcher and skill installer, and the SignalRGB keys sink (there
+  is no `lighting.*` vocabulary to bind, and the source bridge writes panel LEDs,
+  not readings).
+
+## Parity sweep against `product.md` (2026-11-16)
+
+Every capability `docs/product.md` names, with what this port does today. "Met"
+means the behaviour exists and is covered by tests or a driven check; "partial"
+names the missing part; "deferred" names the phase or reason; "dropped" is a
+recorded product decision.
+
+| # | `product.md` capability | Status | Where / why |
+|---|---|---|---|
+| 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes are carried but report `UnsupportedContent` until a decoder lands |
+| 2 | Card widgets from installed widget packs | Deferred | No pack format, pack store or widget library; the Add menu offers the built-in path presets only |
+| 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry |
+| 4 | Rich text and typography presets | Partial | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored; the only presets are the three role tokens |
+| 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C; glass is a display-list op resolved by the raster backend |
+| 6 | Rectangular or circular artboard, disc cropping | Met | Model validation refuses a non-square circle artboard; raster and GPUI crop to the disc |
+| 7 | New theme blank or from a bundled starter template | Partial | Blank matches the source's seeded tokens, artboard and background; no template package ships |
+| 8 | Export a selection as `yunari-widget-package` | Deferred | Waits for the widget pack format |
+| 9 | Host-owned widget packs and path-preset list, `user:`/`pack:` refs, one-time browser migration | Deferred | Path presets are built into the Add menu; there is no preset store or pack API |
+| 10 | Starter theme and default widget pack as committed packages | Deferred | Same pack work as 9; nothing generates them at runtime either |
+| 11 | Local-first theme library | Met | `yunari-library` writes `themes/<id>/theme.json` + `assets/`; source themes are lifted on read |
+| 12 | Browse the store catalogue | Partial | `GET /api/store/themes` proxies and caches the configured origin; no catalogue UI, versions or thumbnails |
+| 13 | Install a package, sign in, submit a theme, see own submissions | Deferred | Store account and install path are not ported (phase 6 note) |
+| 14 | CPU, memory, disks, network, clock | Met | `system` + `clock` providers via `sysinfo`/`jiff` |
+| 15 | Temperatures, fans, power, per-GPU detail through LHM | Met | Caption table with a generated binding list; absent LHM is one sentence per key |
+| 16 | Frame metrics from RTSS or PresentMon | Met | RTSS shared memory first, PresentMon ETW fallback, rolling 60 s window |
+| 17 | GPU counters and vendor APIs | Deferred | `gpu.*` is read from LHM only; no vendor SDK path |
+| 18 | Missing readings stay missing | Met | `Reading::missing` with a reason; the dash is never a zero |
+| 19 | Several monitors each showing a chosen theme | Met | Assignment + native player window per display, fullscreen, mixed-DPI fit |
+| 20 | Choose one GPU and one disk for this PC; a theme may answer a slot itself | Deferred | No device-choice settings surface yet; providers read what they find |
+| 21 | USB panels: Lian Li 9.2"/8.8", TURZX 5", Kraken Z53/Z63/Z73 | Met | Still frames and controls (brightness, screen, restart, status, reset-device), one runner per display (phase 5) |
+| 22 | Panel video, overlays, TURZX MP4 cache | Deferred | Needs the video decoder first (phase 1/5 notes) |
+| 23 | Kraken paletted mode B | Deferred | Comes with video |
+| 24 | Wallpaper Engine Workshop library and previews | Deferred | No provider; the asset finder that would show them is also deferred |
+| 25 | Steam presence and metadata | Partial | The foreground game is named from Steam's local library with cached box art; store metadata and non-Steam launchers (Epic/GOG/Itch/Xbox) are deferred |
+| 26 | Weather backends and places | Partial | Open-Meteo with the place from `weather.json`; WeatherAPI/OpenWeatherMap, Windows location and condition translations deferred |
+| 27 | Now-playing media session | Met | SMTC helper, artwork cache and its route; audio endpoint volume/mute |
+| 28 | Custom HTTP JSON sources; credentials in the host folder | Partial | Unauthenticated GET sources with pointers and a 2 s timeout; `auth`, paging, headers, query and per-source timeout deferred |
+| 29 | Extension platform | Dropped | Out of scope for v1 (this spec) |
+| 30 | Store: five kinds, version ladder, verified download, staged refusals, kill list, publisher rules, consent | Deferred | Only the catalogue listing is proxied; nothing downloads or installs yet |
+| 31 | Readings are truthful | Met | Non-negotiable in `sample::{Reading, Status}` and every provider test |
+| 32 | The theme is portable | Partial | Native JSON envelope plus `.yunari-theme` import/export with validation before write; background framing is authored document state, not yet split into `background-media.json` |
+| 33 | The previous major is the compatibility floor | Deviation | The native schema is `1.0.0`; a source `3.0.0` theme is lifted on read and re-saved in the native shape, with the original beside it as `theme.fabric.json`. No 2.x migration, and any other major is refused |
+| 34 | Data packs are host state | Deferred | With the pack work (9, 10) |
+| 35 | Local by default | Met | Loopback bind; `--host` opts into LAN |
+| 36 | Secure origin mandatory for install and wake lock | Met | Local CA and leaf, HTTPS beside HTTP on one port, `/yunari-ca.crt`; the root is ECDSA P-256 where the source used RSA-2048. Installing the root on a real phone was not exercised |
+| 37 | Authoring state is what persists | Met | View state (zoom, lens, grouping view) lives in the editor shell, never in the document |
+| 38 | No usage telemetry | Met | No analytics route or client code exists |
+| 39 | Host surface (`@yunari/host`) | Met | `yunari-host`: one port, plain + TLS, SSE, pairing, themes, displays, panels, autostart |
+| 40 | Player at `/`, display-only, installable | Met | The browser player paints the host's DisplayList over SSE; the planned WASM bundle was not needed, so the page stays small. Installing it is the browser's own prompt |
+| 41 | Editor at `/editor`, `/settings` forwarded to it | Dropped | The native editor replaces both served surfaces (this spec) |
+| 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
+| 43 | Editor Themes/Settings modes, Publish, asset finder/import | Deferred | The editor has one document surface today; store account, sensor-provider and display settings panels are not ported |
+| 44 | Tray menu, live LAN toggle, monitor enumeration API | Deferred | Phase 4 note; autostart entry and helper cleanup are met |
+| 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the stdio launcher and skill installer are deferred |
+| 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |
+| 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |
+| 48 | npm, winget and packaged executable | Deferred | No installer yet; the app runs from a built binary |
+| 49 | Deployed store Worker, D1 and R2 | External | Unchanged; this host only proxies whatever origin is configured |
+
+What this sweep changes: nothing in the port's behaviour. It records the gaps
+most likely to surprise a user coming from the source — no widget packs or store
+installs (2, 9, 13), no panel video (22), no Wallpaper Engine (24) and a smaller
+editor chrome (43) — and the deliberate deviations (native schema 1.0.0 in 33,
+the WASM player not needed in 40).
