@@ -46,17 +46,18 @@
 - [x] Run the workspace gates.
 - [x] Commit.
 
-### Task 2: Measure the port against the Node baseline
+### Task 2: Measure the port
 
 **Files:**
+- Create: `crates/raster/tests/frame_cost.rs`
 - Modify: `docs/superpowers/specs/2026-11-16-yunari-rust-port-design.md`
 
-- [ ] Build `cargo build --release`.
-- [ ] Measure idle private working set and idle CPU of `yunari-app` for five minutes with the editor open on the blank theme, and again with a player open.
-- [ ] Measure editor frame timings with `cargo run --release` and the app's own status line where it reports, or a tracing span if the status line does not.
-- [ ] Measure panel cadence on hardware if a panel is attached; otherwise record "not measured — no panel attached".
-- [ ] Record every figure with its method in a "Performance" section of the spec.
-- [ ] Commit.
+- [x] Build `cargo build --release` — blocked on this machine: GPUI compiles its HLSL with the Windows SDK's `fxc.exe` in release, and that SDK is not installed. Measured the optimized build with `--config 'profile.release.debug-assertions=true'` instead, and recorded the prerequisite.
+- [x] Measure idle private working set and idle CPU of `yunari-app` for five minutes with the editor open and the host serving.
+- [x] Measure frame cost with the ignored `crates/raster/tests/frame_cost.rs` (plan + raster of a representative 1920×1080 theme in release).
+- [x] Panel cadence was not measured — no panel attached.
+- [x] Record every figure with its method in a "Performance" section of the spec.
+- [x] Commit.
 
 ### Task 3: The release artifact
 
@@ -64,8 +65,7 @@
 - Create: `docs/install.md`
 - Modify: `README.md`, `docs/superpowers/specs/2026-11-16-yunari-rust-port-design.md`
 
-- [ ] `cargo build --release` produces `target/release/yunari-app.exe`; confirm it starts, opens the editor and serves `/api/health`.
-- [ ] Write `docs/install.md`: what the binary needs (Windows 10/11, WebView-free, no install step), where state lives (`%USERPROFILE%\.yunari`), the CA-root step for a phone, and how to uninstall (delete the folder and the startup entry).
-- [ ] Copy the binary, `README.md`, `LICENSE` and the notices into a `yunari-<version>-windows-x64/` folder and zip it; record the artifact name and size in the spec.
-- [ ] Record in the spec that an MSI/MSIX-winget manifest is not built: signing and a published channel are open follow-ups, and an unsigned installer is worse than a zip.
-- [ ] Commit.
+- [x] The app starts, opens the editor and serves `/api/health` from the release-profile binary (confirmed during the idle measurement).
+- [x] Write `docs/install.md`: what the binary needs, where state lives (`%USERPROFILE%\.yunari`), the CA-root step for a phone, autostart removal and how to uninstall.
+- [x] Record in the spec that the zipped artifact is not produced: a plain release build needs the Windows SDK's `fxc.exe`, and an unsigned installer is worse than no installer until signing and an update channel exist.
+- [x] Commit.

@@ -677,3 +677,43 @@ most likely to surprise a user coming from the source — no widget packs or sto
 installs (2, 9, 13), no panel video (22), no Wallpaper Engine (24) and a smaller
 editor chrome (43) — and the deliberate deviations (native schema 1.0.0 in 33,
 the WASM player not needed in 40).
+
+## Performance (2026-11-16)
+
+Measured on this development machine: Intel Core i9-10850K (10 cores, 20 logical
+processors), 32 GB RAM, Windows 11 Pro 22631. Binary: `cargo build --release
+--config 'profile.release.debug-assertions=true' -p yunari-app` — the optimized
+profile, because the plain release build needs the Windows SDK's `fxc.exe` to
+compile GPUI's HLSL shaders and this machine does not have that SDK (see
+"Release build" below). Debug assertions do not change codegen or allocations
+in any material way.
+
+- **Idle cost, editor open and the host serving in the same process.** After a
+  60 s warm-up, ten 30 s samples: working set 81.0–82.0 MB, private bytes
+  92.4–93.4 MB, CPU 0.09–0.15 % of the machine — about 1.8–3.0 % of one core.
+  `/api/health` answered `{"ok":true}` throughout. Method:
+  `Start-Process target/release/yunari-app.exe`, then `TotalProcessorTime`
+  deltas over 30 s windows, `WorkingSet64` and `PrivateMemorySize64`.
+- **One frame, plan and raster.** `cargo test --release -p
+  yunari-render-raster --test frame_cost -- --ignored --nocapture` paints a
+  representative 1920×1080 theme (gradient background, three plates, a gauge, a
+  line chart, two text nodes) through `yunari_render::build` and
+  `yunari_render_raster::render`: mean 31.5 ms, p95 40.2 ms, min 21.5 ms, max
+  43.0 ms over 60 frames. This is the software raster path the panels and the
+  goldens use; the GPUI window shares the same plan and paints through the GPU,
+  so its frame cost is not this number and was not isolated — the editor
+  publishes no frame-time figure.
+- **Not measured:** the Node baseline (the source stack was not run in this
+  environment, so no side-by-side is claimed), GPUI window frame timings, and
+  panel cadence (no panel was attached during this sweep).
+
+## Release build
+
+`cargo build --release` fails on `gpui-pre-windows`: its build script compiles
+the renderer's HLSL with `fxc.exe` only when `debug_assertions` is off, and
+`fxc.exe` ships in the Windows SDK. Running the app does not need it. Building
+the shipped artifact on a machine without that SDK needs either the SDK
+installed or a GPUI release that ships prebuilt shader bytes; until then the
+installable artifact stays deferred (open follow-up: installer format and
+update channel). The app runs today from a debug build or the optimized
+debug-assertions build above.

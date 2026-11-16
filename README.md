@@ -36,6 +36,10 @@ cargo test --workspace
 cargo run -p yunari-app
 ```
 
+Running, uninstalling and where state lives: `docs/install.md`. A release build
+additionally needs the Windows SDK's `fxc.exe`, because GPUI compiles its
+shaders only when debug assertions are off.
+
 ## Layout
 
 | Crate | Role |
