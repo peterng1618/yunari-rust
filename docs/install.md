@@ -1,8 +1,20 @@
 # Running and uninstalling Yunari
 
 Yunari is a Windows desktop app: an editor, a display host and a USB-panel
-driver in one process. There is no installer yet — it runs from its own
-executable.
+driver in one process. There is no setup program — it runs from its own
+executable, and `scripts/package-windows.ps1` stages that executable, the MCP
+bridge and a README as one zip.
+
+## Package a release
+
+```powershell
+pwsh -File scripts/package-windows.ps1
+```
+
+It builds `Yunari.exe` and `yunari-mcp.exe`, stages them under
+`dist/yunari-<version>-windows-x64/`, writes the zip beside it and prints the
+archive's SHA-256. Copy that folder anywhere; nothing is installed system-wide
+and nothing is written outside `%USERPROFILE%\.yunari`.
 
 ## Run it
 

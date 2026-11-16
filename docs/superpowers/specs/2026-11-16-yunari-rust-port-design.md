@@ -717,10 +717,10 @@ recorded product decision.
 | 42 | `/pair` page | Met | Six-character code, ten-minute life, penalty and durable credential |
 | 43 | Editor Themes/Settings modes, Publish, asset finder/import | Partial | Themes mode lists, opens, duplicates and deletes stored themes; the Settings dialog covers phones, autostart, monitors, the weather backend and place, the Windows-location switch, backend keys and the credentials a custom source names; the Store… dialog signs in, installs, submits a theme and publishes or withdraws this account's items. The sensor-provider and display settings panels and the asset finder are not ported; Settings lists each provider's standing instead |
 | 44 | Tray menu, live LAN toggle, monitor enumeration API | Partial | The phone toggle is live: the host rebinds about a second after the setting changes. Settings lists this PC's monitors and turns each into a display record, and `GET /api/monitors` answers the same list over loopback with the uuid a local display record holds. Autostart is there too. There is no tray menu |
-| 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes and sensors; the `yunari-mcp` binary bridges stdio to it through the port in `host.lock`. A skill installer is deferred |
+| 45 | MCP server over the host API | Partial | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call` for themes, sensors, displays, monitors, path presets and provider standing; the `yunari-mcp` binary bridges stdio to it through the port in `host.lock`. A skill installer is deferred |
 | 46 | SignalRGB bridge | Deferred | Panels own their LEDs here and the vocabulary has no `lighting.*` keys, so there is nothing to bind yet |
 | 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |
-| 48 | npm, winget and packaged executable | Deferred | No installer yet; the app runs from a built binary |
+| 48 | npm, winget and packaged executable | Partial | `scripts/package-windows.ps1` builds the release binaries, stages `Yunari.exe` and `yunari-mcp.exe` with a README, zips them and prints the SHA-256. There is no npm package (the app is native) and no winget submission |
 | 49 | Deployed store Worker, D1 and R2 | External | Unchanged; this host only proxies whatever origin is configured |
 
 What this sweep changes: nothing in the port's behaviour. It records the gaps
