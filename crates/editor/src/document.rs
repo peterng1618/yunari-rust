@@ -156,6 +156,12 @@ impl Editor {
         *self = Self::opened(stored);
     }
 
+    /// Adopts an id for the document and every state undo can reach. Identity
+    /// is not content, so this records no history entry.
+    pub fn adopt_id(&mut self, id: &str) {
+        self.history.map_all(|document| document.id = id.to_owned());
+    }
+
     pub fn add_node(&mut self, node: Node) -> bool {
         self.edit(|document| document.nodes.push(node))
     }

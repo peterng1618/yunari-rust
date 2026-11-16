@@ -146,6 +146,30 @@ impl Library {
         })
     }
 
+    /// The bytes of every asset the stored document declares, by path.
+    ///
+    /// A save writes a fresh directory, so an editor that opened a theme must
+    /// hand these back with the document or the save drops files it never read.
+    /// A declared file that is missing is left out rather than invented.
+    pub fn assets(&self, id: &str, document: &ThemeDocument) -> BTreeMap<String, Vec<u8>> {
+        let mut assets = BTreeMap::new();
+        if !is_stable_id(id) {
+            return assets;
+        }
+        for reference in &document.assets {
+            if !asset_path_is_safe(&reference.path) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(self.root.join(id).join(&reference.path)) else {
+                continue;
+            };
+            if bytes.len() as u64 <= MAX_ASSET_BYTES {
+                assets.insert(reference.path.clone(), bytes);
+            }
+        }
+        assets
+    }
+
     /// Writes a theme under its id, swapping it into place.
     ///
     /// A save naming no base onto an id that exists is a conflict, and so is one

@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 gpui-kit = "0.9.1"
 yunari-player.workspace = true
+yunari-editor.workspace = true

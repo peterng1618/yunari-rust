@@ -36,6 +36,7 @@ struct Stage {
     readings: Readings,
     preferences: UnitPreferences,
     issues: Vec<PlanIssue>,
+    polling: bool,
 }
 
 impl Stage {
@@ -45,7 +46,7 @@ impl Stage {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .unwrap_or_else(|| FIXTURE.to_owned());
         let images = match path.and_then(Path::parent) {
-            Some(base) => Images::at(base.to_path_buf()),
+            Some(base) => Images::at(base),
             None => Images::empty(),
         };
         let mut fonts = Fonts::new();
@@ -79,6 +80,7 @@ impl Stage {
             readings: Readings::default(),
             preferences,
             issues,
+            polling: false,
         }
     }
 
@@ -124,23 +126,26 @@ fn now_ms() -> u64 {
 
 impl Render for Stage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // One poll loop per window: the sampler coalesces ticks, so asking often
-        // costs nothing when nothing is due.
-        cx.spawn_in(window, async move |stage, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let changed = stage.update(cx, |stage, cx| {
-                    if stage.poll(now_ms()) {
-                        cx.notify();
+        // One poll loop per window: a frame can render for other reasons too,
+        // so the flag keeps a burst of notifies from starting one per frame.
+        if !self.polling {
+            self.polling = true;
+            cx.spawn_in(window, async move |stage, cx| {
+                loop {
+                    cx.background_executor().timer(TICK).await;
+                    let changed = stage.update(cx, |stage, cx| {
+                        if stage.poll(now_ms()) {
+                            cx.notify();
+                        }
+                    });
+                    if changed.is_err() {
+                        // The window is gone; nothing left to poll for.
+                        break;
                     }
-                });
-                if changed.is_err() {
-                    // The window is gone; nothing left to poll for.
-                    break;
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
+        }
         let list = self.list.clone();
         let images = self.images.clone();
         div().size_full().bg(rgb(0x101014)).child(

@@ -48,6 +48,14 @@ impl History {
         self.entries[self.index] = document;
     }
 
+    /// Changes every recorded state alike. Identity is not content: a save that
+    /// adopts a new id must not make undo walk back into the id it replaced.
+    pub fn map_all(&mut self, change: impl Fn(&mut ThemeDocument)) {
+        for entry in &mut self.entries {
+            change(entry);
+        }
+    }
+
     pub fn undo(&mut self) -> Option<&ThemeDocument> {
         if self.index == 0 {
             return None;

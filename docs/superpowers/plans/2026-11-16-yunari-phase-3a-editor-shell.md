@@ -159,9 +159,9 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 **Interfaces:**
 - Produces: `yunari_player::open(path: Option<&Path>, cx: &App)` — opens the live window for a theme file, or the embedded fixture.
 
-- [ ] **Step 1:** Move the phase-2 `Stage` verbatim into `crates/player`, keeping the fixture and the 250 ms poll loop. `yunari-app <file>` keeps playing that file; the editor opens when no file is named.
-- [ ] **Step 2:** `cargo test --workspace` and `cargo run -p yunari-app -- target/tmp/live.json` still paint the live theme (screenshot check).
-- [ ] **Step 3: Commit.** `refactor(player): the live window is a crate`
+- [x] **Step 1:** Move the phase-2 `Stage` verbatim into `crates/player`, keeping the fixture and the 250 ms poll loop. `yunari-app <file>` keeps playing that file; the editor opens when no file is named.
+- [x] **Step 2:** `cargo test --workspace` and `cargo run -p yunari-app -- target/tmp/live.json` still paint the live theme (screenshot check).
+- [x] **Step 3: Commit.** `refactor(player): the live window is a crate`
 
 ### Task 6: Editor shell
 
@@ -173,11 +173,11 @@ fn removing_a_theme_takes_it_out_of_the_list_and_keeps_a_recoverable_copy() {
 - Produces: `EditorWindow` GPUI entity holding `Editor`, `Library`, `Fonts`, `Images`, selection `Option<String>`; menu actions New, Open…, Save (Ctrl+S), Save As…, Export…, Import…, Undo (Ctrl+Z), Redo (Ctrl+Shift+Z), Add Rectangle, Add Text, Delete.
 - Canvas paints the document through `yunari_render_gpui::paint` with readings polled exactly as the player does.
 
-- [ ] **Step 1:** Wire the window: menu bar, canvas, status line (theme name · dirty dot), and the keyboard shortcuts. Save writes to the library; Save As and Open use a list dialog of `library.list()`; Import reads a file path typed into the prompt and runs `import_into`; Export writes a `.yunari-theme` file beside the library root with a name derived from the theme name.
-- [ ] **Step 2:** Unsaved-changes guard: New, Open and Import show a confirm dialog (Discard / Cancel) when `is_dirty()`; closing the window asks the same.
-- [ ] **Step 3:** Run the app by hand: New → Add Rectangle → Save As `first` → quit → relaunch → Open `first` shows the rectangle; Export then Import creates `first-2`.
-- [ ] **Step 4:** `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
-- [ ] **Step 5: Commit.** `feat(editor): a shell that authors, saves and reopens a theme`
+- [x] **Step 1:** Wire the window: menu bar, canvas, status line (theme name · dirty dot), and the keyboard shortcuts. Save writes to the library; Save As and Open use a list dialog of `library.list()`; Import reads a file path typed into the prompt and runs `import_into`; Export writes a `.yunari-theme` file beside the library root with a name derived from the theme name.
+- [x] **Step 2:** Unsaved-changes guard: New, Open and Import show a confirm dialog (Discard / Cancel) when `is_dirty()`; closing the window asks the same.
+- [x] **Step 3:** Run the app by hand: New → Add Rectangle → Save As `first` → quit → relaunch → Open `first` shows the rectangle; Export then Import creates `first-2`. Driven against the real library with targeted synthetic keys (no mouse): Add Rectangle → Ctrl+S → `first` stored; Ctrl+E → `untitled.yunari-theme` (manifest + theme.json); Ctrl+I on that package → `first-2`; the dirty-document guard appeared and Enter discarded into the import; Add → Ctrl+Z → clean, Ctrl+Y → dirty; Add → Delete → node gone; close refused while dirty, Enter discarded and the app exited. The Open dialog's row click needs the mouse, so it was not exercised; its listing path is covered by `Library::list` tests.
+- [x] **Step 4:** `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
+- [x] **Step 5: Commit.** `feat(editor): a shell that authors, saves and reopens a theme`
 
 ### Task 7: Phase 3A exit check
 

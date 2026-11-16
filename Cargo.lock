@@ -8411,6 +8411,7 @@ name = "yunari-app"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "yunari-editor",
  "yunari-player",
 ]
 
@@ -8418,9 +8419,14 @@ dependencies = [
 name = "yunari-editor"
 version = "0.1.0"
 dependencies = [
+ "gpui-kit",
  "serde_json",
  "yunari-library",
  "yunari-model",
+ "yunari-providers",
+ "yunari-render",
+ "yunari-render-gpui",
+ "yunari-render-raster",
 ]
 
 [[package]]

@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+gpui-kit = "0.9.1"
 serde_json.workspace = true
 yunari-library.workspace = true
 yunari-model.workspace = true
+yunari-providers.workspace = true
+yunari-render.workspace = true
+yunari-render-gpui.workspace = true
+yunari-render-raster.workspace = true

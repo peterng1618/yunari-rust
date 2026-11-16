@@ -3,6 +3,8 @@
 pub mod document;
 pub mod history;
 pub mod persistence;
+pub mod ui;
 
 pub use document::{Editor, Source};
 pub use history::History;
+pub use ui::open;

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use yunari_library::package::{self, Package};
-use yunari_library::{Library, LibraryError, SaveRequest, Saved, StoredTheme};
+use yunari_library::{Library, LibraryError, SaveRequest, Saved};
 
 use crate::document::{Editor, Source};
 
@@ -62,9 +62,11 @@ impl Editor {
             overwrite: false,
         })?;
         self.replace_assets(assets);
-        // The document's own id is part of it; changing it is an edit, but the
-        // baseline is taken after, so the freshly stored document is clean.
-        self.edit(|document| document.id = id.to_owned());
+        // The document's id is part of it, but identity is not an edit: the id
+        // is adopted across history, and the baseline is taken after, so the
+        // freshly stored document is clean and undo never walks back to the old
+        // id.
+        self.adopt_id(id);
         self.mark_saved(saved.entry.id.clone(), saved.base.clone());
         Ok(saved)
     }
@@ -73,14 +75,24 @@ impl Editor {
     pub fn export(&self) -> Result<Vec<u8>, String> {
         package::write_package(self.document(), self.assets(), None)
     }
+
+    /// Opens a stored theme together with the asset bytes it declares. A save
+    /// writes a fresh directory, so opening without them would drop the files.
+    pub fn open_stored(&mut self, library: &Library, id: &str) -> Result<(), LibraryError> {
+        let stored = library.read(id)?;
+        let assets = library.assets(id, &stored.document);
+        self.open(stored);
+        self.replace_assets(assets);
+        Ok(())
+    }
 }
 
-/// Reads a package and stores it under the first free id, then hands back the
-/// stored theme so a caller can open it.
-pub fn import_package(library: &Library, bytes: &[u8]) -> Result<StoredTheme, String> {
+/// Reads a package, stores it under the first free id, and hands back that id
+/// so a caller can open it.
+pub fn import_package(library: &Library, bytes: &[u8]) -> Result<String, String> {
     let package: Package = package::read_package(bytes)?;
     let saved = package::import_into(library, &package).map_err(|error| error.to_string())?;
-    library.read(&saved.entry.id).map_err(|error| error.to_string())
+    Ok(saved.entry.id)
 }
 
 #[cfg(test)]
@@ -89,8 +101,8 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use yunari_model::document::{
-        Artboard, ArtboardShape, Background, ContentFit, Metadata, Node, NodeKind, ThemeDocument,
-        Transform,
+        Artboard, ArtboardShape, AssetKind, AssetReference, Background, ContentFit, Metadata, Node,
+        NodeKind, ThemeDocument, Transform,
     };
 
     use super::*;
@@ -191,8 +203,46 @@ mod tests {
         let mut editor = Editor::new(document("alpha"));
         editor.save_as(&library, "alpha").expect("a first save");
         let bytes = editor.export().expect("a package");
-        let stored = import_package(&library, &bytes).expect("an imported copy");
-        assert_eq!(stored.entry.id, "alpha-2");
+        let id = import_package(&library, &bytes).expect("an imported copy");
+        assert_eq!(id, "alpha-2");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reopening_a_theme_keeps_the_assets_a_save_never_read() {
+        let (library, root) = library();
+        let mut editor = Editor::new(document("alpha"));
+        editor.edit(|document| {
+            document.assets.push(AssetReference {
+                id: "pic".to_owned(),
+                kind: AssetKind::Image,
+                path: "assets/pic.png".to_owned(),
+                sha256: None,
+                source_url: None,
+                license: None,
+                family: None,
+                weight: None,
+                style: None,
+                format: None,
+                subset: None,
+            });
+        });
+        editor.put_asset("assets/pic.png", b"not really a png".to_vec());
+        editor.save_as(&library, "alpha").expect("a first save");
+
+        let mut reopened = Editor::new(document("draft"));
+        reopened
+            .open_stored(&library, "alpha")
+            .expect("a stored theme");
+        assert_eq!(
+            reopened.assets().get("assets/pic.png").map(Vec::as_slice),
+            Some(&b"not really a png"[..])
+        );
+        reopened.rename_theme("Edited");
+        reopened.save(&library, false).expect("a save after opening");
+        // The file is still on disk, because the save handed it back.
+        let stored = fs::read(library.root().join("alpha/assets/pic.png"));
+        assert_eq!(stored.expect("a kept file"), b"not really a png");
         let _ = fs::remove_dir_all(root);
     }
 }
