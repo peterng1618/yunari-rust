@@ -138,9 +138,9 @@ pub(crate) fn decrypt_block(packet: &[u8]) -> [u8; COMMAND_SIZE] {
     // PKCS7 rounds the 500-byte block up to the next 8-byte multiple; the bytes
     // before the trailer hold that padding, not ciphertext.
     let sealed_len = COMMAND_SIZE.div_ceil(8) * 8;
-    let mut sealed = packet[..sealed_len.min(packet.len())].to_vec();
+    let sealed = packet[..sealed_len.min(packet.len())].to_vec();
     let plain = cbc::Decryptor::<Des>::new(&PACKET_KEY.into(), &PACKET_KEY.into())
-        .decrypt_padded_vec_mut::<Pkcs7>(&mut sealed)
+        .decrypt_padded_vec_mut::<Pkcs7>(&sealed)
         .expect("a decryptable block");
     let mut block = [0_u8; COMMAND_SIZE];
     block.copy_from_slice(&plain);

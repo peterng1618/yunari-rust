@@ -1,8 +1,6 @@
 //! Lian Li / TUR USB panels: one vendor interface, 512-byte encrypted command
 //! frames, one JPEG per still.
 
-use rusb::UsbContext;
-
 pub mod device;
 pub mod protocol;
 

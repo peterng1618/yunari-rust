@@ -207,7 +207,7 @@ impl<B: Bulk> PanelDevice for TurUsbPanel<B> {
 
     fn present(&mut self, still: &[u8]) -> Result<(), String> {
         if !self.opened {
-            return Err("The panel is not open.".to_owned());
+            return Err(format!("{} is not open.", self.label));
         }
         if still.len() > MAX_PAYLOAD {
             return Err(format!(
@@ -308,7 +308,7 @@ impl UsbBulk {
                 let handle = device.open().ok()?;
                 return Some(Self {
                     handle: Some(handle),
-                    endpoint_out: ENDPOINT | 0x00,
+                    endpoint_out: ENDPOINT,
                     endpoint_in: ENDPOINT | 0x80,
                     interface: INTERFACE,
                 });
@@ -394,11 +394,6 @@ mod tests {
                 fail_at_write: 0,
                 cleared: 0,
             }
-        }
-
-        fn reply(mut self, bytes: &[u8]) -> Self {
-            self.replies.push_back(bytes.to_vec());
-            self
         }
 
         /// The plaintext of each write, in order.
@@ -599,6 +594,9 @@ mod tests {
     #[test]
     fn a_closed_panel_is_not_presentable() {
         let mut panel = panel(FakeBulk::new());
-        assert_eq!(panel.present(&[]).unwrap_err(), "The panel is not open.");
+        assert_eq!(
+            panel.present(&[]).unwrap_err(),
+            "Lian Li 9.2\" LCD is not open."
+        );
     }
 }
