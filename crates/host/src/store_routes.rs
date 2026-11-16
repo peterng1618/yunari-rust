@@ -240,9 +240,6 @@ pub async fn start(
     if let Some(refusal) = local_peer(peer) {
         return refusal;
     }
-    let Some(origin) = app.account.origin.as_deref() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, NO_STORE_MESSAGE).into_response();
-    };
     let Some(host) = loopback_origin(&headers) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -250,19 +247,35 @@ pub async fn start(
         )
             .into_response();
     };
-    let state = match app.account.pending.lock() {
-        Ok(mut pending) => pending.remember(&host, crate::http::now_ms()),
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "The host is not ready.").into_response();
+    match start_url(&app, &host) {
+        Ok(url) => Json(json!({ "url": url })).into_response(),
+        Err(message) if message == NO_STORE_MESSAGE => {
+            (StatusCode::SERVICE_UNAVAILABLE, message).into_response()
         }
+        Err(message) => (StatusCode::INTERNAL_SERVER_ERROR, message).into_response(),
+    }
+}
+
+/// The address a browser opens to sign in: the Worker's start page, carrying
+/// the loopback host the answer returns to and a state this host remembers
+/// once. The editor needs the same exchange the route performs, without
+/// making an HTTP request to itself.
+pub fn start_url(app: &crate::http::App, host: &str) -> Result<String, String> {
+    let Some(origin) = app.account.origin.as_deref() else {
+        return Err(NO_STORE_MESSAGE.to_owned());
     };
-    let url = format!(
+    let state = app
+        .account
+        .pending
+        .lock()
+        .map_err(|_| "The host is not ready.".to_owned())?
+        .remember(host, crate::http::now_ms());
+    Ok(format!(
         "{}/auth/start?provider=github&host={}&state={}",
         origin.trim_end_matches('/'),
-        encode(&host),
+        encode(host),
         encode(&state)
-    );
-    Json(json!({ "url": url })).into_response()
+    ))
 }
 
 pub async fn complete(

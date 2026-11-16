@@ -45,10 +45,11 @@ pub enum Command {
     Paste,
     Duplicate,
     OpenDisplay,
+    Store,
 }
 
 impl Command {
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -92,6 +93,7 @@ impl Command {
         Self::Paste,
         Self::Duplicate,
         Self::OpenDisplay,
+        Self::Store,
     ];
 
     pub fn label(self) -> &'static str {
@@ -139,6 +141,7 @@ impl Command {
             Self::Paste => "Paste",
             Self::Duplicate => "Duplicate",
             Self::OpenDisplay => "Open display",
+            Self::Store => "Store…",
         }
     }
 
@@ -187,6 +190,7 @@ impl Command {
             Self::Paste => "Ctrl+V",
             Self::Duplicate => "Ctrl+D",
             Self::OpenDisplay => "Ctrl+Shift+F",
+            Self::Store => "Ctrl+Shift+M",
         }
     }
 
@@ -218,6 +222,7 @@ impl Command {
             (true, false, "v") => Some(Self::Paste),
             (true, false, "d") => Some(Self::Duplicate),
             (true, true, "f") => Some(Self::OpenDisplay),
+            (true, true, "m") => Some(Self::Store),
             (false, _, "delete" | "backspace") => Some(Self::DeleteSelected),
             (false, false, "r") => Some(Self::AddRectangle),
             (false, false, "e") => Some(Self::AddEllipse),
@@ -277,6 +282,10 @@ mod tests {
         assert_eq!(
             Command::from_key("e", true, true, false),
             Some(Command::ExportWidget)
+        );
+        assert_eq!(
+            Command::from_key("m", true, true, false),
+            Some(Command::Store)
         );
         assert_eq!(Command::from_key("s", false, false, false), None);
         assert_eq!(Command::from_key("q", true, false, false), None);

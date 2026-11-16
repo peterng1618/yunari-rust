@@ -8,6 +8,7 @@ pub mod library_dialog;
 pub mod menus;
 pub mod prompt;
 pub mod settings_dialog;
+pub mod store_dialog;
 pub mod widget_dialog;
 
 use std::cell::{Cell, RefCell};
@@ -38,6 +39,7 @@ use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
 use self::settings_dialog::SettingsDialog;
+use self::store_dialog::StoreDialog;
 use self::widget_dialog::WidgetDialog;
 use crate::arrange;
 use crate::assets;
@@ -100,6 +102,7 @@ enum Overlay {
     Library(LibraryDialog),
     Widgets(WidgetDialog),
     Settings(SettingsDialog),
+    Store(StoreDialog),
     Rename(Prompt),
     Field(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
@@ -287,7 +290,7 @@ impl EditorWindow {
         self.images = Rc::new(RefCell::new(images));
     }
 
-    fn apply(&mut self, command: Command, cx: &mut Context<Self>) {
+    fn apply(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::New => self.guard(Resume::New, cx),
             Command::Open => self.guard(Resume::Library, cx),
@@ -318,6 +321,7 @@ impl EditorWindow {
             Command::Widgets => {
                 self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
             }
+            Command::Store => self.open_store(window, cx),
             Command::ImportAsset => {
                 self.overlay = Some(Overlay::ImportAsset(Prompt::new(
                     "Import asset",
@@ -835,6 +839,277 @@ impl EditorWindow {
 
     fn close_overlay(&mut self, cx: &mut Context<Self>) {
         self.overlay = None;
+        cx.notify();
+    }
+
+    /// Opens the store's catalogue and whatever this account has published,
+    /// reading both off the UI thread.
+    fn open_store(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            self.status = Some(Status::error(
+                "The theme store needs the host running on this PC.",
+            ));
+            cx.notify();
+            return;
+        };
+        let email = host.account.sessions.read().map(|session| session.email);
+        self.overlay = Some(Overlay::Store(StoreDialog::new(email)));
+        cx.notify();
+        self.load_store(&host, window, cx);
+    }
+
+    fn refresh_store(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+            dialog.loading = true;
+            dialog.message = None;
+        }
+        cx.notify();
+        self.load_store(&host, window, cx);
+    }
+
+    fn load_store(&mut self, host: &Shared, window: &mut Window, cx: &mut Context<Self>) {
+        let host = std::sync::Arc::clone(host);
+        cx.spawn_in(window, async move |weak, cx| {
+            let (catalogue, mine) = cx
+                .background_executor()
+                .spawn(async move {
+                    let catalogue = host.store.themes(yunari_host::http::now_ms());
+                    let mine = host.account.client().map(|client| client.mine());
+                    (catalogue, mine)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                let Some(Overlay::Store(dialog)) = &mut this.overlay else {
+                    return;
+                };
+                dialog.loading = false;
+                match catalogue {
+                    Ok(catalogue) => dialog.rows = store_dialog::rows_of(&catalogue),
+                    Err(message) => dialog.say(message),
+                }
+                match mine {
+                    Some(Ok(mine)) => dialog.mine = store_dialog::rows_of(&mine),
+                    Some(Err(error)) => dialog.say(error.message),
+                    None => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Installs one listing through the host's install path, which checks the
+    /// package against the size and digest the listing recorded.
+    fn install_store_item(&mut self, id: String, cx: &mut Context<Self>, window: &mut Window) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let Some(row) = (match &self.overlay {
+            Some(Overlay::Store(dialog)) => dialog.row(&id).cloned(),
+            _ => None,
+        }) else {
+            return;
+        };
+        let Some(request) = yunari_host::store_install::parse_request(&serde_json::json!({
+            "packageUrl": row.package_url,
+            "catalogueId": row.id,
+            "kind": row.kind,
+            "version": row.version,
+            "sha256": row.sha256,
+            "bytes": row.bytes,
+        })) else {
+            if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+                dialog.say("That listing does not record everything an install needs.");
+            }
+            cx.notify();
+            return;
+        };
+        if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+            dialog.say("Installing…");
+        }
+        cx.notify();
+        cx.spawn_in(window, async move |weak, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let fetcher = std::sync::Arc::clone(&host);
+                    let download: yunari_host::store_install::Download =
+                        std::sync::Arc::new(move |url: &str| {
+                            yunari_host::store_install::download(
+                                fetcher.account.origin.as_deref(),
+                                url,
+                                &fetcher.account.transport,
+                            )
+                        });
+                    yunari_host::store_install::install(&host, &request, &download)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                let message = match outcome {
+                    Ok(installed) => format!("Installed as {}.", installed.id),
+                    Err(refusal) => refusal.message,
+                };
+                this.refresh_library();
+                if let Some(Overlay::Store(dialog)) = &mut this.overlay {
+                    dialog.say(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Publishes or withdraws one of this account's items.
+    fn store_transition(
+        &mut self,
+        id: String,
+        publish: bool,
+        cx: &mut Context<Self>,
+        window: &mut Window,
+    ) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let Some(client) = host.account.client() else {
+            if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+                dialog.say("Sign in to the Yunari store first.");
+            }
+            cx.notify();
+            return;
+        };
+        let target = id.clone();
+        cx.spawn_in(window, async move |weak, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    if publish {
+                        client.publish(&target)
+                    } else {
+                        client.unpublish(&target)
+                    }
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                let message = match outcome {
+                    Ok(transitioned) => {
+                        if let Some(Overlay::Store(dialog)) = &mut this.overlay
+                            && let Some(row) = dialog.mine.iter_mut().find(|row| row.id == id)
+                        {
+                            row.status = Some(transitioned.status.clone());
+                        }
+                        format!("That item is now {}.", transitioned.status)
+                    }
+                    Err(error) => error.message,
+                };
+                if let Some(Overlay::Store(dialog)) = &mut this.overlay {
+                    dialog.say(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Submits the stored theme this window has open, through the version
+    /// ladder the host works out against the item's stored baseline.
+    fn submit_current_theme(&mut self, cx: &mut Context<Self>, window: &mut Window) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let message = if self.editor.is_dirty() {
+            Some("Save this theme before submitting it.".to_owned())
+        } else {
+            match self.editor.source() {
+                Source::Library { id, .. } => {
+                    self.submit_theme(host, id.clone(), cx, window);
+                    return;
+                }
+                Source::Unsaved => Some("Save this theme to the library first.".to_owned()),
+            }
+        };
+        if let Some(message) = message
+            && let Some(Overlay::Store(dialog)) = &mut self.overlay
+        {
+            dialog.say(message);
+        }
+        cx.notify();
+    }
+
+    fn submit_theme(
+        &mut self,
+        host: Shared,
+        id: String,
+        cx: &mut Context<Self>,
+        window: &mut Window,
+    ) {
+        if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+            dialog.say("Submitting…");
+        }
+        cx.notify();
+        cx.spawn_in(window, async move |weak, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { yunari_host::submit::submit(&host, &id) })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                let message = match outcome {
+                    Ok(submitted) => match submitted.from {
+                        Some(from) => format!(
+                            "Submitted {from} → {} as {}.",
+                            submitted.to, submitted.status
+                        ),
+                        None => format!("Submitted {} as {}.", submitted.to, submitted.status),
+                    },
+                    Err(refusal) => refusal.message,
+                };
+                if let Some(Overlay::Store(dialog)) = &mut this.overlay {
+                    dialog.say(message);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn store_sign_in(&mut self, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let port = host.bound_port.load(std::sync::atomic::Ordering::Relaxed);
+        let message = if port == 0 {
+            "The host is not listening on this PC yet.".to_owned()
+        } else {
+            match yunari_host::store_routes::start_url(&host, &format!("http://127.0.0.1:{port}")) {
+                Ok(url) => {
+                    // The address is built by this host, never typed here.
+                    let _ = std::process::Command::new("explorer").arg(&url).spawn();
+                    "Finish signing in in your browser, then press Refresh.".to_owned()
+                }
+                Err(message) => message,
+            }
+        };
+        if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+            dialog.say(message);
+        }
+        cx.notify();
+    }
+
+    fn store_sign_out(&mut self, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            return;
+        };
+        let message = match host.account.sessions.clear() {
+            Ok(()) => "Signed out.".to_owned(),
+            Err(error) => error,
+        };
+        if let Some(Overlay::Store(dialog)) = &mut self.overlay {
+            dialog.email = None;
+            dialog.mine.clear();
+            dialog.say(message);
+        }
         cx.notify();
     }
 
@@ -1699,7 +1974,7 @@ impl EditorWindow {
                 keystroke.modifiers.shift,
                 keystroke.modifiers.platform,
             ) {
-                self.apply(command, cx);
+                self.apply(command, window, cx);
             }
             return;
         };
@@ -1718,7 +1993,7 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
-            Overlay::Widgets(_) | Overlay::Settings(_) => {
+            Overlay::Widgets(_) | Overlay::Settings(_) | Overlay::Store(_) => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
                 }
@@ -1803,9 +2078,9 @@ impl EditorWindow {
                     .cursor_pointer()
                     .text_color(rgb(INK))
                     .child(command.label())
-                    .on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| this.apply(command, cx)),
-                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.apply(command, window, cx)
+                    }))
             })
             .collect();
         div()
@@ -2152,6 +2427,7 @@ impl EditorWindow {
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
                 div()
