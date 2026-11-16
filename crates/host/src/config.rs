@@ -17,6 +17,8 @@ pub struct HostConfig {
     pub port: u16,
     /// Whether phones on the LAN may reach the host.
     pub lan: bool,
+    /// Where LibreHardwareMonitor's web server answers.
+    pub lhm_url: String,
 }
 
 impl HostConfig {
@@ -30,6 +32,7 @@ impl HostConfig {
                 .unwrap_or_else(default_app_dir),
             port: port.unwrap_or(DEFAULT_PORT),
             lan,
+            lhm_url: lhm_url(&std::env::args().collect::<Vec<_>>()),
         }
     }
 
@@ -45,6 +48,19 @@ impl HostConfig {
     pub fn ports(&self) -> impl Iterator<Item = u16> {
         (0..MAX_PORT_ATTEMPTS).map(move |step| self.port.saturating_add(step))
     }
+}
+
+/// `--lhm-url <url>` from the command line, or LibreHardwareMonitor's default
+/// port. A missing value is the default rather than an empty address.
+fn lhm_url(args: &[String]) -> String {
+    args.iter()
+        .position(|arg| arg == "--lhm-url")
+        .and_then(|at| args.get(at + 1))
+        .filter(|url| !url.trim().is_empty())
+        .map_or_else(
+            || yunari_providers::lhm::DEFAULT_URL.to_owned(),
+            |url| url.trim_end_matches('/').to_owned(),
+        )
 }
 
 /// `%USERPROFILE%\.yunari`, or `$HOME`'s equivalent.
@@ -97,6 +113,21 @@ mod tests {
         assert_eq!(config.port, DEFAULT_PORT);
         assert_eq!(config.ports().next(), Some(5227));
         assert_eq!(config.ports().last(), Some(5236));
+    }
+
+    #[test]
+    fn the_lhm_address_is_the_source_default_unless_it_is_passed() {
+        let none = vec!["yunari-host".to_owned()];
+        assert_eq!(lhm_url(&none), "http://127.0.0.1:8085");
+        let passed = vec![
+            "yunari-host".to_owned(),
+            "--lhm-url".to_owned(),
+            "http://127.0.0.1:9000/".to_owned(),
+        ];
+        assert_eq!(lhm_url(&passed), "http://127.0.0.1:9000");
+        // A flag with no value is the default, not an empty address.
+        let dangling = vec!["yunari-host".to_owned(), "--lhm-url".to_owned()];
+        assert_eq!(lhm_url(&dangling), "http://127.0.0.1:8085");
     }
 
     #[test]

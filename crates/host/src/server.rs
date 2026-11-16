@@ -78,7 +78,7 @@ pub fn app(config: HostConfig) -> Shared {
     std::fs::create_dir_all(&settings).ok();
     let authority = crate::tls::Authority::load(&settings).ok();
     let library = yunari_library::Library::new(config.themes_dir());
-    let registry = Arc::new(providers());
+    let registry = Arc::new(providers(&config.lhm_url));
     let frames = Arc::new(crate::panels::PanelFrames::new(
         library.clone(),
         Arc::clone(&registry),
@@ -109,10 +109,13 @@ pub fn app(config: HostConfig) -> Shared {
 
 /// The providers this PC can read through. A host with none still serves the
 /// clock and says why every other key is a gap.
-fn providers() -> yunari_providers::registry::Registry {
+fn providers(lhm_url: &str) -> yunari_providers::registry::Registry {
     let mut registry = yunari_providers::registry::Registry::new();
     registry.add(yunari_providers::clock::ClockProvider::new());
     registry.add(yunari_providers::system::SystemProvider::new());
+    // LHM is an external program: absent, every key it owns is a gap with the
+    // reason rather than a poll failure.
+    registry.add(yunari_providers::lhm::LhmProvider::new(lhm_url));
     registry
 }
 
