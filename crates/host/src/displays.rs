@@ -55,7 +55,7 @@ impl DisplayShape {
     /// A rectangle turns in quarter steps; a circle takes any whole degree.
     pub fn accepts_rotation(self, degrees: u16) -> bool {
         match self {
-            Self::Rect => degrees <= 270 && degrees % 90 == 0,
+            Self::Rect => degrees <= 270 && degrees.is_multiple_of(90),
             Self::Circle => degrees <= 359,
         }
     }
