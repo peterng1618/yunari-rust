@@ -29,6 +29,20 @@ pub struct Stock {
 
 pub const STOCKS: &[Stock] = &[
     Stock {
+        id: "lucide",
+        label: "Lucide",
+        category: "icon",
+        preset: None,
+        requires: None,
+    },
+    Stock {
+        id: "lineicons",
+        label: "Lineicons",
+        category: "icon",
+        preset: None,
+        requires: None,
+    },
+    Stock {
         id: "webgradients",
         label: "WebGradients",
         category: "colour",
@@ -406,8 +420,115 @@ fn palette_page(items: &[Palette], query: &str, page: u32, licence: &str, by_tag
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+struct LocalIcon {
+    name: String,
+    svg: String,
+}
+
+/// One grid page of a generated icon manifest.
+const ICON_PAGE: usize = 50;
+
+/// The manifest a source ships, parsed once.
+fn icons(id: &str) -> Option<&'static Vec<LocalIcon>> {
+    static LUCIDE: OnceLock<Vec<LocalIcon>> = OnceLock::new();
+    static LINEICONS: OnceLock<Vec<LocalIcon>> = OnceLock::new();
+    let (slot, text) = match id {
+        "lucide" => (
+            &LUCIDE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/lucide.json")),
+        ),
+        "lineicons" => (
+            &LINEICONS,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/data/lineicons.json")),
+        ),
+        _ => return None,
+    };
+    Some(slot.get_or_init(|| serde_json::from_str(text).unwrap_or_default()))
+}
+
+/// Spaces and hyphens are one separator, so "arrow down" finds `arrow-down`.
+fn icon_fold(value: &str) -> String {
+    let mut folded = String::with_capacity(value.len());
+    let mut separator = false;
+    for letter in value.chars().flat_map(char::to_lowercase) {
+        if letter.is_whitespace() || letter == '-' {
+            if !separator {
+                folded.push('-');
+                separator = true;
+            }
+        } else {
+            folded.push(letter);
+            separator = false;
+        }
+    }
+    folded
+}
+
+fn icon_result(icon: &LocalIcon, licence: &str, home_url: &str) -> Value {
+    use base64::Engine;
+    // A data URL rather than a host round-trip: the icon is already here, and
+    // a grid renders it offline. `<img>` runs no script in an SVG.
+    let preview = format!(
+        "data:image/svg+xml;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&icon.svg)
+    );
+    json!({
+        "id": icon.name,
+        "name": icon.name,
+        "kind": "icon",
+        "preview": preview,
+        "licence": licence,
+        "sourceUrl": format!("{home_url}{}", icon.name),
+    })
+}
+
+fn icon_page(icons: &[LocalIcon], query: &str, page: u32, licence: &str, home_url: &str) -> Page {
+    let wanted = icon_fold(query);
+    let matches: Vec<&LocalIcon> = if wanted.is_empty() {
+        icons.iter().collect()
+    } else {
+        icons
+            .iter()
+            .filter(|icon| icon_fold(&icon.name).contains(&wanted))
+            .collect()
+    };
+    let offset = (page_of(page) - 1) * ICON_PAGE;
+    let start = offset.min(matches.len());
+    let page_items = &matches[start..(start + ICON_PAGE).min(matches.len())];
+    Page {
+        results: page_items
+            .iter()
+            .map(|icon| icon_result(icon, licence, home_url))
+            .collect(),
+        // A manifest with no match is one empty page, not no pages: the grid
+        // says "no results" and the pager draws nothing.
+        total_pages: u32::try_from(matches.len().div_ceil(ICON_PAGE))
+            .unwrap_or(u32::MAX)
+            .max(1),
+    }
+}
+
 /// Searches one stock source with the host's own HTTP client.
 pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
+    if let Some(icons) = icons(id) {
+        return match id {
+            "lucide" => Ok(icon_page(
+                icons,
+                query,
+                page,
+                "ISC",
+                "https://lucide.dev/icons/",
+            )),
+            _ => Ok(icon_page(
+                icons,
+                query,
+                page,
+                "MIT",
+                "https://lineicons.com/icons/",
+            )),
+        };
+    }
     let get = |url: &str| yunari_providers::http::get(url, TIMEOUT_MS);
     match id {
         "webgradients" => with_catalogue(id, get, |catalogue| {
@@ -464,15 +585,39 @@ pub fn search(id: &str, query: &str, page: u32) -> Result<Page, String> {
     }
 }
 
-/// The bytes behind one result, when the source holds any. Every current
-/// stock row is a preset, so no result has its own file yet.
-pub fn bytes(_id: &str, _result: &str) -> Option<(Vec<u8>, &'static str, String)> {
-    None
+/// The bytes behind one result: an icon's own SVG, or nothing when the row is
+/// a preset rather than a file.
+pub fn bytes(id: &str, result: &str) -> Option<(Vec<u8>, &'static str, String)> {
+    let icons = icons(id)?;
+    let icon = icons.iter().find(|icon| icon.name == result)?;
+    Some((
+        icon.svg.as_bytes().to_vec(),
+        "image/svg+xml",
+        format!("{result}.svg"),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_icon_manifest_answers_by_name_and_gives_up_its_own_svg() {
+        let lucide = icons("lucide").expect("the Lucide manifest");
+        assert!(lucide.len() > 1000, "{} icons", lucide.len());
+        let page = icon_page(lucide, "arrow down", 1, "ISC", "https://lucide.dev/icons/");
+        assert!(
+            page.results.iter().any(|row| row["name"] == "arrow-down"),
+            "{} rows",
+            page.results.len()
+        );
+        let (svg, mime, name) = bytes("lucide", "arrow-down").expect("the icon's bytes");
+        assert_eq!(mime, "image/svg+xml");
+        assert_eq!(name, "arrow-down.svg");
+        assert!(String::from_utf8(svg).unwrap().contains("<svg"));
+        assert!(bytes("lucide", "not-an-icon").is_none());
+        assert!(icons("lineicons").is_some_and(|icons| !icons.is_empty()));
+    }
 
     #[test]
     fn a_webgradient_is_its_own_name_angle_and_stops() {
