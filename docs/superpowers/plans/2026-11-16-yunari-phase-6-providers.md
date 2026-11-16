@@ -129,15 +129,17 @@
 ### Task 8: Store client, MCP and SignalRGB bridge
 
 **Files:**
-- Create: `crates/host/src/store.rs`, `crates/host/src/mcp.rs`, `crates/host/src/signalrgb.rs`
-- Modify: `crates/host/src/http.rs`, `crates/host/src/server.rs`
+- Create: `crates/host/src/store.rs`, `crates/host/src/mcp.rs`
+- Modify: `crates/host/src/{http.rs,server.rs,lib.rs}`
 
 **Interfaces:**
-- Produces: `GET /api/store/themes` (proxied, cached, loopback-only), `POST /api/mcp` (JSON-RPC, loopback-only, the same document surface the editor uses), and a `POST /api/signalrgb/keys` sink that maps SignalRGB channels onto `lighting.*` readings.
+- Produces: `GET /api/store/themes` (proxied through `store.json`'s `origin`, cached 5 min, loopback-only) and `POST /api/mcp` (JSON-RPC 2.0: `initialize`, `tools/list`, `tools/call` over `themes_list`, `themes_get`, `sensors_list`, loopback-only, answered from `App::library` and `App::registry`).
+- Deferred: the SignalRGB `POST /api/signalrgb/keys` sink. The source bridge is a loopback UDP receiver that writes panel LEDs, not a readings sink, and `crates/providers/src/vocabulary.rs` has no `lighting.*` key family — so there is nothing a display could bind yet. Add it when panel lighting and a `lighting.*` vocabulary land together.
+- Deferred: the store's install path (`.yunari-theme` package downloads) and the stdio MCP launcher/skill installer — this host serves the same data over its own routes, so a package install waits for a store that exists.
 
-- [ ] Test: store responses are cached and a repeated request does not hit the network.
-- [ ] Test: an MCP request from a phone is 403; from loopback it lists the same themes the library has.
-- [ ] Commit.
+- [x] Test: store responses are cached and a repeated request does not hit the network.
+- [x] Test: an MCP request from a phone is 403; from loopback it lists the same themes the library has.
+- [x] Commit.
 
 ### Task 9: Parity sweep against `product.md`
 

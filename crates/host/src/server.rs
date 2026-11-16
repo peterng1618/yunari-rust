@@ -94,6 +94,7 @@ pub fn app(config: HostConfig) -> Shared {
         }),
     );
     Arc::new(App {
+        store: crate::store::Store::load(&settings),
         identity: crate::identity::HostIdentity::load_or_mint(&settings),
         displays: std::sync::Mutex::new(crate::displays::DisplayStore::load(&settings)),
         pairing: std::sync::Mutex::new(crate::pairing::Pairing::default()),

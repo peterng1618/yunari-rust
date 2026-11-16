@@ -40,6 +40,7 @@ pub struct App {
     pub assignment: Mutex<crate::assignment::Assignment>,
     pub manager: Arc<yunari_panels::manager::Manager>,
     pub panel_frames: Arc<PanelFrames>,
+    pub store: crate::store::Store,
 }
 
 pub type Shared = Arc<App>;
@@ -105,6 +106,9 @@ pub fn router(app: Shared) -> axum::Router {
         .route("/api/weather/icon/{file}", get(weather_icon))
         .route("/api/media/artwork/{file}", get(media_artwork))
         .route("/api/game/artwork/{app_id}", get(game_artwork))
+        // The store catalogue is read here, so no page talks to a third origin.
+        .route("/api/store/themes", get(store_themes))
+        .route("/api/mcp", post(crate::mcp::post))
         .route("/manifest.webmanifest", get(manifest))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
@@ -815,6 +819,25 @@ async fn media_artwork(
     crate::pages::media_artwork(&app.config.settings_dir().join("media-artwork"), &file)
 }
 
+/// The store catalogue, for this PC only: a display reads it through the host,
+/// which is the one place the configured origin is known.
+async fn store_themes(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !is_loopback(peer.ip()) {
+        return (
+            StatusCode::FORBIDDEN,
+            "The theme store is available on this PC only.",
+        )
+            .into_response();
+    }
+    match app.store.themes(now_ms()) {
+        Ok(catalogue) => Json(catalogue).into_response(),
+        Err(message) => (StatusCode::SERVICE_UNAVAILABLE, message).into_response(),
+    }
+}
+
 /// The running game's cover, read through the same credential as track artwork.
 async fn game_artwork(
     State(app): State<Shared>,
@@ -1061,6 +1084,103 @@ mod tests {
         let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
         let (status, _) = ask(app, "/api/game/artwork/730", phone).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    async fn ask_post(
+        app: Shared,
+        uri: &str,
+        peer: SocketAddr,
+        body: &'static str,
+    ) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::HOST, "localhost:5227")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        let (mut parts, body) = request.into_parts();
+        parts.extensions.insert(ConnectInfo(peer));
+        let response = router(app)
+            .oneshot(Request::from_parts(parts, body))
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// One theme in the app's library, saved through the same path the editor
+    /// uses.
+    fn save_fixture_theme(app: &Shared, id: &str) {
+        let document = yunari_model::document::ThemeDocument {
+            schema_version: yunari_model::document::SCHEMA_VERSION.to_owned(),
+            id: id.to_owned(),
+            metadata: yunari_model::document::Metadata::default(),
+            artboard: yunari_model::document::Artboard {
+                width: 100.0,
+                height: 100.0,
+                content_fit: yunari_model::document::ContentFit::Contain,
+                shape: yunari_model::document::ArtboardShape::Rect,
+            },
+            background: yunari_model::document::Background::default(),
+            palette: std::collections::BTreeMap::new(),
+            type_tokens: std::collections::BTreeMap::new(),
+            assets: Vec::new(),
+            nodes: Vec::new(),
+            bindings: std::collections::BTreeMap::new(),
+            editor_metadata: std::collections::BTreeMap::new(),
+        };
+        app.library
+            .save(&yunari_library::SaveRequest {
+                id,
+                document: &document,
+                assets: &std::collections::BTreeMap::new(),
+                base: None,
+                overwrite: true,
+            })
+            .expect("the fixture theme saves");
+    }
+
+    #[tokio::test]
+    async fn mcp_answers_this_pc_with_the_librarys_themes_and_refuses_a_phone() {
+        let app = app("mcp");
+        save_fixture_theme(&app, "fixture");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        let list =
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"themes_list"}}"#;
+        let (status, body) = ask_post(app.clone(), "/api/mcp", here, list).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("fixture"), "{body}");
+        // A phone does not get the host's own files.
+        let (status, _) = ask_post(app.clone(), "/api/mcp", phone, list).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        // An unknown method is a JSON-RPC error, not a page.
+        let unknown = r#"{"jsonrpc":"2.0","id":2,"method":"resources/list"}"#;
+        let (status, body) = ask_post(app.clone(), "/api/mcp", here, unknown).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("-32601"), "{body}");
+        // A request that is not JSON-RPC is a parse error.
+        let (status, body) = ask_post(app, "/api/mcp", here, "not json").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("-32700"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_store_catalogue_is_for_this_pc_only() {
+        let app = app("store");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        let (status, _) = ask(app.clone(), "/api/store/themes", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        // Nothing configured is a sentence, not an empty catalogue.
+        let (status, body) = ask(app, "/api/store/themes", here).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, crate::store::NO_STORE_MESSAGE);
     }
 
     #[tokio::test]
