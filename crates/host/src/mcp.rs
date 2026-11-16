@@ -254,6 +254,8 @@ mod tests {
             "add_shape",
             "import_asset",
             "list_objects",
+            "assign_theme",
+            "yunari_status",
         ] {
             assert!(declared.contains(name), "{name} is not declared");
         }

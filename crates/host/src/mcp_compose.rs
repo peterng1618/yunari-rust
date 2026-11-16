@@ -381,6 +381,24 @@ pub fn tools() -> Value {
             }
         },
         {
+            "name": "assign_theme",
+            "description": "Make a stored theme the one a display shows. The default display is used when no displayId is named.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "displayId": {"type": "string", "minLength": 1}
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "yunari_status",
+            "description": "Report this host's version, bound port, library size and open drafts.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+        },
+        {
             "name": "set_theme_metadata",
             "description": "Merge name, author, description, version or language into the draft's metadata.",
             "inputSchema": {
@@ -426,6 +444,8 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "set_palette" => set_palette(app, args),
         "set_type_tokens" => set_type_tokens(app, args),
         "set_theme_metadata" => set_theme_metadata(app, args),
+        "assign_theme" => assign_theme(app, args),
+        "yunari_status" => yunari_status(app),
         _ => return None,
     };
     Some(result)
@@ -1471,6 +1491,34 @@ fn set_theme_metadata(app: &Shared, args: &Value) -> Result<Value, String> {
         }
         Ok(json!({"themeId": draft.document.id, "metadata": draft.document.metadata}))
     })
+}
+
+fn assign_theme(app: &Shared, args: &Value) -> Result<Value, String> {
+    let id = text(args, "id").ok_or("assign_theme needs a theme id.")?;
+    if app.library.read(&id).is_err() {
+        return Err(format!("There is no stored theme \"{id}\"."));
+    }
+    let display =
+        text(args, "displayId").unwrap_or_else(|| crate::displays::DEFAULT_DISPLAY.to_owned());
+    let mut assignment = app
+        .assignment
+        .lock()
+        .map_err(|_| "The host is not ready.".to_owned())?;
+    assignment.set(&display, Some(&id));
+    Ok(json!({"displayId": display, "theme": id}))
+}
+
+fn yunari_status(app: &Shared) -> Result<Value, String> {
+    let drafts = app.drafts.lock().map_err(|_| NO_DRAFT.to_owned())?;
+    Ok(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "port": app.bound_port.load(std::sync::atomic::Ordering::Relaxed),
+        "themes": app.library.list().len(),
+        "drafts": drafts.ids(),
+        "providers": app.registry.status().into_iter().map(|(id, label, health)| {
+            json!({"id": id, "label": label, "reason": health.reason()})
+        }).collect::<Vec<_>>(),
+    }))
 }
 
 #[cfg(test)]
