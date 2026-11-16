@@ -6,8 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = "0.22"
 jiff.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 sysinfo.workspace = true
 ureq.workspace = true
 yunari-rtss.workspace = true

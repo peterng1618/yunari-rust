@@ -103,6 +103,7 @@ pub fn router(app: Shared) -> axum::Router {
         // A display loads the icon a weather reading names; the slug is
         // allow-listed, so no other path is ever served.
         .route("/api/weather/icon/{file}", get(weather_icon))
+        .route("/api/media/artwork/{file}", get(media_artwork))
         .route("/manifest.webmanifest", get(manifest))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
@@ -795,6 +796,24 @@ async fn weather_icon(axum::extract::Path(file): axum::extract::Path<String>) ->
     crate::pages::weather_icon(&file)
 }
 
+/// Track artwork, read through the same credential as theme asset bytes; this
+/// PC needs none.
+async fn media_artwork(
+    State(app): State<Shared>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Path(file): axum::extract::Path<String>,
+) -> Response {
+    if !is_loopback(peer.ip()) && authenticated(&app, &headers).is_none() {
+        return (
+            StatusCode::FORBIDDEN,
+            "This display is not paired with the host.",
+        )
+            .into_response();
+    }
+    crate::pages::media_artwork(&app.config.settings_dir().join("media-artwork"), &file)
+}
+
 async fn manifest() -> Response {
     crate::pages::manifest()
 }
@@ -988,6 +1007,28 @@ mod tests {
         let (status, _) = ask(app.clone(), "/api/weather/icon/rain.png", phone).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = ask(app, "/api/weather/icon/..%2Fsecrets.svg", phone).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn media_artwork_is_served_to_this_pc_and_only_a_paired_phone() {
+        const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        let app = app("media-artwork");
+        let cache = yunari_providers::media::artwork::Artwork::new(
+            app.config.settings_dir().join("media-artwork"),
+        );
+        let url = cache.put(PNG, "png").expect("a picture");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let (status, _) = ask(app.clone(), &url, here).await;
+        assert_eq!(status, StatusCode::OK);
+        // A display reads it through its credential.
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        let (status, _) = ask(app.clone(), &url, phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        // The name is the entire allow-list.
+        let (status, _) = ask(app.clone(), "/api/media/artwork/evil.png", here).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = ask(app, "/api/media/artwork/..%2Fsecrets.png", here).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 

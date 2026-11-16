@@ -10,6 +10,7 @@ pub mod clock;
 pub mod frame;
 pub mod http;
 pub mod lhm;
+pub mod media;
 pub mod provider;
 pub mod registry;
 pub mod sample;

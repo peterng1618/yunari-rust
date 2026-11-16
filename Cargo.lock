@@ -8957,8 +8957,10 @@ dependencies = [
 name = "yunari-providers"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "jiff",
  "serde_json",
+ "sha2 0.11.1",
  "sysinfo 0.40.3",
  "ureq",
  "yunari-rtss",

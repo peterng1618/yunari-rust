@@ -138,6 +138,30 @@ pub fn weather_icon(file: &str) -> Response {
     response
 }
 
+/// One artwork file the cache wrote; the content-addressed name is the whole
+/// allow-list, and the bytes are checked against it before they are served.
+pub fn media_artwork(directory: &std::path::Path, name: &str) -> Response {
+    let cache = yunari_providers::media::artwork::Artwork::new(directory);
+    let Some(bytes) = cache.read(name) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut response = bytes.into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(yunari_providers::media::artwork::content_type(name)),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    // The name is the digest, so the bytes under it never change.
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+    response
+}
+
 pub fn favicon() -> Response {
     let mut response = FAVICON.into_response();
     response.headers_mut().insert(

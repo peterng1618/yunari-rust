@@ -87,14 +87,15 @@
 ### Task 5: Media (SMTC via the source's own helper)
 
 **Files:**
-- Create: `crates/providers/src/media/{mod.rs,helper.rs}`
+- Create: `crates/providers/src/media/{mod.rs,helper.rs,script.rs,artwork.rs}`
+- Modify: `crates/host/src/{server.rs,pages.rs,http.rs}`
 - Test: same files
 
 **Interfaces:**
-- Produces: keys `media.title`, `media.artist`, `media.album`, `media.status`, `media.position`, `media.duration`, `media.artwork`; the helper is the source's PowerShell script, run with a bounded timeout.
+- Produces: keys `media.title`, `media.artist`, `media.album`, `media.artwork`, `media.state`, `media.position`, `media.duration`, `media.app`, `audio.volume`, `audio.muted`; the helper is the source's PowerShell script, run as one `-EncodedCommand` process; `media::artwork::Artwork` (content-addressed `put`/`read`, 64-file cache) and `GET /api/media/artwork/{file}` for a paired display or this PC.
 
-- [ ] Test: the helper's JSON maps to the six readings; a missing Windows session is `missing`.
-- [ ] Commit.
+- [x] Test: the helper's JSON maps to the six readings; a missing Windows session is `missing`.
+- [x] Commit.
 
 ### Task 6: Custom HTTP sources
 

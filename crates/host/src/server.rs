@@ -133,6 +133,11 @@ fn providers(
         )),
     ]));
     registry.add(weather(settings_dir));
+    // What Windows says is playing; its helper only runs while a display binds
+    // a media or audio key. Artwork lives beside the settings it reads.
+    registry.add(yunari_providers::media::MediaProvider::new(
+        settings_dir.join("media-artwork"),
+    ));
     registry
 }
 
