@@ -300,6 +300,16 @@ pub struct Telemetry {
 
 /// One panel, open or not. Every driver is generic over its transport so a test
 /// can hand it a fake and read back exactly what it wrote.
+/// The clip a panel is handed to play: the format is the panel's own choice,
+/// because the two families do not take the same bytes.
+#[derive(Debug, Clone, Copy)]
+pub enum VideoClip<'a> {
+    /// An MP4 the panel stores and decodes itself.
+    Mp4(&'a [u8]),
+    /// A raw H.264 elementary stream, and how long it plays for.
+    H264 { bytes: &'a [u8], seconds: f64 },
+}
+
 pub trait PanelDevice: Send {
     fn geometry(&self) -> Geometry;
 
@@ -307,11 +317,11 @@ pub trait PanelDevice: Send {
 
     fn present(&mut self, still: &[u8]) -> Result<(), String>;
 
-    /// Plays an already-encoded H.264 elementary stream of `seconds` on the
-    /// panel's own decoder. The first block is written before this returns, so
-    /// a refused clip reaches the caller and it can fall back to stills.
-    fn start_video(&mut self, h264: &[u8], seconds: f64) -> Result<(), String> {
-        let _ = (h264, seconds);
+    /// Plays a clip on the panel's own decoder. The first block is written
+    /// before this returns, so a refused clip reaches the caller and it can
+    /// fall back to stills.
+    fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {
+        let _ = clip;
         Err("That device does not play video.".to_owned())
     }
 
@@ -397,8 +407,8 @@ impl PanelDevice for Box<dyn PanelDevice> {
         (**self).present(still)
     }
 
-    fn start_video(&mut self, h264: &[u8], seconds: f64) -> Result<(), String> {
-        (**self).start_video(h264, seconds)
+    fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {
+        (**self).start_video(clip)
     }
 
     fn present_overlay(&mut self, png: &[u8]) -> Result<(), String> {

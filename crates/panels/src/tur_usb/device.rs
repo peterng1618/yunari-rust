@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::family::{CommandKind, Geometry, PanelCommand, PanelDevice, StillFormat};
+use crate::family::{CommandKind, Geometry, PanelCommand, PanelDevice, StillFormat, VideoClip};
 use crate::tur_usb::protocol::{self, Fields, opcode};
 
 /// The panel can take this long to answer a command. A shorter read does not
@@ -394,11 +394,14 @@ impl<B: Bulk + 'static> PanelDevice for TurUsbPanel<B> {
         Ok(())
     }
 
-    fn start_video(&mut self, clip: &[u8], seconds: f64) -> Result<(), String> {
+    fn start_video(&mut self, clip: VideoClip<'_>) -> Result<(), String> {
         if !self.opened {
             return Err(format!("{} is not open.", self.label));
         }
-        if clip.is_empty() {
+        let VideoClip::H264 { bytes, seconds } = clip else {
+            return Err("That panel takes a raw H.264 stream, not a stored clip.".to_owned());
+        };
+        if bytes.is_empty() {
             return Err("The clip is empty.".to_owned());
         }
         self.stop_feed();
@@ -413,7 +416,7 @@ impl<B: Bulk + 'static> PanelDevice for TurUsbPanel<B> {
             // makes this panel's decoder ghost moving parts.
             stop_play(&mut *transport, started)?;
             let block_bytes = query_block_bytes(&mut *transport, started)?;
-            write_video_block(&mut *transport, started, clip, 0, block_bytes, None)?;
+            write_video_block(&mut *transport, started, bytes, 0, block_bytes, None)?;
             block_bytes
         };
 
@@ -421,7 +424,7 @@ impl<B: Bulk + 'static> PanelDevice for TurUsbPanel<B> {
         let handle = spawn_feed(
             Arc::clone(&self.transport),
             started,
-            clip.to_vec(),
+            bytes.to_vec(),
             seconds,
             block_bytes,
             Arc::clone(&stop),
@@ -807,6 +810,10 @@ mod tests {
         lock(&panel.transport)
     }
 
+    fn h264(bytes: &[u8], seconds: f64) -> VideoClip<'_> {
+        VideoClip::H264 { bytes, seconds }
+    }
+
     #[test]
     fn open_announces_the_host_and_pins_the_turn() {
         let mut panel = panel(FakeBulk::new());
@@ -951,7 +958,7 @@ mod tests {
             "Lian Li 9.2\" LCD is not open."
         );
         assert_eq!(
-            panel.start_video(&[0], 1.0).unwrap_err(),
+            panel.start_video(h264(&[0], 1.0)).unwrap_err(),
             "Lian Li 9.2\" LCD is not open."
         );
         assert_eq!(
@@ -965,7 +972,9 @@ mod tests {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
         bulk(&panel).writes.clear();
-        panel.start_video(&[0x00, 0x00, 0x01, 0x65], 1.0).unwrap();
+        panel
+            .start_video(h264(&[0x00, 0x00, 0x01, 0x65], 1.0))
+            .unwrap();
         panel.stop_video();
         let transport = bulk(&panel);
         let opcodes = transport.opcodes();
@@ -985,7 +994,7 @@ mod tests {
         panel.open().unwrap();
         bulk(&panel).writes.clear();
         bulk(&panel).block_size = Some(4_096);
-        panel.start_video(&[7_u8; 10_000], 2.0).unwrap();
+        panel.start_video(h264(&[7_u8; 10_000], 2.0)).unwrap();
         panel.stop_video();
         let first = bulk(&panel).plain()[2];
         assert_eq!(u32::from_be_bytes(first[8..12].try_into().unwrap()), 4_096);
@@ -996,7 +1005,9 @@ mod tests {
         fallback.open().unwrap();
         bulk(&fallback).writes.clear();
         bulk(&fallback).block_size = Some(0);
-        fallback.start_video(&vec![7_u8; 300_000], 2.0).unwrap();
+        fallback
+            .start_video(h264(&vec![7_u8; 300_000], 2.0))
+            .unwrap();
         fallback.stop_video();
         let first = bulk(&fallback).plain()[2];
         assert_eq!(
@@ -1010,7 +1021,7 @@ mod tests {
         let mut panel = panel(FakeBulk::new());
         panel.open().unwrap();
         assert_eq!(
-            panel.start_video(&[], 1.0).unwrap_err(),
+            panel.start_video(h264(&[], 1.0)).unwrap_err(),
             "The clip is empty."
         );
     }

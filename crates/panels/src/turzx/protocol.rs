@@ -87,6 +87,16 @@ pub fn parse_panel_status(text: &str) -> Option<PanelStatus> {
     })
 }
 
+/// A file-size reply: a bare decimal, or `None` for anything else — the
+/// reply a missing file gives is unverified, and a wrong guess would skip the
+/// upload the panel needs.
+pub fn parse_file_size(text: &str) -> Option<usize> {
+    let trimmed = text.trim();
+    (!trimmed.is_empty() && trimmed.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| trimmed.parse().ok())
+        .flatten()
+}
+
 /// Straight RGBA as the panel's payload: each pixel reordered to BGRA, chunked
 /// at 249 bytes with one `0x00` between chunks, then padded to a frame multiple.
 ///
@@ -142,6 +152,15 @@ pub mod command {
     pub const DISPLAY_BITMAP_5INCH: &[u8] = &[0xc8, 0xef, 0x69, 0x00, 0x17, 0x70, 0x0e, 0x10];
     pub const DISPLAY_ON_VIDEO: &[u8] = &[0xca, 0xef, 0x69, 0x00, 0x17, 0x70];
     pub const QUERY_STATUS: &[u8] = &[0xcf, 0xef, 0x69, 0x00, 0x00, 0x00, 0x01];
+    /// The path follows as a file header, with no size.
+    pub const START_VIDEO: &[u8] = &[0x78, 0xef, 0x69, 0x00, 0x00, 0x00];
+    /// With its start-mode payload: `02` draws the overlay over the clip.
+    pub const INIT_VIDEO_OVERLAY: &[u8] = &[0xd0, 0xef, 0x69, 0x00, 0x00, 0x00, 0x02];
+    /// The raw two-byte trailer every overlay payload closes with.
+    pub const OVERLAY_TERMINATE: &[u8] = &[0xef, 0x69];
+    pub const UPLOAD_FILE: &[u8] = &[0x6f, 0xef, 0x69, 0x00, 0x00, 0x00];
+    pub const GET_FILE_SIZE: &[u8] = &[0x6e, 0xef, 0x69, 0x00, 0x00, 0x00];
+    pub const DELETE_FILE: &[u8] = &[0x66, 0xef, 0x69, 0x00, 0x00, 0x00];
 
     /// `START_DISPLAY_BITMAP`: one frame of `0x2c`, the padding the panel
     /// expects before a bitmap and the only command that is already framed.
