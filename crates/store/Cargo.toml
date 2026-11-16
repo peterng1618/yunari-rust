@@ -1,0 +1,19 @@
+[package]
+name = "yunari-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+jiff.workspace = true
+ureq.workspace = true
+base64 = "0.22"
+# The session token at rest is protected by the OS facility, the way the spec
+# asks; the unsafe call lives in `secret.rs` and nowhere else.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }

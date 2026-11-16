@@ -32,6 +32,7 @@ ureq.workspace = true
 yunari-library.workspace = true
 yunari-model.workspace = true
 yunari-packs.workspace = true
+yunari-store.workspace = true
 yunari-panels.workspace = true
 yunari-providers.workspace = true
 yunari-render.workspace = true

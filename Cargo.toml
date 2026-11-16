@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/model",
     "crates/packs",
+    "crates/store",
     "crates/theme",
     "crates/golden",
     "crates/providers",
@@ -37,6 +38,7 @@ ureq = "3"
 windows-sys = { version = "0.61", default-features = false }
 yunari-model = { path = "crates/model" }
 yunari-packs = { path = "crates/packs" }
+yunari-store = { path = "crates/store" }
 yunari-player = { path = "crates/player" }
 yunari-editor = { path = "crates/editor" }
 yunari-library = { path = "crates/library" }
