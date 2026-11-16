@@ -293,16 +293,16 @@ fn slot_disk<'a>(
     devices: &crate::devices::Assignment,
     slot: Slot,
 ) -> Option<(String, &'a Disk)> {
-    let ids: Vec<String> = crate::devices::ids_for(disks.iter().map(|disk| disk.name.clone()))
-        .into_iter()
-        .map(|(_, id)| id)
-        .collect();
+    let listed: Vec<(String, String)> =
+        crate::devices::ids_for(disks.iter().map(|disk| disk.name.clone()));
+    let ids: Vec<String> = listed.iter().map(|(_, id)| id.clone()).collect();
+    let names: Vec<String> = listed.iter().map(|(name, _)| name.clone()).collect();
     let assigned = match slot {
         Slot::System => devices.system_disk.as_deref(),
         Slot::Data => Some(devices.data_disk.as_deref()?),
     };
     let index = match assigned {
-        Some(assigned) => ids.iter().position(|id| id == assigned)?,
+        Some(assigned) => crate::devices::index_of(&ids, &names, devices, assigned)?,
         None => 0,
     };
     Some((ids.get(index)?.clone(), disks.get(index)?))

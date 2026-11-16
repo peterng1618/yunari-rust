@@ -19,6 +19,7 @@ pub enum Command {
     AddEllipse,
     AddPath,
     AddPathPreset,
+    TypographyPreset,
     AddLine,
     AddArc,
     AddWedge,
@@ -51,7 +52,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 47] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -69,6 +70,7 @@ impl Command {
         Self::AddEllipse,
         Self::AddPath,
         Self::AddPathPreset,
+        Self::TypographyPreset,
         Self::AddLine,
         Self::AddArc,
         Self::AddWedge,
@@ -119,6 +121,7 @@ impl Command {
             Self::AddEllipse => "Ellipse",
             Self::AddPath => "Path",
             Self::AddPathPreset => "Shape preset…",
+            Self::TypographyPreset => "Typography preset…",
             Self::AddLine => "Horizontal line",
             Self::AddArc => "Arc",
             Self::AddWedge => "Wedge",
@@ -170,6 +173,7 @@ impl Command {
             Self::AddEllipse => "E",
             Self::AddPath => "",
             Self::AddPathPreset => "",
+            Self::TypographyPreset => "",
             Self::AddLine => "",
             Self::AddArc => "",
             Self::AddWedge => "",

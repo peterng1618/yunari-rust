@@ -6,8 +6,13 @@
 //! served when it stays inside its item's own directory, and an item with
 //! nothing behind it is counted rather than listed.
 //!
-//! What is not here yet: the scene package's own facts (a `yield`/`text` kind
-//! hint), video duration, unpacking a scene into an editable project, and the
+//! A scene package is opened far enough to say whether it holds still and
+//! whether it draws text: keyframes anywhere in the tree, particles, particles
+//! layers or a model member with keyframes all mean it moves. A video's bytes
+//! decide its container and its own box headers give its length, so a row never
+//! states a guess the file could contradict.
+//!
+//! What is not here yet: unpacking a scene into an editable project and the
 //! mobile package import. Those are separate reads over the same scan.
 
 use std::path::{Path, PathBuf};
@@ -72,6 +77,13 @@ pub struct Item {
     pub workshop_url: Option<String>,
     /// The descriptor's `properties` schema, passed through unread.
     pub properties: Value,
+    /// A scene's own facts. Absent when the package cannot be read: never
+    /// assumed still.
+    pub at_rest: Option<bool>,
+    pub has_text: Option<bool>,
+    /// A video's sniffed container and its own reported length.
+    pub container: Option<&'static str>,
+    pub duration_ms: Option<u64>,
 }
 
 /// Every item a scan listed, and how many directories it refused.
@@ -132,6 +144,18 @@ fn item_json(item: &Item) -> Value {
     }
     if !attribution.is_null() {
         map.insert("attribution".into(), attribution);
+    }
+    if let Some(at_rest) = item.at_rest {
+        map.insert("stillAtRest".into(), at_rest.into());
+    }
+    if let Some(has_text) = item.has_text {
+        map.insert("hasText".into(), has_text.into());
+    }
+    if let Some(container) = item.container {
+        map.insert("container".into(), container.into());
+    }
+    if let Some(duration_ms) = item.duration_ms {
+        map.insert("durationMs".into(), duration_ms.into());
     }
     value
 }
@@ -376,6 +400,16 @@ fn read_item(name: &str, directory: &Path, cache: &[(String, Value)]) -> Option<
             _ => Kind::Scene,
         },
     };
+    let facts = match kind {
+        Kind::Scene => std::fs::read(&payload)
+            .ok()
+            .and_then(|bytes| scene_facts(&bytes)),
+        _ => None,
+    };
+    let video = match kind {
+        Kind::Video => Some((video_container(&payload), video_duration_ms(&payload))),
+        _ => None,
+    };
     Some(Item {
         workshop_id,
         directory: directory.to_path_buf(),
@@ -404,9 +438,243 @@ fn read_item(name: &str, directory: &Path, cache: &[(String, Value)]) -> Option<
         author_steam_id: row_id("authorsteamid"),
         workshop_url: row_string("workshopurl").map(str::to_owned),
         properties: project.get("properties").cloned().unwrap_or(Value::Null),
+        at_rest: facts.as_ref().map(|facts| facts.at_rest),
+        has_text: facts.as_ref().map(|facts| facts.has_text),
+        container: video.as_ref().map(|video| video.0),
+        duration_ms: video.as_ref().and_then(|video| video.1),
         payload,
         preview,
     })
+}
+
+/// A scene package's own two facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneFacts {
+    /// Nothing moves without input: no keyframes, particles or animation
+    /// layers anywhere in the scene or its models.
+    pub at_rest: bool,
+    pub has_text: bool,
+}
+
+/// One package table: `PKGV`/`PKGM` magic, then entries whose offsets are
+/// relative to the table's end.
+struct Package<'a> {
+    bytes: &'a [u8],
+    data_start: usize,
+    members: Vec<(String, usize, usize)>,
+}
+
+impl<'a> Package<'a> {
+    fn member(&self, name: &str) -> Option<&'a [u8]> {
+        let (_, offset, length) = self.members.iter().find(|(member, _, _)| member == name)?;
+        let start = self.data_start.checked_add(*offset)?;
+        self.bytes.get(start..start + length)
+    }
+}
+
+fn read_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    let slice = bytes.get(at..at + 4)?;
+    Some(u32::from_le_bytes(slice.try_into().ok()?))
+}
+
+fn read_package(bytes: &[u8]) -> Option<Package<'_>> {
+    let magic_length = read_u32(bytes, 0)? as usize;
+    if magic_length == 0 {
+        return None;
+    }
+    let magic = bytes.get(4..4 + magic_length)?;
+    if magic.len() != 8
+        || !magic.starts_with(b"PKG")
+        || !matches!(magic[3], b'V' | b'M')
+        || !magic[4..].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let count = read_u32(bytes, 4 + magic_length)? as usize;
+    let mut cursor = 8 + magic_length;
+    let mut members = Vec::with_capacity(count.min(1024));
+    for _ in 0..count {
+        let name_length = read_u32(bytes, cursor)? as usize;
+        if name_length == 0 {
+            return None;
+        }
+        cursor += 4;
+        let name = std::str::from_utf8(bytes.get(cursor..cursor + name_length)?).ok()?;
+        cursor += name_length;
+        let offset = read_u32(bytes, cursor)? as usize;
+        let length = read_u32(bytes, cursor + 4)? as usize;
+        cursor += 8;
+        if members.iter().any(|(held, _, _)| held == name) {
+            return None;
+        }
+        members.push((name.to_owned(), offset, length));
+    }
+    let data_start = cursor;
+    for (_, offset, length) in &members {
+        if data_start + offset + length > bytes.len() {
+            return None;
+        }
+    }
+    Some(Package {
+        bytes,
+        data_start,
+        members,
+    })
+}
+
+/// True when `key` appears at any depth in the parsed tree.
+fn has_key_anywhere(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(|item| has_key_anywhere(item, key)),
+        Value::Object(map) => map
+            .iter()
+            .any(|(name, child)| name == key || has_key_anywhere(child, key)),
+        _ => false,
+    }
+}
+
+/// Reads a scene package's facts. A package that cannot be read, a scene with
+/// no object list, or a model member that cannot be parsed all mean the scene
+/// is unclassified rather than assumed still.
+pub fn scene_facts(bytes: &[u8]) -> Option<SceneFacts> {
+    let package = read_package(bytes)?;
+    let scene: Value = serde_json::from_slice(package.member("scene.json")?).ok()?;
+    if !scene.is_object() {
+        return None;
+    }
+    let objects = scene.get("objects")?.as_array()?;
+    let mut moves = has_key_anywhere(&scene, "animation");
+    let mut has_text = false;
+    for object in objects {
+        let Some(object) = object.as_object() else {
+            continue;
+        };
+        if object.contains_key("particle") || object.contains_key("animationlayers") {
+            moves = true;
+        }
+        if object.contains_key("text") {
+            has_text = true;
+        }
+        let Some(model) = object.get("model").and_then(Value::as_str) else {
+            continue;
+        };
+        let parsed: Value = serde_json::from_slice(package.member(model)?).ok()?;
+        if has_key_anywhere(&parsed, "animation") {
+            moves = true;
+        }
+    }
+    Some(SceneFacts {
+        at_rest: !moves,
+        has_text,
+    })
+}
+
+/// What container a video's own header proves.
+pub fn video_container(path: &Path) -> &'static str {
+    let Some(header) = read_head(path, 1024) else {
+        return "unknown";
+    };
+    if header.len() >= 8 && &header[4..8] == b"ftyp" {
+        return "mp4";
+    }
+    if !header.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
+        return "unknown";
+    }
+    let text = String::from_utf8_lossy(&header).to_ascii_lowercase();
+    if text.contains("webm") {
+        "webm"
+    } else {
+        "matroska"
+    }
+}
+
+fn read_head(path: &Path, length: usize) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buffer = vec![0; length];
+    let read = file.read(&mut buffer).ok()?;
+    buffer.truncate(read);
+    Some(buffer)
+}
+
+/// A clip's length from its `moov` box, without reading the clip. A file
+/// without one reports nothing rather than a guessed second.
+pub fn video_duration_ms(path: &Path) -> Option<u64> {
+    use std::io::{Read, Seek};
+    const MAX_MOOV: u64 = 64 * 1024 * 1024;
+    let mut file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let mut offset = 0u64;
+    while offset + 8 <= size {
+        file.seek(std::io::SeekFrom::Start(offset)).ok()?;
+        let mut header = [0u8; 16];
+        file.read_exact(&mut header[..8]).ok()?;
+        let declared = u32::from_be_bytes(header[0..4].try_into().ok()?) as u64;
+        let kind: [u8; 4] = header[4..8].try_into().ok()?;
+        let (length, payload) = match declared {
+            1 => {
+                file.read_exact(&mut header[8..]).ok()?;
+                (
+                    u64::from_be_bytes(header[8..].try_into().ok()?),
+                    offset + 16,
+                )
+            }
+            0 => (size - offset, offset + 8),
+            length => (length, offset + 8),
+        };
+        if length < 8 || offset + length > size {
+            return None;
+        }
+        if &kind == b"moov" {
+            if length > MAX_MOOV {
+                return None;
+            }
+            file.seek(std::io::SeekFrom::Start(payload)).ok()?;
+            let mut box_bytes = vec![0u8; (length - (payload - offset)) as usize];
+            file.read_exact(&mut box_bytes).ok()?;
+            return mvhd_duration(&box_bytes);
+        }
+        offset += length;
+    }
+    None
+}
+
+/// The `mvhd` header inside a `moov` payload, its timescale and duration.
+fn mvhd_duration(moov: &[u8]) -> Option<u64> {
+    let mut cursor = 0usize;
+    while cursor + 8 <= moov.len() {
+        let declared = u32::from_be_bytes(moov.get(cursor..cursor + 4)?.try_into().ok()?) as u64;
+        let kind = moov.get(cursor + 4..cursor + 8)?;
+        let length = if declared == 1 {
+            16 + u64::from_be_bytes(moov.get(cursor + 8..cursor + 16)?.try_into().ok()?)
+        } else if declared == 0 {
+            moov.len() as u64 - cursor as u64
+        } else {
+            declared
+        };
+        if kind == b"mvhd" {
+            let body = moov.get(cursor + 8..cursor + length as usize)?;
+            let (timescale, duration) = match body.first()? {
+                0 => {
+                    let timescale = u32::from_be_bytes(body.get(12..16)?.try_into().ok()?);
+                    let duration = u32::from_be_bytes(body.get(16..20)?.try_into().ok()?);
+                    (u64::from(timescale), u64::from(duration))
+                }
+                1 => {
+                    let timescale = u32::from_be_bytes(body.get(20..24)?.try_into().ok()?);
+                    let duration = u64::from_be_bytes(body.get(24..32)?.try_into().ok()?);
+                    (u64::from(timescale), duration)
+                }
+                _ => return None,
+            };
+            if timescale == 0 {
+                return None;
+            }
+            return Some(duration.saturating_mul(1000) / timescale);
+        }
+        cursor += length as usize;
+    }
+    None
 }
 
 fn id_of(value: &Value) -> Option<String> {
@@ -446,7 +714,12 @@ fn payload_content_type(item: &Item) -> &'static str {
         .unwrap_or("");
     match item.kind {
         Kind::Image | Kind::Scene => content_type_for(&item.payload),
-        Kind::Video => video_content_type(extension),
+        Kind::Video => match item.container {
+            Some("mp4") => "video/mp4",
+            Some("webm") => "video/webm",
+            Some("matroska") => "video/x-matroska",
+            _ => video_content_type(extension),
+        },
     }
 }
 
@@ -536,6 +809,83 @@ mod tests {
             vec![PathBuf::from(r"D:\\Games\\Steam")]
         );
         assert!(library_roots(&root.join("absent.vdf")).is_empty());
+    }
+
+    fn package(members: &[(&str, &[u8])]) -> Vec<u8> {
+        let magic = b"PKGV0024";
+        let mut table = Vec::new();
+        let mut data: Vec<u8> = Vec::new();
+        for (name, bytes) in members {
+            table.extend((name.len() as u32).to_le_bytes());
+            table.extend(name.as_bytes());
+            table.extend((data.len() as u32).to_le_bytes());
+            table.extend((bytes.len() as u32).to_le_bytes());
+            data.extend(*bytes);
+        }
+        let mut out = (magic.len() as u32).to_le_bytes().to_vec();
+        out.extend(magic);
+        out.extend((members.len() as u32).to_le_bytes());
+        out.extend(table);
+        out.extend(data);
+        out
+    }
+
+    #[test]
+    fn a_scene_package_says_whether_it_moves_and_draws_text() {
+        let still = package(&[("scene.json", br#"{"objects":[{"text":"hello"}]}"#)]);
+        let facts = scene_facts(&still).expect("facts");
+        assert!(facts.at_rest);
+        assert!(facts.has_text);
+
+        let moving = package(&[(
+            "scene.json",
+            br#"{"objects":[{"animation":{"options":{"fps":30}}}]}"#,
+        )]);
+        let facts = scene_facts(&moving).expect("facts");
+        assert!(!facts.at_rest);
+        assert!(!facts.has_text);
+
+        // A model the scene names but the package does not hold is not a still
+        // scene: the facts are absent rather than guessed.
+        let missing_model = package(&[(
+            "scene.json",
+            br#"{"objects":[{"model":"models/thing.json"}]}"#,
+        )]);
+        assert!(scene_facts(&missing_model).is_none());
+        assert!(scene_facts(b"not a package").is_none());
+    }
+
+    fn boxed(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut out = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend(kind);
+        out.extend(payload);
+        out
+    }
+
+    #[test]
+    fn a_videos_own_bytes_choose_the_container_and_the_length() {
+        let directory = temp_dir();
+        let mut mvhd = vec![0u8; 4];
+        mvhd.extend(0u32.to_be_bytes());
+        mvhd.extend(0u32.to_be_bytes());
+        mvhd.extend(1000u32.to_be_bytes());
+        mvhd.extend(5000u32.to_be_bytes());
+        mvhd.extend([0u8; 80]);
+        let mut mp4 = boxed(b"ftyp", b"isom    isom");
+        mp4.extend(boxed(b"moov", &boxed(b"mvhd", &mvhd)));
+        let clip = directory.join("clip.mp4");
+        std::fs::write(&clip, &mp4).unwrap();
+        assert_eq!(video_container(&clip), "mp4");
+        assert_eq!(video_duration_ms(&clip), Some(5000));
+
+        // A descriptor's `.mp4` name over Matroska bytes is still Matroska.
+        let mut matroska = vec![0x1a, 0x45, 0xdf, 0xa3];
+        matroska.extend(b"matroska webm");
+        let other = directory.join("clip2.mp4");
+        std::fs::write(&other, &matroska).unwrap();
+        assert_eq!(video_container(&other), "webm");
+        assert!(video_duration_ms(&other).is_none());
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     #[test]

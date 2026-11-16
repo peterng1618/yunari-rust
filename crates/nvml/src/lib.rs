@@ -129,8 +129,10 @@ impl Provider for NvmlProvider {
         let assignment = (self.devices)();
         let chosen = match assignment.gpu.as_deref() {
             Some(assigned) => {
-                let ids = ids_for(gpus.iter().map(|gpu| gpu.name.clone()));
-                match ids.iter().position(|(_, id)| id == assigned) {
+                let listed = ids_for(gpus.iter().map(|gpu| gpu.name.clone()));
+                let ids: Vec<String> = listed.iter().map(|(_, id)| id.clone()).collect();
+                let names: Vec<String> = listed.iter().map(|(name, _)| name.clone()).collect();
+                match yunari_providers::devices::index_of(&ids, &names, &assignment, assigned) {
                     Some(index) => index,
                     None => {
                         return Ok(keys

@@ -17,6 +17,7 @@ pub mod selection;
 pub mod snap;
 pub mod tokens;
 pub mod transform;
+pub mod typography;
 pub mod ui;
 pub mod viewport;
 pub mod widgets;

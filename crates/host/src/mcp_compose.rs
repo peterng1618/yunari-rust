@@ -430,6 +430,18 @@ pub fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         },
         {
+            "name": "preview_theme",
+            "description": "Saves the draft to the host's theme library, then previews it. A browser display answers the player URL and an artboard-aspect viewport; a panel display answers a base64 PNG at its geometry. A refused save returns its reason and no preview.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "themeId": theme_id(),
+                    "displayId": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "set_theme_metadata",
             "description": "Merge name, author, description, version or language into the draft's metadata.",
             "inputSchema": {
@@ -476,6 +488,7 @@ pub fn call(app: &Shared, name: &str, args: &Value) -> Option<Result<Value, Stri
         "set_background" => set_background(app, args),
         "set_palette" => set_palette(app, args),
         "set_type_tokens" => set_type_tokens(app, args),
+        "preview_theme" => preview_theme(app, args),
         "set_theme_metadata" => set_theme_metadata(app, args),
         "assign_theme" => assign_theme(app, args),
         "yunari_status" => yunari_status(app),
@@ -1610,6 +1623,109 @@ fn assign_theme(app: &Shared, args: &Value) -> Result<Value, String> {
     Ok(json!({"displayId": display, "theme": id}))
 }
 
+fn preview_theme(app: &Shared, args: &Value) -> Result<Value, String> {
+    // A player reads a stored theme by id, so a preview saves first.
+    let saved = save_theme(app, args)?;
+    let id = saved["id"]
+        .as_str()
+        .ok_or("The save gave no id.")?
+        .to_owned();
+    let (artboard, bound) = with_read(app, args, |draft| {
+        let bound: Vec<String> = draft
+            .document
+            .bindings
+            .values()
+            .flatten()
+            .map(|binding| binding.semantic_key.clone())
+            .collect();
+        Ok((draft.document.artboard.clone(), bound))
+    })?;
+    let answering: Vec<String> = app
+        .registry
+        .describe()
+        .into_iter()
+        .map(|descriptor| descriptor.semantic_key)
+        .collect();
+    let missing_sensors: Vec<String> = bound
+        .iter()
+        .filter(|key| !answering.iter().any(|available| available == *key))
+        .cloned()
+        .collect();
+    let display = {
+        let store = app.displays.lock().map_err(|_| NO_DRAFT.to_owned())?;
+        match text(args, "displayId") {
+            Some(wanted) => store
+                .get(&wanted)
+                .cloned()
+                .ok_or_else(|| format!("There is no display \"{wanted}\" on this host."))?,
+            None => store
+                .list()
+                .first()
+                .cloned()
+                .ok_or("This host has no display to preview on.")?,
+        }
+    };
+    if display.kind != crate::displays::DisplayKind::Panel {
+        let port = app.bound_port.load(std::sync::atomic::Ordering::Relaxed);
+        let mut url = format!("http://127.0.0.1:{port}/?theme={id}");
+        if text(args, "displayId").is_some() {
+            url.push_str(&format!("&display={}", display.id));
+        }
+        return Ok(json!({
+            "mode": "browser",
+            "themeId": id,
+            "displayId": display.id,
+            "url": url,
+            "viewport": viewport(&artboard),
+            "shape": artboard.shape,
+            "boundSensors": bound,
+            "missingSensors": missing_sensors,
+        }));
+    }
+    let family = display
+        .device
+        .as_ref()
+        .and_then(|device| yunari_panels::for_device(device.vendor_id, device.product_id));
+    let Some(family) = family else {
+        return Err("No driver on this host claims that panel.".to_owned());
+    };
+    let record = crate::panels::manager_record(&display);
+    let png = app
+        .panel_frames
+        .preview_of(&id, &record)
+        .map_err(|error| error.to_string())?;
+    use base64::Engine;
+    Ok(json!({
+        "mode": "panel",
+        "themeId": id,
+        "display": {"id": display.id, "label": display.label},
+        "geometry": {"width": family.geometry.width, "height": family.geometry.height},
+        "shape": match family.shape {
+            yunari_panels::PanelShape::Rect => "rect",
+            yunari_panels::PanelShape::Circle => "circle",
+        },
+        "mimeType": "image/png",
+        "png": base64::engine::general_purpose::STANDARD.encode(&png),
+        "missingSensors": missing_sensors,
+    }))
+}
+
+/// A browser preview's viewport: the artboard's aspect, its long side capped
+/// at 1600, and a square for a round board.
+fn viewport(artboard: &yunari_model::document::Artboard) -> Value {
+    let long = artboard.width.max(artboard.height);
+    let capped = long.min(1600.0);
+    if artboard.shape == yunari_model::document::ArtboardShape::Circle {
+        let side = capped.round().max(1.0);
+        return json!({"width": side, "height": side});
+    }
+    let scale = if long > 0.0 { capped / long } else { 1.0 };
+    json!({
+        "width": (artboard.width * scale).round().max(1.0),
+        "height": (artboard.height * scale).round().max(1.0),
+    })
+}
+
 fn yunari_status(app: &Shared) -> Result<Value, String> {
     let drafts = app.drafts.lock().map_err(|_| NO_DRAFT.to_owned())?;
     Ok(json!({
@@ -1774,6 +1890,33 @@ mod tests {
         .expect("a tool")
         .expect_err("an unknown glyph");
         assert!(refused.contains("shared icon set"), "{refused}");
+        std::fs::remove_dir_all(app.config.settings_dir()).ok();
+    }
+
+    #[test]
+    fn a_preview_saves_first_and_answers_a_player_url() {
+        let app = app();
+        let display = app
+            .displays
+            .lock()
+            .expect("displays")
+            .adopt_local("Desk", None, None, None)
+            .expect("a display");
+        let theme_id = draft_id(&app);
+        let preview = call(
+            &app,
+            "preview_theme",
+            &json!({"themeId": theme_id, "displayId": display.id}),
+        )
+        .expect("a tool")
+        .expect("a preview");
+        assert_eq!(preview["mode"], "browser");
+        assert!(app.library.read("boards").is_ok(), "the draft was saved");
+        let url = preview["url"].as_str().expect("a url");
+        assert!(url.contains("?theme=boards"), "{url}");
+        assert!(url.contains(&format!("&display={}", display.id)), "{url}");
+        assert_eq!(preview["viewport"]["width"], 1600.0);
+        assert_eq!(preview["viewport"]["height"], 900.0);
         std::fs::remove_dir_all(app.config.settings_dir()).ok();
     }
 

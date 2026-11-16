@@ -11,6 +11,7 @@ pub mod path_preset_dialog;
 pub mod prompt;
 pub mod settings_dialog;
 pub mod store_dialog;
+pub mod typography_dialog;
 pub mod widget_dialog;
 
 use std::cell::{Cell, RefCell};
@@ -44,6 +45,7 @@ use self::path_preset_dialog::PathPresetDialog;
 use self::prompt::{Outcome, Prompt};
 use self::settings_dialog::SettingsDialog;
 use self::store_dialog::StoreDialog;
+use self::typography_dialog::TypographyDialog;
 use self::widget_dialog::WidgetDialog;
 use crate::arrange;
 use crate::assets;
@@ -107,6 +109,7 @@ enum Overlay {
     Widgets(WidgetDialog),
     AssetFinder(AssetFinder),
     PathPresets(PathPresetDialog),
+    Typography(TypographyDialog),
     Settings(Box<SettingsDialog>),
     Store(StoreDialog),
     Rename(Prompt),
@@ -370,6 +373,9 @@ impl EditorWindow {
             }
             Command::AssetFinder => {
                 self.overlay = Some(Overlay::AssetFinder(AssetFinder::new()));
+            }
+            Command::TypographyPreset => {
+                self.overlay = Some(Overlay::Typography(TypographyDialog::new()));
             }
             Command::Store => self.open_store(window, cx),
             Command::ImportAsset => {
@@ -1006,6 +1012,14 @@ impl EditorWindow {
             node
         });
         self.status = Some(Status::ok("Inserted a shape preset"));
+        cx.notify();
+    }
+
+    fn apply_typography(&mut self, trio: crate::typography::Trio, cx: &mut Context<Self>) {
+        self.overlay = None;
+        self.editor.apply_typography(&trio);
+        self.refresh();
+        self.status = Some(Status::ok(format!("Applied {}", trio.name)));
         cx.notify();
     }
 
@@ -2274,6 +2288,7 @@ impl EditorWindow {
             Overlay::Widgets(_)
             | Overlay::AssetFinder(_)
             | Overlay::PathPresets(_)
+            | Overlay::Typography(_)
             | Overlay::Settings(_)
             | Overlay::Store(_) => {
                 if keystroke.key == "escape" {
@@ -2738,6 +2753,9 @@ impl EditorWindow {
             Some(Overlay::AssetFinder(dialog)) => asset_finder::view(dialog, cx).into_any_element(),
             Some(Overlay::PathPresets(dialog)) => {
                 path_preset_dialog::view(dialog, cx).into_any_element()
+            }
+            Some(Overlay::Typography(dialog)) => {
+                typography_dialog::view(dialog, cx).into_any_element()
             }
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),

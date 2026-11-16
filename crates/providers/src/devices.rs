@@ -131,6 +131,22 @@ pub type Loader = std::sync::Arc<dyn Fn() -> Assignment + Send + Sync>;
 
 /// Mint an id per device name, in the order the machine reports them. Two
 /// devices with one name get `-2`, `-3`, … so an id always names one device.
+/// The index a stored choice names: the id this provider mints today, or the
+/// name the choice was shown under when an id changed between builds or
+/// providers. A choice that matches neither is a gap, not a nearby device.
+pub fn index_of(
+    ids: &[String],
+    names: &[String],
+    assignment: &Assignment,
+    assigned: &str,
+) -> Option<usize> {
+    if let Some(index) = ids.iter().position(|id| id == assigned) {
+        return Some(index);
+    }
+    let stored = assignment.names.get(assigned)?;
+    names.iter().position(|name| name == stored)
+}
+
 pub fn ids_for(names: impl IntoIterator<Item = String>) -> Vec<(String, String)> {
     let mut ids = Vec::new();
     let mut taken = std::collections::BTreeSet::new();
@@ -158,6 +174,35 @@ pub fn ids_for(names: impl IntoIterator<Item = String>) -> Vec<(String, String)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_choice_written_under_an_older_id_resolves_by_the_name_beside_it() {
+        let ids = vec!["samsung-ssd-990-pro".to_owned(), "wd-blue".to_owned()];
+        let names = vec!["Samsung SSD 990 PRO".to_owned(), "WD Blue".to_owned()];
+        let assignment = Assignment {
+            names: [("wd-blue".to_owned(), "Data drive".to_owned())]
+                .into_iter()
+                .collect(),
+            ..Assignment::default()
+        };
+        assert_eq!(index_of(&ids, &names, &assignment, "wd-blue"), Some(1));
+        // The name the choice was shown under, not the drive's own name.
+        let renamed = Assignment {
+            names: [("old-id".to_owned(), "Data drive".to_owned())]
+                .into_iter()
+                .collect(),
+            ..Assignment::default()
+        };
+        assert_eq!(index_of(&ids, &names, &renamed, "old-id"), None);
+        let by_name = Assignment {
+            names: [("old-id".to_owned(), "WD Blue".to_owned())]
+                .into_iter()
+                .collect(),
+            ..Assignment::default()
+        };
+        assert_eq!(index_of(&ids, &names, &by_name, "old-id"), Some(1));
+        assert_eq!(index_of(&ids, &names, &renamed, "gone"), None);
+    }
 
     #[test]
     fn a_file_with_an_unusable_entry_keeps_what_it_can() {

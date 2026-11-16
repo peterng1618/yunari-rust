@@ -283,10 +283,14 @@ fn device_of(
         return Lookup::NoneDetected;
     }
     let chosen = match assigned {
-        Some(assigned) => match nodes.iter().position(|node| node.id == assigned) {
-            Some(index) => index,
-            None => return Lookup::Gone,
-        },
+        Some(assigned) => {
+            let ids: Vec<String> = nodes.iter().map(|node| node.id.clone()).collect();
+            let names: Vec<String> = nodes.iter().map(|node| node.name.clone()).collect();
+            match crate::devices::index_of(&ids, &names, devices, assigned) {
+                Some(index) => index,
+                None => return Lookup::Gone,
+            }
+        }
         None => 0,
     };
     let node = &nodes[chosen];
