@@ -43,6 +43,8 @@ pub struct App {
     pub store: crate::store::Store,
     /// The store account this host holds, and the sign-ins it started.
     pub account: crate::store_routes::Account,
+    /// Provider credentials, sealed by the OS protector.
+    pub credentials: crate::credentials::Credentials,
 }
 
 pub type Shared = Arc<App>;

@@ -4,6 +4,7 @@
 pub mod assignment;
 pub mod autostart;
 pub mod config;
+pub mod credentials;
 pub mod displays;
 pub mod frame;
 pub mod hosting;
