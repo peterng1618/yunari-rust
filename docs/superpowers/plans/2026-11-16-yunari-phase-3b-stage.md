@@ -274,7 +274,7 @@ fn renaming_to_whitespace_clears_the_name() {}
   `grouping::group(document, &[String]) -> Option<String>` (>= 2 members, group placed at the union bounds, children rebased into group space, group id `group-<n>` free in the document, one history entry) and `grouping::ungroup(document, group_id) -> Vec<String>` (children baked back to world coordinates at the group's position in the root list);
   `clipboard::Clipboard { nodes: Vec<Node>, bindings: BTreeMap<String, Vec<Binding>>, assets: BTreeSet<String> }`, `Editor::copy(&mut self, &[String]) -> bool`, `Editor::paste(&mut self) -> bool` (fresh ids, offset 10, bindings re-keyed and runs repointed, asset paths kept and reported missing when the bytes are absent), `Editor::duplicate`, `Editor::cut` (copy then delete).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```rust
 #[test]
@@ -301,11 +301,11 @@ fn paste_offsets_by_ten_and_mints_fresh_ids_and_bindings() {}
 fn pasting_a_node_whose_asset_is_missing_still_pastes_and_reports_it() {}
 ```
 
-- [ ] **Step 2:** Run, see them fail.
-- [ ] **Step 3:** Implement the three modules against the document, using `Editor::edit` for one entry each.
-- [ ] **Step 4:** Wire commands and chords: `Ctrl+G` group, `Ctrl+Shift+G` ungroup, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` clipboard, `Ctrl+D` duplicate, plus toolbar entries for arrange and group. Unknown ids, cycles and locked nodes are refused with a status line.
-- [ ] **Step 5:** By hand: select two nodes, align left, distribute three, group, move the group, ungroup, duplicate, copy/paste, cut, undo each.
-- [ ] **Step 6:** Commit. `feat(editor): arrange, group and a clipboard`
+- [x] **Step 2:** Run, see them fail.
+- [x] **Step 3:** Implement the three modules against the document, using `Editor::edit` for one entry each.
+- [x] **Step 4:** Wire commands and chords: `Ctrl+G` group, `Ctrl+Shift+G` ungroup, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` clipboard, `Ctrl+D` duplicate, plus toolbar entries for arrange and group. Unknown ids, cycles and locked nodes are refused with a status line.
+- [x] **Step 5:** By hand: `Ctrl+G` turned two rectangles into one selected group, `Ctrl+Shift+G` put both back selected at their old places, `Ctrl+D` added two copies at +10, `Ctrl+C`/`Ctrl+V` did the same through the clipboard ("Pasted 2"), one `Ctrl+Z` per op undid it. Align and distribute have no chord and their toolbar buttons need pointer input; `arrange::apply` covers them by test.
+- [x] **Step 6:** Commit. `feat(editor): arrange, group and a clipboard`
 
 ### Task 8: Phase 3B exit check
 

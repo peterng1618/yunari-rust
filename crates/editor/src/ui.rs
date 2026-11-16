@@ -33,6 +33,7 @@ use yunari_render_raster::Images;
 use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
+use crate::arrange;
 use crate::document::{Editor, Source};
 use crate::layers::{self, Move as LayerMove};
 use crate::persistence::import_package;
@@ -293,8 +294,103 @@ impl EditorWindow {
                     self.refresh();
                 }
             }
+            Command::AlignLeft => self.arrange(arrange::Action::AlignLeft),
+            Command::AlignCenterX => self.arrange(arrange::Action::AlignCenterX),
+            Command::AlignRight => self.arrange(arrange::Action::AlignRight),
+            Command::AlignTop => self.arrange(arrange::Action::AlignTop),
+            Command::AlignCenterY => self.arrange(arrange::Action::AlignCenterY),
+            Command::AlignBottom => self.arrange(arrange::Action::AlignBottom),
+            Command::DistributeX => self.arrange(arrange::Action::DistributeX),
+            Command::DistributeY => self.arrange(arrange::Action::DistributeY),
+            Command::Group => {
+                let ids = self.selection.ids().to_vec();
+                match self.editor.group(&ids) {
+                    Some(id) => {
+                        self.selection.replace(id);
+                        self.refresh();
+                    }
+                    None => {
+                        self.status =
+                            Some(Status::error("Grouping needs two unlocked nodes"));
+                    }
+                }
+            }
+            Command::Ungroup => {
+                let Some(id) = self.selection.first().map(str::to_owned) else {
+                    self.status = Some(Status::error("Select a group to ungroup"));
+                    return;
+                };
+                let freed = self.editor.ungroup(&id);
+                if freed.is_empty() {
+                    self.status = Some(Status::error("That selection is not a group"));
+                } else {
+                    self.selection.set(freed);
+                    self.refresh();
+                }
+            }
+            Command::Copy => {
+                let ids = self.selection.ids().to_vec();
+                self.status = Some(if self.editor.copy(&ids) {
+                    Status::ok(format!("Copied {}", ids.len()))
+                } else {
+                    Status::error("Nothing selected to copy")
+                });
+            }
+            Command::Cut => {
+                let ids = self.selection.ids().to_vec();
+                if self.editor.cut(&ids) {
+                    self.selection.clear();
+                    self.refresh();
+                } else {
+                    self.status = Some(Status::error("Nothing selected to cut"));
+                }
+            }
+            Command::Paste => match self.editor.paste() {
+                Some(pasted) => {
+                    self.selection.set(pasted.ids.clone());
+                    self.status = Some(if pasted.missing_assets.is_empty() {
+                        Status::ok(format!("Pasted {}", pasted.ids.len()))
+                    } else {
+                        Status::error(format!(
+                            "Pasted, but missing pictures: {}",
+                            pasted.missing_assets.join(", ")
+                        ))
+                    });
+                    self.refresh();
+                }
+                None => self.status = Some(Status::error("Nothing to paste")),
+            },
+            Command::Duplicate => {
+                let ids = self.selection.ids().to_vec();
+                match self.editor.duplicate(&ids) {
+                    Some(pasted) => {
+                        self.selection.set(pasted.ids.clone());
+                        self.refresh();
+                    }
+                    None => self.status = Some(Status::error("Nothing selected to duplicate")),
+                }
+            }
         }
         cx.notify();
+    }
+
+    /// Aligns or distributes the selection, saying why when it cannot.
+    fn arrange(&mut self, action: arrange::Action) {
+        let ids = self.selection.ids().to_vec();
+        if ids.len() < action.needed() {
+            self.status = Some(Status::error(format!(
+                "That needs {} selected nodes",
+                action.needed()
+            )));
+            return;
+        }
+        let mut moved = false;
+        self.editor.edit(|document| moved = arrange::apply(document, &ids, action));
+        if moved {
+            self.refresh();
+        } else {
+            self.status = Some(Status::error("Nothing moved: a selected node is locked"));
+        }
     }
 
     fn add(&mut self, make: fn(&ThemeDocument) -> Node) {

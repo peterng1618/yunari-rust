@@ -1,8 +1,11 @@
 //! The authoring state: one document, its history and its saved baseline.
 
+pub mod arrange;
+pub mod clipboard;
 pub mod document;
 #[cfg(test)]
 pub mod fixtures;
+pub mod grouping;
 pub mod history;
 pub mod layers;
 pub mod persistence;

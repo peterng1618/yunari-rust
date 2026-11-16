@@ -13,10 +13,24 @@ pub enum Command {
     AddRectangle,
     AddText,
     DeleteSelected,
+    AlignLeft,
+    AlignCenterX,
+    AlignRight,
+    AlignTop,
+    AlignCenterY,
+    AlignBottom,
+    DistributeX,
+    DistributeY,
+    Group,
+    Ungroup,
+    Copy,
+    Cut,
+    Paste,
+    Duplicate,
 }
 
 impl Command {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 25] = [
         Self::New,
         Self::Open,
         Self::Save,
@@ -28,6 +42,20 @@ impl Command {
         Self::AddRectangle,
         Self::AddText,
         Self::DeleteSelected,
+        Self::AlignLeft,
+        Self::AlignCenterX,
+        Self::AlignRight,
+        Self::AlignTop,
+        Self::AlignCenterY,
+        Self::AlignBottom,
+        Self::DistributeX,
+        Self::DistributeY,
+        Self::Group,
+        Self::Ungroup,
+        Self::Copy,
+        Self::Cut,
+        Self::Paste,
+        Self::Duplicate,
     ];
 
     pub fn label(self) -> &'static str {
@@ -43,6 +71,20 @@ impl Command {
             Self::AddRectangle => "Rectangle",
             Self::AddText => "Text",
             Self::DeleteSelected => "Delete",
+            Self::AlignLeft => "Align L",
+            Self::AlignCenterX => "Centre X",
+            Self::AlignRight => "Align R",
+            Self::AlignTop => "Align T",
+            Self::AlignCenterY => "Centre Y",
+            Self::AlignBottom => "Align B",
+            Self::DistributeX => "Space X",
+            Self::DistributeY => "Space Y",
+            Self::Group => "Group",
+            Self::Ungroup => "Ungroup",
+            Self::Copy => "Copy",
+            Self::Cut => "Cut",
+            Self::Paste => "Paste",
+            Self::Duplicate => "Duplicate",
         }
     }
 
@@ -55,9 +97,24 @@ impl Command {
             Self::Export => "Ctrl+E",
             Self::Import => "Ctrl+I",
             Self::Undo => "Ctrl+Z",
-            Self::Redo => "Ctrl+Shift+Z",            Self::AddRectangle => "R",
+            Self::Redo => "Ctrl+Shift+Z",
+            Self::AddRectangle => "R",
             Self::AddText => "T",
             Self::DeleteSelected => "Del",
+            Self::AlignLeft => "",
+            Self::AlignCenterX => "",
+            Self::AlignRight => "",
+            Self::AlignTop => "",
+            Self::AlignCenterY => "",
+            Self::AlignBottom => "",
+            Self::DistributeX => "",
+            Self::DistributeY => "",
+            Self::Group => "Ctrl+G",
+            Self::Ungroup => "Ctrl+Shift+G",
+            Self::Copy => "Ctrl+C",
+            Self::Cut => "Ctrl+X",
+            Self::Paste => "Ctrl+V",
+            Self::Duplicate => "Ctrl+D",
         }
     }
 
@@ -78,6 +135,12 @@ impl Command {
             (true, true, "z") => Some(Self::Redo),
             // Windows' own redo chord, alongside the one every editor shares.
             (true, false, "y") => Some(Self::Redo),
+            (true, false, "g") => Some(Self::Group),
+            (true, true, "g") => Some(Self::Ungroup),
+            (true, false, "c") => Some(Self::Copy),
+            (true, false, "x") => Some(Self::Cut),
+            (true, false, "v") => Some(Self::Paste),
+            (true, false, "d") => Some(Self::Duplicate),
             (false, _, "delete" | "backspace") => Some(Self::DeleteSelected),
             (false, false, "r") => Some(Self::AddRectangle),
             (false, false, "t") => Some(Self::AddText),
@@ -107,6 +170,12 @@ mod tests {
             Command::from_key("delete", false, false, false),
             Some(Command::DeleteSelected)
         );
+        assert_eq!(Command::from_key("g", true, false, false), Some(Command::Group));
+        assert_eq!(
+            Command::from_key("g", true, true, false),
+            Some(Command::Ungroup)
+        );
+        assert_eq!(Command::from_key("v", true, false, false), Some(Command::Paste));
         assert_eq!(Command::from_key("s", false, false, false), None);
         assert_eq!(Command::from_key("q", true, false, false), None);
     }

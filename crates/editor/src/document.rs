@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use yunari_library::{Saved, StoredTheme};
 use yunari_model::document::{Node, ThemeDocument};
 
+use crate::clipboard::Clipboard;
 use crate::history::History;
 
 /// Where the open document belongs: nowhere yet, or a stored theme and the
@@ -31,6 +32,8 @@ pub struct Editor {
     burst: Option<ThemeDocument>,
     /// The bytes of every asset the document declares, by path.
     assets: BTreeMap<String, Vec<u8>>,
+    /// The last copy, which a paste inserts and no document state holds.
+    pub(crate) clipboard: Option<Clipboard>,
 }
 
 impl Editor {
@@ -41,6 +44,7 @@ impl Editor {
             source: Source::Unsaved,
             burst: None,
             assets: BTreeMap::new(),
+            clipboard: None,
         }
     }
 
@@ -56,6 +60,7 @@ impl Editor {
             },
             burst: None,
             assets: BTreeMap::new(),
+            clipboard: None,
         }
     }
 
