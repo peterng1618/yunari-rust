@@ -53,10 +53,10 @@
 **Interfaces:**
 - Produces: `GET /api/widget-packs` → `{packs:[{id,name,version,units:[{id,label}]}]}`; `POST /api/widget-packs` `{path}` copies a package into `<settings>/widget-packs/` after the reader accepts it; both loopback-only.
 
-- [ ] Test: a package placed in the settings folder is listed with its units; a phone gets 403; a package the reader refuses is not installed and the response carries its sentence.
-- [ ] Implement the routes and the folder reading (one directory scan per request; a file the reader refuses is skipped, not fatal).
+- [x] Test: a package placed in the settings folder is listed with its units; a phone gets 403; a package the reader refuses is not installed and the response carries its sentence.
+- [x] Implement the routes and the folder reading (one directory scan per request; a file the reader refuses is skipped, not fatal).
 - [x] Run the workspace gates.
-- [ ] Commit.
+- [x] Commit.
 
 ### Task 3: The editor inserts a unit
 
@@ -67,8 +67,8 @@
 **Interfaces:**
 - Produces: `widgets::{insert(editor: &mut Editor, unit: &packs::Unit, at: (f64, f64)) -> Result<String, String>}`; `Command::Widgets`; a dialog listing `packs::Pack` units.
 
-- [ ] Test: inserting a unit twice yields distinct node ids and binding owners, both roots at the requested offset, and one undo removes the second.
-- [ ] Test: an asset the unit declares lands in `document.assets` and in `editor.assets()` under its package path, without overwriting a different path's bytes.
-- [ ] Implement insertion, the dialog and the command (`Ctrl+Shift+W`).
+- [x] Test: inserting a unit twice yields distinct node ids and binding owners, both roots at the requested offset, and one undo removes the second.
+- [x] Test: an asset the unit declares lands in `document.assets` and in `editor.assets()` under its package path, without overwriting a different path's bytes.
+- [x] Implement insertion, the dialog and the command (`Ctrl+Shift+W`).
 - [x] Run the workspace gates.
-- [ ] Commit.
+- [x] Commit.

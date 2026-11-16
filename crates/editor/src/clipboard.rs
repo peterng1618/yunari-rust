@@ -121,7 +121,9 @@ fn asset_of(node: &Node) -> Option<String> {
 }
 
 /// Puts a copy of the clipboard into the document, offset and with fresh ids.
-fn insert(document: &mut ThemeDocument, clipboard: &Clipboard, offset: f64) -> Pasted {
+/// Shared with widget insertion, so a pasted card and an inserted one are the
+/// same operation.
+pub(crate) fn insert(document: &mut ThemeDocument, clipboard: &Clipboard, offset: f64) -> Pasted {
     let mut ids = BTreeMap::new();
     for node in &clipboard.nodes {
         map_ids(document, node, &mut ids);

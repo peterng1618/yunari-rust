@@ -11,6 +11,7 @@ pub mod http;
 pub mod identity;
 pub mod lock;
 pub mod mcp;
+pub mod packs_routes;
 pub mod pages;
 pub mod pairing;
 pub mod panels;

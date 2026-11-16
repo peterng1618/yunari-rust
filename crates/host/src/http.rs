@@ -109,6 +109,10 @@ pub fn router(app: Shared) -> axum::Router {
         // The store catalogue is read here, so no page talks to a third origin.
         .route("/api/store/themes", get(store_themes))
         .route("/api/mcp", post(crate::mcp::post))
+        .route(
+            "/api/widget-packs",
+            get(crate::packs_routes::list).post(crate::packs_routes::install),
+        )
         .route("/manifest.webmanifest", get(manifest))
         .with_state(app.clone());
     guarded.layer(axum::middleware::from_fn_with_state(
@@ -1090,7 +1094,7 @@ mod tests {
         app: Shared,
         uri: &str,
         peer: SocketAddr,
-        body: &'static str,
+        body: &str,
     ) -> (StatusCode, String) {
         use tower::ServiceExt;
         let request = Request::builder()
@@ -1098,7 +1102,7 @@ mod tests {
             .uri(uri)
             .header(header::HOST, "localhost:5227")
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body))
+            .body(Body::from(body.to_owned()))
             .unwrap();
         let (mut parts, body) = request.into_parts();
         parts.extensions.insert(ConnectInfo(peer));
@@ -1168,6 +1172,83 @@ mod tests {
         let (status, body) = ask_post(app, "/api/mcp", here, "not json").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("-32700"), "{body}");
+    }
+
+    /// One widget package on disk, so the install route is driven with a real
+    /// file rather than bytes in a test's imagination.
+    fn widget_package(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::io::Write;
+
+        let manifest = serde_json::json!({
+            "format": "yunari-widget-package",
+            "version": 1,
+            "widget": "widget.json",
+            "units": [{"id": "card", "label": "Card", "objectId": "card"}],
+        });
+        let widget = serde_json::json!({
+            "schemaVersion": "3.0.0",
+            "id": "cards",
+            "metadata": {"name": "Cards"},
+            "scene": {"objects": [{"type": "Rect", "id": "card"}]},
+        });
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
+        writer.start_file("manifest.json", options).unwrap();
+        writer
+            .write_all(&serde_json::to_vec(&manifest).unwrap())
+            .unwrap();
+        writer.start_file("widget.json", options).unwrap();
+        writer
+            .write_all(&serde_json::to_vec(&widget).unwrap())
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let path = dir.join("cards.yunari-widget-package");
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn widget_packs_are_installed_and_listed_for_this_pc_only() {
+        let app = app("widget-packs");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let phone = SocketAddr::from(([203, 0, 113, 9], 50000));
+        let path = widget_package(&app.config.settings_dir());
+        let body = format!(
+            r#"{{"path":{}}}"#,
+            serde_json::json!(path.to_string_lossy())
+        );
+        // A phone neither lists the host's packs nor installs over them.
+        let (status, _) = ask(app.clone(), "/api/widget-packs", phone).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = ask_post(app.clone(), "/api/widget-packs", phone, &body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, answer) = ask_post(app.clone(), "/api/widget-packs", here, &body).await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        assert!(answer.contains("\"card\""), "{answer}");
+        let (status, listing) = ask(app, "/api/widget-packs", here).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(listing.contains("Cards"), "{listing}");
+        assert!(listing.contains("\"card\""), "{listing}");
+    }
+
+    #[tokio::test]
+    async fn a_package_the_reader_refuses_is_a_400_with_its_sentence() {
+        let app = app("widget-packs-bad");
+        let here = SocketAddr::from(([127, 0, 0, 1], 50000));
+        let path = app
+            .config
+            .settings_dir()
+            .join("broken.yunari-widget-package");
+        std::fs::create_dir_all(app.config.settings_dir()).unwrap();
+        std::fs::write(&path, b"not a package").unwrap();
+        let body = format!(
+            r#"{{"path":{}}}"#,
+            serde_json::json!(path.to_string_lossy())
+        );
+        let (status, answer) = ask_post(app, "/api/widget-packs", here, &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(answer, yunari_packs::package::UNREADABLE);
     }
 
     #[tokio::test]

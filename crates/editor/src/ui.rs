@@ -7,6 +7,7 @@
 pub mod library_dialog;
 pub mod menus;
 pub mod prompt;
+pub mod widget_dialog;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,6 +35,7 @@ use yunari_render_raster::Images;
 use self::library_dialog::LibraryDialog;
 use self::menus::Command;
 use self::prompt::{Outcome, Prompt};
+use self::widget_dialog::WidgetDialog;
 use crate::arrange;
 use crate::assets;
 use crate::document::{Editor, Source};
@@ -93,6 +95,7 @@ enum Overlay {
     Import(Prompt),
     ImportAsset(Prompt),
     Library(LibraryDialog),
+    Widgets(WidgetDialog),
     Rename(Prompt),
     Field(Prompt),
     /// An action that would throw unsaved work away, waiting for an answer.
@@ -294,6 +297,9 @@ impl EditorWindow {
                     "Path to a .yunari-theme file",
                     "",
                 )));
+            }
+            Command::Widgets => {
+                self.overlay = Some(Overlay::Widgets(WidgetDialog::new(&self.packs_directory())));
             }
             Command::ImportAsset => {
                 self.overlay = Some(Overlay::ImportAsset(Prompt::new(
@@ -545,6 +551,31 @@ impl EditorWindow {
             Ok(id) => self.open_entry(&id, cx),
             Err(error) => self.status = Some(Status::error(error)),
         }
+    }
+
+    /// Where the host keeps the widget packs this PC has installed.
+    fn packs_directory(&self) -> PathBuf {
+        self.library
+            .root()
+            .parent()
+            .map(|app_dir| yunari_packs::directory(&app_dir.join("settings")))
+            .unwrap_or_else(|| yunari_packs::directory(Path::new("settings")))
+    }
+
+    /// Inserts one installed unit into the open theme.
+    fn insert_widget(&mut self, unit: yunari_packs::Unit, cx: &mut Context<Self>) {
+        self.overlay = None;
+        let label = unit.label.clone();
+        match crate::widgets::insert(&mut self.editor, &unit, crate::clipboard::PASTE_OFFSET) {
+            Ok(id) => {
+                self.selection.set(vec![id]);
+                self.point_images();
+                self.status = Some(Status::ok(format!("Inserted {label}")));
+                self.refresh();
+            }
+            Err(message) => self.status = Some(Status::error(message)),
+        }
+        cx.notify();
     }
 
     /// Takes a file from this PC into the open theme. The bytes are held until
@@ -1516,6 +1547,11 @@ impl EditorWindow {
                     Outcome::Submit(value) => self.guard(Resume::Import(value), cx),
                 }
             }
+            Overlay::Widgets(_) => {
+                if keystroke.key == "escape" {
+                    self.overlay = None;
+                }
+            }
             Overlay::ImportAsset(mut prompt) => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => self.overlay = Some(Overlay::ImportAsset(prompt)),
@@ -1943,6 +1979,7 @@ impl EditorWindow {
                 Self::prompt_panel(prompt, cx)
             }
             Some(Overlay::Library(dialog)) => library_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::Widgets(dialog)) => widget_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
                 div()

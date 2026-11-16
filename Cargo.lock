@@ -8859,6 +8859,7 @@ dependencies = [
  "serde_json",
  "yunari-library",
  "yunari-model",
+ "yunari-packs",
  "yunari-player",
  "yunari-providers",
  "yunari-render",
@@ -8899,10 +8900,12 @@ dependencies = [
  "tower",
  "yunari-library",
  "yunari-model",
+ "yunari-packs",
  "yunari-panels",
  "yunari-providers",
  "yunari-render",
  "yunari-render-raster",
+ "zip",
 ]
 
 [[package]]

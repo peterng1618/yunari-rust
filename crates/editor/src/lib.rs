@@ -19,6 +19,7 @@ pub mod tokens;
 pub mod transform;
 pub mod ui;
 pub mod viewport;
+pub mod widgets;
 
 pub use document::{Editor, Source};
 pub use history::History;
