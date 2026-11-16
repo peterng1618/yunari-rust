@@ -509,8 +509,13 @@ pub fn submit(app: &Shared, theme_id: &str) -> Result<Submitted, Refusal> {
     document.metadata.version = Some(version.clone());
     let (thumbnail, luminance) =
         crate::thumbnail::of(&document, &assets).map_err(|message| refuse(400, message))?;
-    let package = yunari_library::package::write_package(&document, &assets, Some(&thumbnail))
-        .map_err(|message| refuse(400, message))?;
+    let package = yunari_library::package::write_package(
+        &document,
+        &assets,
+        Some(&thumbnail),
+        theme.credits.as_ref(),
+    )
+    .map_err(|message| refuse(400, message))?;
     let envelope =
         serde_json::to_value(&document).map_err(|error| refuse(400, error.to_string()))?;
     let plan = client
@@ -523,7 +528,10 @@ pub fn submit(app: &Shared, theme_id: &str) -> Result<Submitted, Refusal> {
                     .name
                     .clone()
                     .unwrap_or_else(|| theme.entry.name.clone()),
-                credits: None,
+                credits: theme
+                    .credits
+                    .as_ref()
+                    .and_then(|credits| serde_json::to_value(credits).ok()),
             },
         )
         .map_err(|error| client_refusal(app, error))?;
@@ -534,6 +542,7 @@ pub fn submit(app: &Shared, theme_id: &str) -> Result<Submitted, Refusal> {
         id: theme_id,
         document: &document,
         assets: &assets,
+        credits: theme.credits.as_ref(),
         base: Some(&theme.base),
         overwrite: false,
     }) {

@@ -23,10 +23,12 @@ pub enum Pick {
     Wallpaper(String),
     /// A subscribed scene to write out as an editable project.
     Project(String),
-    /// One stock row: the source it came from and its own id within it.
+    /// One stock row: the source it came from, its own id within it, and the
+    /// credit the row knows.
     Stock {
         source: String,
         id: String,
+        credit: crate::assets::ImportCredit,
     },
 }
 
@@ -164,11 +166,25 @@ pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, O
                         continue;
                     };
                     let name = result["name"].as_str().unwrap_or(id);
+                    let field = |key: &str| {
+                        result[key]
+                            .as_str()
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned)
+                    };
                     choices.push(Choice {
                         label: format!("{name}  ·  {}", stock.label),
                         pick: Pick::Stock {
                             source: stock.id.to_owned(),
                             id: id.to_owned(),
+                            credit: crate::assets::ImportCredit {
+                                kind: kind.to_owned(),
+                                title: name.to_owned(),
+                                license: field("licence").unwrap_or_else(|| "Unknown".to_owned()),
+                                source_url: field("sourceUrl"),
+                                // An image row's subtitle is its photographer.
+                                author: (kind == "image").then(|| field("subtitle")).flatten(),
+                            },
                         },
                     });
                 }
@@ -197,7 +213,7 @@ pub fn bytes_of(pick: &Pick, credential: Option<&str>) -> Result<(String, Vec<u8
                 .ok_or_else(|| "That wallpaper has no preview to place.".to_owned())?;
             Ok((format!("wallpaper-{id}.jpg"), bytes))
         }
-        Pick::Stock { source, id } => {
+        Pick::Stock { source, id, .. } => {
             let keyed =
                 yunari_host::assets::stock(source).is_some_and(|stock| stock.requires.is_some());
             let key = keyed.then_some(credential).flatten();
@@ -320,6 +336,13 @@ mod tests {
             &Pick::Stock {
                 source: "colorhunt".to_owned(),
                 id: "1234".to_owned(),
+                credit: crate::assets::ImportCredit {
+                    kind: "gradient".to_owned(),
+                    title: "Dusk".to_owned(),
+                    license: "CC0-1.0".to_owned(),
+                    source_url: None,
+                    author: None,
+                },
             },
             None,
         )

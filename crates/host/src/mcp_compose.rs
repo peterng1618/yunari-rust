@@ -6,6 +6,7 @@
 //! call says why in a sentence and leaves the draft as it was.
 
 use serde_json::{Value, json};
+use yunari_model::credits::{CreditsAuthor, CreditsEntry, CreditsSource, ThemeCredits};
 use yunari_model::document::{
     Binding, ChartContent, ChartFamily, ChartSettings, ImageContent, ImageFit, Node, NodeKind,
     TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform, UnitDisplay,
@@ -215,14 +216,16 @@ pub fn tools() -> Value {
         },
         {
             "name": "import_asset",
-            "description": "Read a picture from this PC into the draft and declare it. PNG, JPEG, GIF, WebP and a plain SVG are accepted; a scripted SVG is refused.",
+            "description": "Declare an asset in the open draft from a finder result or a local file the user named. A local file needs the licence the user stated.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "assetRef": {"type": "string", "minLength": 1},
                     "path": {"type": "string", "minLength": 1},
+                    "license": {"type": "string", "minLength": 1},
+                    "author": {"type": "string"},
                     "themeId": theme_id()
                 },
-                "required": ["path"],
                 "additionalProperties": false
             }
         },
@@ -607,6 +610,7 @@ fn open_theme(app: &Shared, args: &Value) -> Result<Value, String> {
     let draft = Draft {
         document: stored.document,
         assets,
+        credits: stored.credits,
         base: Some(stored.base),
     };
     let theme_id = app
@@ -657,6 +661,7 @@ fn save_theme(app: &Shared, args: &Value) -> Result<Value, String> {
             id: &id,
             document: &draft.document,
             assets: &draft.assets,
+            credits: draft.credits.as_ref(),
             base: base.as_deref(),
             overwrite,
         })
@@ -1643,12 +1648,82 @@ fn remove_asset(app: &Shared, args: &Value) -> Result<Value, String> {
         }
         draft.document.assets.retain(|held| held.id != asset_id);
         draft.assets.remove(&asset.path);
+        draft.credits = draft
+            .credits
+            .as_ref()
+            .map(|credits| credits.without(&asset_id));
         Ok(json!({
             "themeId": draft.document.id,
             "removed": asset_id,
             "path": asset.path,
         }))
     })
+}
+
+/// The attribution one import writes.
+struct CreditFacts {
+    kind: String,
+    title: String,
+    licence: String,
+    source_url: Option<String>,
+    author: Option<String>,
+    workshop_id: Option<String>,
+}
+
+impl CreditFacts {
+    fn entry(&self, asset_id: &str) -> CreditsEntry {
+        CreditsEntry {
+            kind: self.kind.clone(),
+            title: self.title.clone(),
+            author: self.author.clone().map(|name| CreditsAuthor {
+                name: Some(name),
+                steam_id: None,
+            }),
+            source: (self.source_url.is_some() || self.workshop_id.is_some()).then(|| {
+                CreditsSource {
+                    url: self.source_url.clone(),
+                    workshop_id: self.workshop_id.clone(),
+                }
+            }),
+            license: self.licence.clone(),
+            changes: "Imported unchanged".to_owned(),
+            asset_id: Some(asset_id.to_owned()),
+        }
+    }
+}
+
+/// The facts a finder ref carries, already checked by the source it came from.
+fn credit_of_ref(reference: &Value, fetched: &Fetched) -> CreditFacts {
+    let field = |key: &str| {
+        reference
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let kind = field("kind").unwrap_or_else(|| "image".to_owned());
+    CreditFacts {
+        // An image row's subtitle is its photographer; an icon row's is a
+        // style, not a person.
+        author: (kind == "image").then(|| field("subtitle")).flatten(),
+        workshop_id: (field("source").as_deref() == Some("wallpaper-engine"))
+            .then(|| field("id"))
+            .flatten(),
+        title: field("name").unwrap_or_else(|| fetched.name.clone()),
+        licence: field("licence").unwrap_or_else(|| "Unknown".to_owned()),
+        source_url: field("sourceUrl"),
+        kind,
+    }
+}
+
+/// Adds one credit to a draft, replacing an earlier one for the same asset.
+fn credit_draft(draft: &mut Draft, entry: CreditsEntry) -> Result<(), String> {
+    let credits = match draft.credits.take() {
+        Some(held) => held.merged(entry)?,
+        None => ThemeCredits::new(Vec::new()).merged(entry)?,
+    };
+    draft.credits = Some(credits);
+    Ok(())
 }
 
 /// A font row's face, as the declaration needs it. A row that cannot name its
@@ -1699,6 +1774,14 @@ fn import_font(
     };
     let licence = field("licence");
     let source_url = field("sourceUrl");
+    let facts = CreditFacts {
+        kind: "font".to_owned(),
+        title: family.to_owned(),
+        licence: licence.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        source_url: source_url.clone(),
+        author: None,
+        workshop_id: None,
+    };
     let subset = font
         .get("subset")
         .and_then(Value::as_str)
@@ -1732,6 +1815,7 @@ fn import_font(
         };
         draft.document.assets.push(reference);
         draft.assets.insert(asset_path, fetched.bytes);
+        credit_draft(draft, facts.entry(&id))?;
         Ok(json!({
             "themeId": draft.document.id,
             "assetId": id,
@@ -1751,6 +1835,11 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
             (reference_bytes(app, &decoded)?, Some(decoded))
         }
         (None, Some(path)) => {
+            if text(args, "license").is_none() {
+                return Err(format!(
+                    "A local import needs the licence the user stated for \"{path}\"."
+                ));
+            }
             let meta = std::fs::metadata(&path).map_err(|error| format!("{path}: {error}"))?;
             if meta.len() > MAX_ASSET_BYTES {
                 return Err("That file is too large to import.".to_owned());
@@ -1795,10 +1884,22 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
             );
         }
     }
+    let kind_name = kind;
     let kind = match kind {
         "gif" => AssetKind::Gif,
         "svg" => AssetKind::Svg,
         _ => AssetKind::Image,
+    };
+    let facts = match &reference {
+        Some(reference) => credit_of_ref(reference, &fetched),
+        None => CreditFacts {
+            kind: kind_name.to_owned(),
+            title: fetched.name.clone(),
+            licence: text(args, "license").unwrap_or_else(|| "Unknown".to_owned()),
+            source_url: None,
+            author: text(args, "author"),
+            workshop_id: None,
+        },
     };
     with_draft(app, args, |draft| {
         let stem = asset_stem(&fetched.name);
@@ -1814,8 +1915,12 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
             kind,
             path: asset_path.clone(),
             sha256: Some(yunari_library::sha256_hex(&fetched.bytes)),
-            source_url: None,
-            license: None,
+            source_url: facts.source_url.clone(),
+            license: Some(yunari_model::document::AssetLicense {
+                name: Some(facts.licence.clone()),
+                url: facts.source_url.clone(),
+                attribution: None,
+            }),
             family: None,
             weight: None,
             style: None,
@@ -1824,6 +1929,7 @@ fn import_asset(app: &Shared, args: &Value) -> Result<Value, String> {
         };
         draft.document.assets.push(reference);
         draft.assets.insert(asset_path, fetched.bytes);
+        credit_draft(draft, facts.entry(&id))?;
         Ok(json!({"themeId": draft.document.id, "assetId": id}))
     })
 }
@@ -2603,7 +2709,7 @@ mod tests {
         let imported = call(
             &app,
             "import_asset",
-            &json!({"themeId": theme_id, "path": source}),
+            &json!({"themeId": theme_id, "path": source, "license": "Own work"}),
         )
         .expect("a tool")
         .expect("an asset");
@@ -2692,7 +2798,7 @@ mod tests {
         let imported = call(
             &app,
             "import_asset",
-            &json!({"themeId": theme_id, "path": source.display().to_string()}),
+            &json!({"themeId": theme_id, "path": source.display().to_string(), "license": "Own work"}),
         )
         .expect("a tool")
         .expect("an asset");

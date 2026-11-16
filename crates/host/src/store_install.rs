@@ -234,6 +234,7 @@ fn dashboard_theme(
                     id: &id,
                     document: &document,
                     assets: &package.assets,
+                    credits: package.credits.as_ref(),
                     base: None,
                     overwrite: true,
                 })
@@ -506,6 +507,7 @@ mod tests {
             &test_document("aurora"),
             &BTreeMap::new(),
             None,
+            None,
         )
         .expect("a written package");
         let installed = install(
@@ -535,8 +537,9 @@ mod tests {
         // place rather than creating a sibling.
         let mut updated = test_document("aurora");
         updated.metadata.name = Some("Aurora".to_owned());
-        let package = yunari_library::package::write_package(&updated, &BTreeMap::new(), None)
-            .expect("a written package");
+        let package =
+            yunari_library::package::write_package(&updated, &BTreeMap::new(), None, None)
+                .expect("a written package");
         let installed = install(
             &app,
             &request(Kind::DashboardTheme, &package),
@@ -563,6 +566,7 @@ mod tests {
         let package = yunari_library::package::write_package(
             &test_document("aurora"),
             &BTreeMap::new(),
+            None,
             None,
         )
         .expect("a written package");

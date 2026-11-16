@@ -7,9 +7,10 @@
 use std::collections::BTreeMap;
 
 use yunari_library::{Saved, StoredTheme};
+use yunari_model::credits::{CreditsAuthor, CreditsEntry, CreditsSource, ThemeCredits};
 use yunari_model::document::{AssetKind, AssetReference, Node, ThemeDocument};
 
-use crate::assets;
+use crate::assets::{self, ImportCredit};
 use crate::clipboard::Clipboard;
 use crate::history::History;
 
@@ -33,6 +34,9 @@ pub struct Editor {
     burst: Option<ThemeDocument>,
     /// The bytes of every asset the document declares, by path.
     assets: BTreeMap<String, Vec<u8>>,
+    /// The attribution the theme's imported assets carry. Attribution is not
+    /// part of the document an undo walks, so it lives beside the bytes.
+    credits: Option<ThemeCredits>,
     /// The last copy, which a paste inserts and no document state holds.
     pub(crate) clipboard: Option<Clipboard>,
 }
@@ -45,6 +49,7 @@ impl Editor {
             source: Source::Unsaved,
             burst: None,
             assets: BTreeMap::new(),
+            credits: None,
             clipboard: None,
         }
     }
@@ -61,12 +66,17 @@ impl Editor {
             },
             burst: None,
             assets: BTreeMap::new(),
+            credits: stored.credits,
             clipboard: None,
         }
     }
 
     pub fn document(&self) -> &ThemeDocument {
         self.history.current()
+    }
+
+    pub fn credits(&self) -> Option<&ThemeCredits> {
+        self.credits.as_ref()
     }
 
     pub fn source(&self) -> &Source {
@@ -86,6 +96,16 @@ impl Editor {
     /// editor will not draw. Returns the new asset's id; the bytes are held
     /// beside the document until a save writes them.
     pub fn import_asset(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, String> {
+        self.import_asset_with(name, bytes, None)
+    }
+
+    /// The same import, carrying the credit a finder row knows for its source.
+    pub fn import_asset_with(
+        &mut self,
+        name: &str,
+        bytes: Vec<u8>,
+        credit: Option<ImportCredit>,
+    ) -> Result<String, String> {
         let kind = assets::sniff(name, &bytes)?;
         if kind == AssetKind::Svg {
             let text =
@@ -105,6 +125,14 @@ impl Editor {
             assets::extension(kind),
         );
         let id = free_asset_id(self.document());
+        let source_url = credit.as_ref().and_then(|credit| credit.source_url.clone());
+        let license = credit
+            .as_ref()
+            .map(|credit| yunari_model::document::AssetLicense {
+                name: Some(credit.license.clone()),
+                url: source_url.clone(),
+                attribution: None,
+            });
         let reference = AssetReference {
             id: id.clone(),
             kind,
@@ -112,8 +140,8 @@ impl Editor {
             // The renderer trusts the bytes beside the document, so the digest
             // is recorded for whoever wants to check them later.
             sha256: Some(yunari_library::sha256_hex(&bytes)),
-            source_url: None,
-            license: None,
+            source_url,
+            license,
             family: None,
             weight: None,
             style: None,
@@ -122,6 +150,28 @@ impl Editor {
         };
         self.edit(|document| document.assets.push(reference));
         self.put_asset(path, bytes);
+        if let Some(credit) = credit {
+            let entry = CreditsEntry {
+                kind: credit.kind,
+                title: credit.title,
+                author: credit.author.map(|name| CreditsAuthor {
+                    name: Some(name),
+                    steam_id: None,
+                }),
+                source: credit.source_url.map(|url| CreditsSource {
+                    url: Some(url),
+                    workshop_id: None,
+                }),
+                license: credit.license,
+                changes: "Imported unchanged".to_owned(),
+                asset_id: Some(id.clone()),
+            };
+            let credits = match self.credits.take() {
+                Some(held) => held.merged(entry)?,
+                None => ThemeCredits::new(Vec::new()).merged(entry)?,
+            };
+            self.credits = Some(credits);
+        }
         Ok(id)
     }
 
@@ -503,6 +553,49 @@ mod tests {
     }
 
     #[test]
+    fn a_credited_import_lands_with_its_attribution() {
+        const PNG: &[u8] = &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        let mut editor = Editor::new(document());
+        let id = editor
+            .import_asset_with(
+                "Dusk.png",
+                PNG.to_vec(),
+                Some(ImportCredit {
+                    kind: "image".to_owned(),
+                    title: "Dusk".to_owned(),
+                    license: "CC0-1.0".to_owned(),
+                    source_url: Some("https://example.test/dusk".to_owned()),
+                    author: Some("A. Photographer".to_owned()),
+                }),
+            )
+            .expect("a credited import");
+        let asset = editor
+            .document()
+            .assets
+            .iter()
+            .find(|asset| asset.id == id)
+            .expect("the asset");
+        let license = asset.license.as_ref().expect("a licence");
+        assert_eq!(license.name.as_deref(), Some("CC0-1.0"));
+        assert_eq!(
+            asset.source_url.as_deref(),
+            Some("https://example.test/dusk")
+        );
+        let credits = editor.credits().expect("the credits the import carried");
+        assert_eq!(credits.entries.len(), 1);
+        let entry = &credits.entries[0];
+        assert_eq!(entry.asset_id.as_deref(), Some(id.as_str()));
+        assert_eq!(entry.license, "CC0-1.0");
+        assert_eq!(
+            entry
+                .author
+                .as_ref()
+                .and_then(|author| author.name.as_deref()),
+            Some("A. Photographer")
+        );
+    }
+
+    #[test]
     fn opening_a_stored_theme_starts_clean() {
         let mut editor = Editor::new(document());
         editor.rename_theme("Dirty");
@@ -517,6 +610,7 @@ mod tests {
             },
             document: document(),
             base: "base".to_owned(),
+            credits: None,
         });
         assert!(!editor.is_dirty());
         assert!(!editor.can_undo());

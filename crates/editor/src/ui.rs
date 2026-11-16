@@ -1218,8 +1218,12 @@ impl EditorWindow {
             .host
             .as_ref()
             .and_then(|host| host.credentials.get("unsplash"));
+        let credit = match &choice.pick {
+            asset_finder::Pick::Stock { credit, .. } => Some(credit.clone()),
+            _ => None,
+        };
         match asset_finder::bytes_of(&choice.pick, credential.as_deref()) {
-            Ok((name, bytes)) => match self.editor.import_asset(&name, bytes) {
+            Ok((name, bytes)) => match self.editor.import_asset_with(&name, bytes, credit) {
                 Ok(id) => {
                     self.point_images();
                     self.status = Some(Status::ok(format!("Imported {id}")));

@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use yunari_model::credits::ThemeCredits;
 use yunari_model::document::ThemeDocument;
 
 /// One working theme and the asset bytes it carries.
@@ -14,6 +15,8 @@ use yunari_model::document::ThemeDocument;
 pub struct Draft {
     pub document: ThemeDocument,
     pub assets: BTreeMap<String, Vec<u8>>,
+    /// The attribution the theme's assets imported so far.
+    pub credits: Option<ThemeCredits>,
     /// What a save was written against, when the draft came from the library.
     pub base: Option<String>,
 }
@@ -39,6 +42,7 @@ impl Drafts {
             Draft {
                 document,
                 assets: BTreeMap::new(),
+                credits: None,
                 base: None,
             },
         );

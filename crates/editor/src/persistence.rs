@@ -26,6 +26,7 @@ impl Editor {
             assets: self.assets(),
             base: base.as_deref(),
             overwrite,
+            credits: self.credits(),
         })?;
         self.mark_saved(saved.entry.id.clone(), saved.base.clone());
         Ok(saved)
@@ -60,6 +61,7 @@ impl Editor {
             assets: &assets,
             base: None,
             overwrite: false,
+            credits: self.credits(),
         })?;
         self.replace_assets(assets);
         // The document's id is part of it, but identity is not an edit: the id
@@ -73,7 +75,7 @@ impl Editor {
 
     /// The document as a portable package.
     pub fn export(&self) -> Result<Vec<u8>, String> {
-        package::write_package(self.document(), self.assets(), None)
+        package::write_package(self.document(), self.assets(), None, self.credits())
     }
 
     /// Opens a stored theme together with the asset bytes it declares. A save

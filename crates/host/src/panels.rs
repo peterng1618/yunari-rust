@@ -315,6 +315,7 @@ mod tests {
                     id: "fixture",
                     document: &document,
                     assets: &BTreeMap::new(),
+                    credits: None,
                     base: None,
                     overwrite: true,
                 })

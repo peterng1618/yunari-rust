@@ -1508,6 +1508,7 @@ mod tests {
                 id,
                 document: &document,
                 assets: &std::collections::BTreeMap::new(),
+                credits: None,
                 base: None,
                 overwrite: true,
             })

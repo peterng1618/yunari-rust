@@ -6,6 +6,17 @@
 
 use yunari_model::document::{AssetKind, AssetReference, ThemeDocument};
 
+/// What a finder row knows about the asset it will place, so the import lands
+/// with its attribution rather than as an anonymous file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportCredit {
+    pub kind: String,
+    pub title: String,
+    pub license: String,
+    pub source_url: Option<String>,
+    pub author: Option<String>,
+}
+
 /// A picture the raster backend decodes at frame time, and its own ceiling.
 pub const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 /// An SVG is text the raster backend parses; it is capped far lower.

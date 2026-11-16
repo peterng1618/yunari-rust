@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! <library>/<theme-id>/theme.json
+//! <library>/<theme-id>/credits.json
 //! <library>/<theme-id>/assets/<declared path>
 //! ```
 
@@ -13,8 +14,14 @@ use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
+use yunari_model::credits::ThemeCredits;
 use yunari_model::document::ThemeDocument;
 use yunari_model::validate::{ValidationIssue, is_stable_id, validate_document};
+
+/// The attribution member beside a theme document, in a folder and a package.
+pub const CREDITS: &str = "credits.json";
+/// The attribution member is a small list; anything larger is not one.
+pub const MAX_CREDITS_FILE_BYTES: u64 = 1024 * 1024;
 
 /// One theme file, in bytes.
 pub const MAX_THEME_FILE_BYTES: u64 = 32 * 1024 * 1024;
@@ -56,6 +63,8 @@ pub struct ThemeEntry {
 pub struct StoredTheme {
     pub entry: ThemeEntry,
     pub document: ThemeDocument,
+    /// The attribution member beside the document, when the theme carries one.
+    pub credits: Option<ThemeCredits>,
     pub base: String,
 }
 
@@ -64,6 +73,8 @@ pub struct SaveRequest<'a> {
     pub id: &'a str,
     pub document: &'a ThemeDocument,
     pub assets: &'a BTreeMap<String, Vec<u8>>,
+    /// The attribution member to write beside the document, if any.
+    pub credits: Option<&'a ThemeCredits>,
     /// The base of the copy this save is written against. `None` means the
     /// caller believes no theme exists under this id.
     pub base: Option<&'a str>,
@@ -137,9 +148,16 @@ impl Library {
         let document: ThemeDocument = read_document(&bytes)
             .map_err(|error| LibraryError::Unreadable(format!("{id}/theme.json: {error}")))?;
         let entry = entry_of(id, &document, file_time(&directory.join("theme.json")));
+        // A credits member that is not one, or names nothing usable, reads as
+        // no credits rather than keeping the theme from opening.
+        let credits = fs::read(directory.join(CREDITS))
+            .ok()
+            .filter(|bytes| bytes.len() as u64 <= MAX_CREDITS_FILE_BYTES)
+            .and_then(|bytes| ThemeCredits::read(&bytes));
         Ok(StoredTheme {
             entry,
             document,
+            credits,
             base,
         })
     }
@@ -248,7 +266,7 @@ impl Library {
         fs::create_dir_all(&self.root)?;
         let nonce = nonce();
         let staging = self.root.join(format!(".staging-{nonce}.{}", request.id));
-        write_theme(&staging, &bytes, request.assets)?;
+        write_theme(&staging, &bytes, request.assets, request.credits)?;
         // A theme read from the source editor's envelope is saved in this
         // model's shape. Keep its original bytes beside the native copy: a save
         // must not cost the author the file the other editor still reads.
@@ -301,6 +319,7 @@ impl Library {
             id: &copy_id,
             document: &document,
             assets: &assets,
+            credits: stored.credits.as_ref(),
             base: None,
             overwrite: false,
         })
@@ -358,9 +377,15 @@ fn write_theme(
     directory: &Path,
     document: &[u8],
     assets: &BTreeMap<String, Vec<u8>>,
+    credits: Option<&ThemeCredits>,
 ) -> io::Result<()> {
     fs::create_dir_all(directory.join("assets"))?;
     fs::write(directory.join("theme.json"), document)?;
+    if let Some(credits) = credits {
+        let member = serde_json::to_vec_pretty(credits)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        fs::write(directory.join(CREDITS), member)?;
+    }
     for (path, bytes) in assets {
         let file = directory.join(path);
         if let Some(parent) = file.parent() {
@@ -535,6 +560,7 @@ mod tests {
             id: &document.id,
             document,
             assets: &assets,
+            credits: None,
             base,
             overwrite,
         })
@@ -677,9 +703,66 @@ mod tests {
             id: "alpha",
             document: &document,
             assets: &assets,
+            credits: None,
             base: None,
             overwrite: false,
         });
         assert!(matches!(result, Err(LibraryError::Unreadable(_))));
+    }
+
+    #[test]
+    fn a_credits_member_is_stored_read_and_copied_with_its_theme() {
+        use yunari_model::credits::{CreditsEntry, CreditsSource, ThemeCredits};
+
+        let temp = TempLibrary::new();
+        let document = document("alpha");
+        let credits = ThemeCredits::new(vec![CreditsEntry::imported(
+            "image",
+            "Peak",
+            "Unsplash",
+            Some(CreditsSource {
+                url: Some("https://unsplash.com/photos/x".to_owned()),
+                workshop_id: None,
+            }),
+            "peak-1",
+        )]);
+        temp.library
+            .save(&SaveRequest {
+                id: "alpha",
+                document: &document,
+                assets: &BTreeMap::new(),
+                credits: Some(&credits),
+                base: None,
+                overwrite: false,
+            })
+            .expect("a save");
+        assert!(temp.library.root().join("alpha").join(CREDITS).is_file());
+        let read = temp.library.read("alpha").expect("the theme");
+        assert_eq!(read.credits.as_ref(), Some(&credits));
+
+        temp.library.duplicate("alpha").expect("a duplicate");
+        assert_eq!(
+            temp.library.read("alpha-copy").expect("the copy").credits,
+            Some(credits)
+        );
+
+        // A later save without credits does not leave the old member behind.
+        temp.library
+            .save(&SaveRequest {
+                id: "alpha",
+                document: &document,
+                assets: &BTreeMap::new(),
+                credits: None,
+                base: None,
+                overwrite: true,
+            })
+            .expect("a replacing save");
+        assert!(
+            temp.library
+                .read("alpha")
+                .expect("the theme")
+                .credits
+                .is_none()
+        );
     }
 }

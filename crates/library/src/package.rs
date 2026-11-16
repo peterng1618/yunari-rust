@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Write};
 
 use serde::{Deserialize, Serialize};
+use yunari_model::credits::ThemeCredits;
 use yunari_model::document::ThemeDocument;
 use yunari_model::validate::validate_document;
 use zip::write::SimpleFileOptions;
@@ -33,7 +34,7 @@ pub const MAX_THUMBNAIL_BYTES: usize = 2 * 1024 * 1024;
 pub const MANIFEST: &str = "manifest.json";
 pub const THEME: &str = "theme.json";
 pub const THUMBNAIL: &str = "thumbnail.png";
-pub const CREDITS: &str = "credits.json";
+pub use crate::store::CREDITS;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Manifest {
@@ -54,6 +55,7 @@ pub struct Package {
     pub document: ThemeDocument,
     pub assets: BTreeMap<String, Vec<u8>>,
     pub thumbnail: Option<Vec<u8>>,
+    pub credits: Option<ThemeCredits>,
 }
 
 /// Writes a theme and its assets as a package.
@@ -61,6 +63,7 @@ pub fn write_package(
     document: &ThemeDocument,
     assets: &BTreeMap<String, Vec<u8>>,
     thumbnail: Option<&[u8]>,
+    credits: Option<&ThemeCredits>,
 ) -> Result<Vec<u8>, String> {
     if let Err(issues) = validate_document(document) {
         return Err(issues.first().map_or_else(
@@ -85,13 +88,18 @@ pub fn write_package(
             return Err(format!("{path} cannot travel in a package."));
         }
     }
+    if credits
+        .is_some_and(|credits| credits.entries.len() > yunari_model::credits::MAX_CREDITS_ENTRIES)
+    {
+        return Err("A theme package carries at most 256 credits.".to_owned());
+    }
     let manifest = Manifest {
         format: "yunari-theme-package".to_owned(),
         kind: Some("theme".to_owned()),
         version: 1,
         theme: THEME.to_owned(),
         thumbnail: thumbnail.map(|_| THUMBNAIL.to_owned()),
-        credits: None,
+        credits: credits.map(|_| CREDITS.to_owned()),
     };
     let manifest = serde_json::to_vec(&manifest).map_err(|error| error.to_string())?;
     let theme = serde_json::to_vec(document).map_err(|error| error.to_string())?;
@@ -110,6 +118,10 @@ pub fn write_package(
     put(THEME, &theme)?;
     if let Some(thumbnail) = thumbnail {
         put(THUMBNAIL, thumbnail)?;
+    }
+    if let Some(credits) = credits {
+        let member = serde_json::to_vec_pretty(credits).map_err(|error| error.to_string())?;
+        put(CREDITS, &member)?;
     }
     for (path, bytes) in assets {
         put(path, bytes)?;
@@ -219,10 +231,18 @@ pub fn read_package(bytes: &[u8]) -> Result<Package, String> {
     if thumbnail.as_ref().is_some_and(|bytes| !is_png(bytes)) {
         return Err("the thumbnail is not a PNG.".to_owned());
     }
+    // A credits member the manifest names is read; one that is not a credits
+    // file reads as none rather than keeping the theme from importing.
+    let credits = manifest
+        .credits
+        .as_deref()
+        .and_then(|name| files.get(name))
+        .and_then(|bytes| ThemeCredits::read(bytes));
     Ok(Package {
         document,
         assets,
         thumbnail,
+        credits,
     })
 }
 
@@ -236,6 +256,7 @@ pub fn import_into(library: &Library, package: &Package) -> Result<Saved, Librar
             id: &candidate,
             document: &document,
             assets: &package.assets,
+            credits: package.credits.as_ref(),
             base: None,
             overwrite: false,
         });
@@ -359,7 +380,7 @@ mod tests {
     fn a_written_package_reads_back_with_its_assets() {
         let document = with_asset(document("alpha"));
         let assets = BTreeMap::from([("assets/a.png".to_owned(), vec![1, 2, 3])]);
-        let bytes = write_package(&document, &assets, None).expect("a package");
+        let bytes = write_package(&document, &assets, None, None).expect("a package");
         let package = read_package(&bytes).expect("a readable package");
         assert_eq!(package.document, document);
         assert_eq!(package.assets, assets);
@@ -415,6 +436,7 @@ mod tests {
             id: "alpha",
             document: &document("alpha"),
             assets: &BTreeMap::new(),
+            credits: None,
             base: None,
             overwrite: false,
         });
@@ -423,9 +445,47 @@ mod tests {
             document: document("alpha"),
             assets: BTreeMap::new(),
             thumbnail: None,
+            credits: None,
         };
         let saved = import_into(&library, &package).expect("an imported copy");
         assert_eq!(saved.entry.id, "alpha-2");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_package_carries_its_credits_member_through_a_round_trip() {
+        use yunari_model::credits::{CreditsEntry, ThemeCredits};
+
+        let credits = ThemeCredits::new(vec![CreditsEntry::imported(
+            "image", "Peak", "Unsplash", None, "peak-1",
+        )]);
+        let bytes = write_package(&document("alpha"), &BTreeMap::new(), None, Some(&credits))
+            .expect("a package");
+        let read = read_package(&bytes).expect("the package reads");
+        assert_eq!(read.credits, Some(credits.clone()));
+
+        // A member the manifest does not name is not attributed.
+        let manifest =
+            br#"{"format":"yunari-theme-package","kind":"theme","version":1,"theme":"theme.json"}"#;
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        let mut put = |name: &str, bytes: &[u8]| {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        };
+        put(MANIFEST, manifest);
+        put(
+            THEME,
+            &serde_json::to_vec(&document("alpha")).expect("a theme"),
+        );
+        put(
+            CREDITS,
+            &serde_json::to_vec(&credits).expect("a credits member"),
+        );
+        let bytes = writer.finish().expect("a zip").into_inner();
+        assert_eq!(
+            read_package(&bytes).expect("the package reads").credits,
+            None
+        );
     }
 }
