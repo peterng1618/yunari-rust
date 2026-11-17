@@ -36,7 +36,7 @@ Both captures are regenerated, never committed (`.gitignore: /test-results/`).
 | Header is one row | pass | brand, `[Themes\|Editor\|Settings]`, toolbar, pane toggles; no wrapping at either size |
 | Brand, three modes, toolbar visible | pass | mode segments carry the source's icons; toolbar shows in Editor mode only |
 | Rail, left pane, stage, inspector all have width | pass | 46 / 246 / 1fr / 276 fixed columns with visible dividers |
-| Status bar | pass | document + save state left, zoom + message right |
+| Status bar | pass | object/selection/opened counts and save state left, message and live/offline right |
 | No clipped control row | pass | toolbar and header fit at 1024x700 logical |
 | Theme | pass (intentional divergence) | Graphite palette, directed by the user as the prioritized shell theme; source default capture is Editorial/light |
 

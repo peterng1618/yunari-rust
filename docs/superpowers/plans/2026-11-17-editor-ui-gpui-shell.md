@@ -30,7 +30,7 @@
 - **Fixed pane sizing.** The old left and right panes hard-code `w(px(220.0))` and `w(px(260.0))` and the canvas uses `flex_1()`. The shell owns 246px / 1fr / 276px columns; the pane bodies fill their column and the stage keeps `min_w(px(0.0))` so it shrinks.
 - **Keyboard focus.** The root `focus` handle currently owns every shortcut. The header's buttons and toggles must not leave the root unfocused after a click; type an arrow key after clicking a mode toggle to confirm nudging still works.
 - **Mode persistence.** Switching Themes/Editor/Settings must not clear `editor`, `selection`, `expanded` or `overlay`. The editor body is hidden with the state intact.
-- **Long status text.** A save error plus document name plus zoom plus selection must not clip or push the right region off at 1024px.
+- **Long status text.** A save error plus the object/selection/opened text must not clip or push the live indicator off at 1024px.
 
 ---
 

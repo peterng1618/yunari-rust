@@ -367,20 +367,19 @@ impl EditorWindow {
             .name
             .clone()
             .unwrap_or_else(|| document.id.clone());
-        let state = if self.editor.is_dirty() {
-            "unsaved changes"
-        } else {
-            "saved"
-        };
+        let objects = crate::layers::count(document);
 
-        let mut left = h_flex().gap_2().child(format!("{name} · {state}"));
-        if !self.selection.is_empty() {
-            left = left.child(format!("{} selected", self.selection.len()));
+        // The source's order: how much is there, what is chosen, what is open.
+        let mut left = h_flex()
+            .gap_2()
+            .child(format!("{objects} objects"))
+            .child(format!("{} selected", self.selection.len()))
+            .child(format!("Opened {name}"));
+        if self.editor.is_dirty() {
+            left = left.child("unsaved changes");
         }
 
-        let mut right = h_flex()
-            .gap_2()
-            .child(format!("{:.0}%", self.viewport.scale * 100.0));
+        let mut right = h_flex().gap_2();
         if let Some(status) = &self.status {
             right = right.child(
                 div()
@@ -392,6 +391,18 @@ impl EditorWindow {
                     .child(status.text.clone()),
             );
         }
+        // `live` is the host being reachable, as the source's indicator reads.
+        let live = self.host.is_some();
+        right = right.child(
+            h_flex()
+                .gap_1()
+                .child(div().text_color(if live {
+                    cx.theme().success
+                } else {
+                    cx.theme().muted_foreground
+                }).child(if live { IconName::Check } else { IconName::CircleX }))
+                .child(if live { "live" } else { "offline" }),
+        );
 
         StatusBar::new().left(left).right(right)
     }
