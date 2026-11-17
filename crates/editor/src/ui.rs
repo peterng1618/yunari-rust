@@ -125,6 +125,13 @@ enum Overlay {
     Store(StoreDialog),
     /// The `?` key reference: every command and its chord.
     Shortcuts,
+    /// The canvas's menu, opened where the pointer pressed. Right-pressing an
+    /// object selects it and offers its commands; a press on empty canvas
+    /// offers what can be inserted.
+    ContextMenu {
+        at: Point<Pixels>,
+        object: Option<String>,
+    },
     Rename(Prompt),
     Field(Prompt),
     /// A binding's key chosen from the host's measured catalogue.
@@ -236,6 +243,9 @@ pub struct EditorWindow {
     /// Where the canvas was last painted, so a click can be turned into an
     /// artboard point.
     canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The window's height, so a menu opened near the foot can be kept on
+    /// screen. Refreshed every render.
+    window_height: Pixels,
     /// The author's camera. Changes never enter history.
     viewport: Viewport,
     /// Whether the author has moved the camera; until they do the artboard is
@@ -261,6 +271,97 @@ pub struct EditorWindow {
     /// The rail slot the left pane is showing.
     left_pane: LeftPane,
 }
+
+/// Everything the product can insert, grouped as the source's Add pane groups
+/// them. The pane and the empty-canvas context menu both read this, so a
+/// right-click cannot offer a poorer list than the pane one gesture away.
+pub(super) const INSERT_GROUPS: [(&str, &[Command]); 4] = [
+    (
+        "Text",
+        &[
+            Command::AddText,
+            Command::AddVerticalText,
+            Command::TypographyPreset,
+        ],
+    ),
+    (
+        "Shapes",
+        &[
+            Command::AddRectangle,
+            Command::AddEllipse,
+            Command::AddLine,
+            Command::AddPath,
+            Command::AddPathPreset,
+            Command::AddArc,
+            Command::AddWedge,
+        ],
+    ),
+    (
+        "Charts",
+        &[
+            Command::AddGauge,
+            Command::AddLineChart,
+            Command::AddBarChart,
+            Command::AddPieChart,
+            Command::AddRadarChart,
+            Command::AddPolarBar,
+        ],
+    ),
+    ("Media", &[Command::AddImage]),
+];
+
+/// One row of the canvas menu: a command, or a restack the registry does not
+/// name. The words are the source's `object-actions.ts` labels.
+#[derive(Clone, Copy)]
+enum CanvasMenuEntry {
+    Command(Command),
+    Restack(LayerMove),
+}
+
+impl CanvasMenuEntry {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Command(command) => command.label(),
+            Self::Restack(LayerMove::Front) => "Bring to front",
+            Self::Restack(LayerMove::Forward) => "Bring forward",
+            Self::Restack(LayerMove::Backward) => "Send backward",
+            Self::Restack(LayerMove::Back) => "Send to back",
+        }
+    }
+}
+
+/// The object menu's groups, in the source's registry order.
+const OBJECT_MENU: [&[CanvasMenuEntry]; 5] = [
+    &[
+        CanvasMenuEntry::Command(Command::Duplicate),
+        CanvasMenuEntry::Command(Command::Copy),
+        CanvasMenuEntry::Command(Command::Cut),
+        CanvasMenuEntry::Command(Command::Paste),
+        CanvasMenuEntry::Command(Command::DeleteSelected),
+    ],
+    &[
+        CanvasMenuEntry::Command(Command::Group),
+        CanvasMenuEntry::Command(Command::Ungroup),
+    ],
+    &[
+        CanvasMenuEntry::Restack(LayerMove::Front),
+        CanvasMenuEntry::Restack(LayerMove::Forward),
+        CanvasMenuEntry::Restack(LayerMove::Backward),
+        CanvasMenuEntry::Restack(LayerMove::Back),
+    ],
+    &[
+        CanvasMenuEntry::Command(Command::AlignLeft),
+        CanvasMenuEntry::Command(Command::AlignCenterX),
+        CanvasMenuEntry::Command(Command::AlignRight),
+        CanvasMenuEntry::Command(Command::AlignTop),
+        CanvasMenuEntry::Command(Command::AlignCenterY),
+        CanvasMenuEntry::Command(Command::AlignBottom),
+    ],
+    &[
+        CanvasMenuEntry::Command(Command::DistributeX),
+        CanvasMenuEntry::Command(Command::DistributeY),
+    ],
+];
 
 impl EditorWindow {
     fn new(library: Library, host: Option<Shared>, cx: &mut Context<Self>) -> Self {
@@ -299,6 +400,7 @@ impl EditorWindow {
             status: None,
             focus: cx.focus_handle(),
             canvas_bounds: Rc::new(Cell::new(None)),
+            window_height: px(0.0),
             viewport: Viewport {
                 scale: 1.0,
                 offset: (0.0, 0.0),
@@ -1822,6 +1924,29 @@ impl EditorWindow {
         ))
     }
 
+    /// Right-press over the canvas. The source selects the object under the
+    /// pointer before opening the menu; an empty press leaves the selection
+    /// alone and offers what can be inserted.
+    fn canvas_context(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let local = point(
+            event.position.x - bounds.origin.x,
+            event.position.y - bounds.origin.y,
+        );
+        let (x, y) = self.viewport.to_scene(local);
+        let object = selection::hit(self.editor.document(), x, y);
+        if let Some(id) = object.clone() {
+            self.selection.replace(id);
+        }
+        self.overlay = Some(Overlay::ContextMenu {
+            at: event.position,
+            object,
+        });
+        cx.notify();
+    }
+
     /// The transforms a move or nudge may change: the unlocked selected nodes.
     fn start_transforms(&self) -> Vec<(String, Transform)> {
         let document = self.editor.document();
@@ -2361,40 +2486,7 @@ impl EditorWindow {
             Sizable, button::{Button, ButtonVariants}, h_flex,
         };
 
-        const GROUPS: [(&str, &[Command]); 4] = [
-            (
-                "Text",
-                &[
-                    Command::AddText,
-                    Command::AddVerticalText,
-                    Command::TypographyPreset,
-                ],
-            ),
-            (
-                "Shapes",
-                &[
-                    Command::AddRectangle,
-                    Command::AddEllipse,
-                    Command::AddLine,
-                    Command::AddPath,
-                    Command::AddPathPreset,
-                    Command::AddArc,
-                    Command::AddWedge,
-                ],
-            ),
-            (
-                "Charts",
-                &[
-                    Command::AddGauge,
-                    Command::AddLineChart,
-                    Command::AddBarChart,
-                    Command::AddPieChart,
-                    Command::AddRadarChart,
-                    Command::AddPolarBar,
-                ],
-            ),
-            ("Media", &[Command::AddImage]),
-        ];
+        const GROUPS: [(&str, &[Command]); 4] = INSERT_GROUPS;
 
         let (foreground, muted) = (cx.theme().foreground, cx.theme().muted_foreground);
         let mut children: Vec<AnyElement> = Vec::new();
@@ -2987,6 +3079,13 @@ impl EditorWindow {
                     self.overlay = Some(Overlay::Shortcuts);
                 }
             }
+            // Any key but Escape leaves the canvas menu where it is; Escape is
+            // its only keyboard exit until the rows take focus.
+            menu @ Overlay::ContextMenu { .. } => {
+                if keystroke.key != "escape" {
+                    self.overlay = Some(menu);
+                }
+            }
             Overlay::BridgePort { dialog, mut prompt } => {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => {
@@ -3264,6 +3363,10 @@ impl EditorWindow {
                 MouseButton::Middle,
                 cx.listener(|this, event: &MouseDownEvent, _, _| this.pan_start(event.position)),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _, cx| this.canvas_context(event, cx)),
+            )
             .on_mouse_move(
                 cx.listener(|this, event: &MouseMoveEvent, _, cx| this.canvas_drag(event, cx)),
             )
@@ -3507,6 +3610,155 @@ impl EditorWindow {
         }
     }
 
+    /// The canvas menu: a cursor-anchored list of the object's commands, or of
+    /// everything insertable when the press missed every object.
+    fn context_menu_layer(
+        &self,
+        at: Point<Pixels>,
+        object: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use gpui_kit::component::ActiveTheme;
+        use gpui_kit::component::scroll::ScrollableElement;
+
+        let (foreground, hover, border, panel, muted) = (
+            cx.theme().foreground,
+            cx.theme().muted,
+            cx.theme().border,
+            cx.theme().popover,
+            cx.theme().muted_foreground,
+        );
+        let mut entries: Vec<AnyElement> = Vec::new();
+        let row = |entry: CanvasMenuEntry, entries: &mut Vec<AnyElement>| {
+            let label = entry.label();
+            entries.push(
+                div()
+                    .id(format!("canvas-menu-{label}"))
+                    .px_3()
+                    .py_0p5()
+                    .text_sm()
+                    .text_color(foreground)
+                    .cursor_pointer()
+                    .hover(|this| this.bg(hover))
+                    .child(label)
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            this.overlay = None;
+                            match entry {
+                                CanvasMenuEntry::Command(command) => {
+                                    this.apply(command, window, cx)
+                                }
+                                CanvasMenuEntry::Restack(step) => {
+                                    if let Some(id) = this.selection.first().map(str::to_owned) {
+                                        this.editor.raise(&id, step);
+                                        this.refresh();
+                                        cx.notify();
+                                    }
+                                }
+                            }
+                        },
+                    ))
+                    .into_any_element(),
+            );
+        };
+        let divider = |entries: &mut Vec<AnyElement>| {
+            entries.push(div().h(px(1.0)).w_full().bg(border).into_any_element());
+        };
+        if object.is_some() {
+            for (index, group) in OBJECT_MENU.iter().enumerate() {
+                if index > 0 {
+                    divider(&mut entries);
+                }
+                for entry in group.iter().copied() {
+                    row(entry, &mut entries);
+                }
+            }
+        } else {
+            for (index, (title, commands)) in INSERT_GROUPS.iter().enumerate() {
+                if index > 0 {
+                    divider(&mut entries);
+                }
+                entries.push(
+                    div()
+                        .px_3()
+                        .pt_2()
+                        .pb_1()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(*title)
+                        .into_any_element(),
+                );
+                for command in commands.iter().copied() {
+                    row(CanvasMenuEntry::Command(command), &mut entries);
+                }
+            }
+        }
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                            this.overlay = None;
+                            cx.notify();
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                            this.overlay = None;
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(
+                // `anchored` is gpui's own placement: it keeps the panel inside
+                // the window, flipping it up when the press was near the foot.
+                anchored()
+                    .position(point(
+                        at.x,
+                        // Flip the panel above the press when it would run off
+                        // the foot; `anchored` alone does not shrink it.
+                        if at.y + px(520.0) > self.window_height - px(8.0) {
+                            (at.y - px(520.0)).max(px(8.0))
+                        } else {
+                            at.y
+                        },
+                    ))
+                    .anchor(Anchor::TopLeft)
+                    .child(
+                        div()
+                            .w(px(200.0))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border)
+                            .bg(panel)
+                            .child(
+                                div()
+                                    .h(self.window_height.min(px(520.0)))
+                                    .min_h(px(0.0))
+                                    .overflow_y_scrollbar()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .py_1()
+                                            .children(entries),
+                                    ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// The `?` reference: the source's own rows, one column per group, in the
     /// order the source's table declares them.
     fn shortcuts_panel(cx: &mut Context<Self>) -> AnyElement {
@@ -3660,6 +3912,10 @@ impl EditorWindow {
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Shortcuts) => Self::shortcuts_panel(cx),
+            // A menu is anchored to the gesture, not to a dialog's centre.
+            Some(Overlay::ContextMenu { at, object }) => {
+                return Some(self.context_menu_layer(*at, object.clone(), cx));
+            }
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
                 div()
@@ -3778,6 +4034,7 @@ impl Render for EditorWindow {
             .ok();
             close
         });
+        self.window_height = window.bounds().size.height;
         div()
             .size_full()
             .relative()
@@ -4330,6 +4587,45 @@ mod tests {
         export_path, free_id, image_node, images_for, line_node, place, rectangle_node, slug,
         starter, suggested_id,
     };
+
+    #[test]
+    fn the_canvas_menu_offers_the_sources_object_commands_in_order() {
+        use super::{CanvasMenuEntry, OBJECT_MENU};
+
+        let labels: Vec<_> = OBJECT_MENU
+            .iter()
+            .flat_map(|group| group.iter())
+            .map(|entry| entry.label())
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Duplicate",
+                "Copy",
+                "Cut",
+                "Paste",
+                "Delete",
+                "Group",
+                "Ungroup",
+                "Bring to front",
+                "Bring forward",
+                "Send backward",
+                "Send to back",
+                "Align L",
+                "Centre X",
+                "Align R",
+                "Align T",
+                "Centre Y",
+                "Align B",
+                "Space X",
+                "Space Y",
+            ]
+        );
+        assert!(matches!(
+            OBJECT_MENU[2][0],
+            CanvasMenuEntry::Restack(_)
+        ));
+    }
 
     #[test]
     fn an_imported_picture_draws_before_the_theme_is_saved() {

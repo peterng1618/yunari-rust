@@ -56,9 +56,14 @@ the rail's active-slot press closes it, matching the source's rail press.
 - **Rail pane bodies.** All six slots have bodies: Layers, Add, Widgets,
   Assets, Design tokens and Theme settings. Pane-level drag/drop, rename and
   keyboard tree navigation remain P2/P3.
-- **Stage chrome.** Artboard label chip, zoom/fit cluster, the inspector toggle
-  and the bottom asset button are in place. Canvas context menu, snap guides
-  against the source and drag feedback remain P3.
+- **Stage chrome.** Artboard label chip, zoom/fit cluster, the inspector toggle,
+  the bottom asset button and the canvas context menu are in place. A
+  right-press selects the object under the pointer and offers the source's
+  object commands; a press on empty canvas offers the Add pane's own insert
+  groups, from the one `INSERT_GROUPS` table the pane reads too. The panel
+  flips above the press when it would run off the foot, and bounds itself to
+  520px so a short window scrolls it instead of clipping it. Snap guides against
+  the source and drag feedback remain P3.
 - **Layer rows** print raw ids instead of the source's kind column. P2.
 - **Inspector scrolling.** The panes keep a wheel offset but their rows have no
   scrollbar and the estimate is row-count based. Replace with the kit scroll
