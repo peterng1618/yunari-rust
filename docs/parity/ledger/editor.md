@@ -54,8 +54,9 @@ the rail's active-slot press closes it, matching the source's rail press.
   widget, Open display / Find assets. P3 (commands).
 - **Rail pane bodies.** Layers, Assets, Design tokens and Theme settings have
   bodies; Add and Widgets still show a named placeholder. P2 (panels).
-- **Stage chrome.** Artboard label chip, zoom/fit cluster and the bottom asset
-  button are absent. P3 (canvas).
+- **Stage chrome.** Artboard label chip, zoom/fit cluster, the inspector toggle
+  and the bottom asset button are in place. Canvas context menu, snap guides
+  against the source and drag feedback remain P3.
 - **Layer rows** print raw ids instead of the source's kind column. P2.
 - **Inspector scrolling.** The panes keep a wheel offset but their rows have no
   scrollbar and the estimate is row-count based. Replace with the kit scroll

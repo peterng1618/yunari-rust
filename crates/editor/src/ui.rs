@@ -3123,7 +3123,11 @@ impl EditorWindow {
                 cx.listener(|this, _: &MouseUpEvent, _, _| this.panning = None),
             )
             .child(
-                canvas(
+                div()
+                    .relative()
+                    .size_full()
+                    .child(
+                        canvas(
                     move |bounds, _, _| {
                         bounds_cell.set(Some(bounds));
                         bounds
@@ -3183,7 +3187,169 @@ impl EditorWindow {
                     },
                 )
                 .size_full(),
+                    )
+                    .child(self.stage_overlay(cx)),
             )
+    }
+
+    /// The stage's floating controls: zoom in/out, the present scale, fit,
+    /// and the inspector toggle. Overlay chrome, not document content.
+    fn stage_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::{
+            IconName, Sizable, button::{Button, ButtonVariants}, h_flex,
+        };
+
+        let theme = cx.theme();
+        let (panel, border, foreground) = (
+            theme.popover,
+            theme.border,
+            theme.foreground,
+        );
+        let present = format!("{:.0}%", self.viewport.scale * 100.0);
+        let right = self.right_collapsed;
+        let document = self.editor.document();
+        let label = document
+            .metadata
+            .name
+            .clone()
+            .unwrap_or_else(|| document.id.clone());
+        let board = (
+            self.viewport.offset.0,
+            (self.viewport.offset.1 - 28.0).max(4.0),
+        );
+        let cluster = h_flex()
+            .absolute()
+            .top(px(12.0))
+            .right(px(12.0))
+            .gap_1()
+            .p_1()
+            .rounded_md()
+            .bg(panel)
+            .border_1()
+            .border_color(border)
+            .child(
+                Button::new("stage-inspector")
+                    .ghost()
+                    .small()
+                    .icon(IconName::PanelRight)
+                    .tooltip(if right {
+                        "Show inspector"
+                    } else {
+                        "Hide inspector"
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.toggle_right_pane(cx)
+                    })),
+            )
+            .child(
+                Button::new("stage-zoom-out")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Minus)
+                    .tooltip("Zoom out")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.zoom_stage(1.0 / ZOOM_STEP, cx)
+                    })),
+            )
+            .child(
+                div()
+                    .id("stage-zoom-reset")
+                    .w(px(46.0))
+                    .text_xs()
+                    .text_center()
+                    .text_color(foreground)
+                    .cursor_pointer()
+                    .child(present)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.reset_stage(cx)
+                    })),
+            )
+            .child(
+                Button::new("stage-zoom-in")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Plus)
+                    .tooltip("Zoom in")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.zoom_stage(ZOOM_STEP, cx)
+                    })),
+            )
+            .child(
+                Button::new("stage-fit")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Maximize)
+                    .tooltip("Fit artboard")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.fit_stage(cx))),
+            );
+        div()
+            .absolute()
+            .inset_0()
+            .child(cluster)
+            .child(
+                div()
+                    .id("stage-label")
+                    .absolute()
+                    .left(px(board.0))
+                    .top(px(board.1))
+                    .px_2()
+                    .py_0p5()
+                    .rounded_full()
+                    .bg(panel)
+                    .border_1()
+                    .border_color(border)
+                    .text_xs()
+                    .text_color(foreground)
+                    .cursor_pointer()
+                    .child(label)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.fit_stage(cx))),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(14.0))
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        Button::new("stage-assets")
+                            .ghost()
+                            .small()
+                            .icon(IconName::GalleryVerticalEnd)
+                            .tooltip("Find assets")
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.apply(Command::AssetFinder, window, cx)
+                            })),
+                    ),
+            )
+    }
+
+    fn zoom_stage(&mut self, factor: f32, cx: &mut Context<Self>) {
+        if let Some(bounds) = self.canvas_bounds.get() {
+            let board = self.artboard();
+            self.viewport.zoom_by(factor, bounds, board);
+            self.camera_touched = true;
+            cx.notify();
+        }
+    }
+
+    fn reset_stage(&mut self, cx: &mut Context<Self>) {
+        if let Some(bounds) = self.canvas_bounds.get() {
+            let board = self.artboard();
+            self.viewport = Viewport::reset(bounds, board);
+            self.camera_touched = true;
+            cx.notify();
+        }
+    }
+
+    fn fit_stage(&mut self, cx: &mut Context<Self>) {
+        if let Some(bounds) = self.canvas_bounds.get() {
+            let board = self.artboard();
+            self.viewport.fit(bounds, board);
+            self.camera_touched = false;
+            cx.notify();
+        }
     }
 
     fn prompt_panel(prompt: &Prompt, cx: &mut Context<Self>) -> AnyElement {
