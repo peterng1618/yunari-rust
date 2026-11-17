@@ -88,11 +88,16 @@ impl LeftPane {
     }
 }
 
-/// The source header's toolbar, in source order: open actions, document
-/// actions, then the asset finder. The rest of `Command::ALL` is reachable
-/// from the `?` shortcut sheet.
+/// The source header's toolbar, in source order: the document's lifecycle,
+/// its own actions, then the editor's browsing tool. The rest of `Command::ALL`
+/// is reachable from the `?` shortcut sheet and the panes.
 pub const TOOLBAR_GROUPS: [&[Command]; 3] = [
-    &[Command::New, Command::Open, Command::Import],
+    &[
+        Command::New,
+        Command::NewFromTemplate,
+        Command::Open,
+        Command::Import,
+    ],
     &[
         Command::Save,
         Command::SaveAs,
@@ -106,6 +111,7 @@ pub const TOOLBAR_GROUPS: [&[Command]; 3] = [
 fn toolbar_icon(command: Command) -> IconName {
     match command {
         Command::New => IconName::Plus,
+        Command::NewFromTemplate => IconName::LayoutDashboard,
         Command::Open => IconName::FolderOpen,
         Command::Import => IconName::File,
         Command::Save => IconName::HardDrive,
@@ -440,7 +446,12 @@ mod tests {
         assert_eq!(
             TOOLBAR_GROUPS,
             [
-                &[Command::New, Command::Open, Command::Import][..],
+                &[
+                    Command::New,
+                    Command::NewFromTemplate,
+                    Command::Open,
+                    Command::Import,
+                ][..],
                 &[
                     Command::Save,
                     Command::SaveAs,

@@ -3,6 +3,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     New,
+    /// A copy of the reference composition the product ships.
+    NewFromTemplate,
     Open,
     Save,
     SaveAs,
@@ -54,8 +56,9 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 49] = [
         Self::New,
+        Self::NewFromTemplate,
         Self::Open,
         Self::Save,
         Self::SaveAs,
@@ -107,13 +110,16 @@ impl Command {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::New => "New",
-            Self::Open => "Open…",
+            Self::New => "New theme",
+            Self::NewFromTemplate => "New from template",
+            // `Ctrl+O` is the source's import-theme route, and the toolbar
+            // control it sits on is what the reader reads.
+            Self::Open => "Open library",
             Self::Save => "Save",
             Self::SaveAs => "Save As…",
             Self::Export => "Export…",
             Self::ExportWidget => "Export widget…",
-            Self::Import => "Import…",
+            Self::Import => "Import theme",
             Self::ImportAsset => "Import asset…",
             Self::Widgets => "Widgets…",
             Self::AssetFinder => "Asset finder…",
@@ -164,7 +170,9 @@ impl Command {
     pub fn shortcut(self) -> &'static str {
         match self {
             Self::New => "Ctrl+N",
-            Self::Open => "Ctrl+O",
+            // `file.open` in the source's table is the import-theme route, so
+            // the chord sits on the command that brings a package in.
+            Self::Import => "Ctrl+O",
             Self::Save => "Ctrl+S",
             Self::AssetFinder => "Ctrl+Shift+F",
             Self::Undo => "Ctrl+Z",
@@ -188,7 +196,7 @@ impl Command {
         let key = key.to_ascii_lowercase();
         match (named, shift, key.as_str()) {
             (true, false, "n") => Some(Self::New),
-            (true, false, "o") => Some(Self::Open),
+            (true, false, "o") => Some(Self::Import),
             (true, false, "s") => Some(Self::Save),
             // The source's comment: Chromium keeps Ctrl+Shift+A, so the finder
             // answers the chord that reaches the page.
@@ -291,6 +299,10 @@ mod tests {
             Command::from_key("f", true, true, false),
             Some(Command::AssetFinder)
         );
+        assert_eq!(
+            Command::from_key("o", true, false, false),
+            Some(Command::Import)
+        );
         // The source binds eight chords and no more; the rest are reached from
         // a pane or the toolbar.
         assert_eq!(Command::from_key("e", true, true, false), None);
@@ -310,8 +322,8 @@ mod tests {
             bound,
             [
                 Command::New,
-                Command::Open,
                 Command::Save,
+                Command::Import,
                 Command::AssetFinder,
                 Command::Undo,
                 Command::Redo,

@@ -167,6 +167,8 @@ enum Overlay {
 #[derive(Clone, PartialEq, Eq)]
 enum Resume {
     New,
+    /// The reference composition the product ships, copied into a new theme.
+    Template,
     Library,
     Import(String),
     /// A stored theme the author asked to delete, waiting for an answer.
@@ -383,6 +385,7 @@ impl EditorWindow {
     fn apply(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::New => self.guard(Resume::New, cx),
+            Command::NewFromTemplate => self.guard(Resume::Template, cx),
             Command::Open => self.guard(Resume::Library, cx),
             Command::Save => self.save(),
             Command::SaveAs => {
@@ -1460,8 +1463,13 @@ impl EditorWindow {
 
     fn resume(&mut self, resume: Resume, cx: &mut Context<Self>) {
         match resume {
-            Resume::New => {
-                self.editor = Editor::new(starter());
+            Resume::New | Resume::Template => {
+                let document = if resume == Resume::Template {
+                    starter()
+                } else {
+                    yunari_model::presets::blank()
+                };
+                self.editor = Editor::new(document);
                 self.selection.clear();
                 self.overlay = None;
                 self.camera_touched = false;

@@ -48,10 +48,11 @@ the rail's active-slot press closes it, matching the source's rail press.
 - **Publish control.** The source header's right end is the accent "Assign to a
   display" chip plus its indicator. The port has no publish/assign command yet;
   the header keeps the pane toggles there instead. P4 (dialogs/modes).
-- **Toolbar coverage.** Source rows with no port command yet: new from
-  template, open recent (menu), activate theme, preview/live source toggle.
-  The port toolbar carries New, Open, Import / Save, Save as, Export, Export
-  widget, Open display / Find assets. P3 (commands).
+- **Toolbar coverage.** The rows now follow the source: New theme, New from
+  template, Open library, Import theme / Save, Save as, Open display, Export
+  theme, Export widget / Find assets. Still missing: **Open recent** (needs the
+  editor's own recents store; the library listing is not the same thing) and
+  **Activate** (P4, with the publish surface). P3/P4.
 - **Rail pane bodies.** All six slots have bodies: Layers, Add, Widgets,
   Assets, Design tokens and Theme settings. Pane-level drag/drop, rename and
   keyboard tree navigation remain P2/P3.
