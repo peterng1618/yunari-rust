@@ -28,6 +28,37 @@ focus, keyboard, popup placement, accessibility and text editing.
 6. **NSH base is unstyled.** No screen ships until its controls have a visible
    rest/hover/focus/pressed/disabled state and a keyboard path.
 
+## Pre-styled components: what NSH actually ships
+
+There is **no published pre-styled component library**. `nsh/base` is the
+unstyled behaviour layer, and the official position (`docs/goals.md`) is that
+applications and third-party libraries own the styled layer, the role
+`gpui-component` plays for GPUI.
+
+The Gallery's look is real code, but it is an example application, not an API:
+
+- `examples/nsh-gallery-ui/` — the TSX Gallery's private styled layer
+  (`package.json` says `"private": true`; README: "maintained with these
+  examples, rather than published as an application API"). It holds the
+  canonical light/dark tokens and `look/` modules for button, field, menu,
+  tabs, overlay, surface, choice, listbox, color, workspace (Dock/Resizable),
+  tree, command, data table and scrollbar.
+- `examples/gallery-rs/native/src/ui/` — the Rust Gallery's smaller equivalent:
+  `theme.rs` (AdaptiveColor roles, finishes, radii, motion, focus ring),
+  `parts.rs` (`Card`, `Section`, `Row`, `Badge`, `Button`), `controls.rs`
+  (toggle/segmented), `page.rs`, `icons.rs`, `sheet.rs`.
+- `examples/gallery-rs/native/src/demos/` — usage of every component.
+
+Decision: **port the architecture, not the skin.** `crates/ui` will follow the
+Gallery's pattern — a `theme` module of roles and finishes, `look/` functions
+that return style props spread on `nsh_base` components, and thin wrappers —
+but with Yunari's own dark studio tokens, not the Gallery's graphite/citrus
+palette. The Gallery is the quality bar and the worked reference for every
+state; it is not a dependency and gets no compatibility guarantee.
+
+`nsh-ui-mobile` exists on crates.io at 0.1.1 but is not in the current NSH
+tree (last published 2026-10-18); do not build on it.
+
 ## Recommended shell
 
 ```
