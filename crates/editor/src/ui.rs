@@ -258,6 +258,9 @@ pub struct EditorWindow {
     polling: bool,
     /// The running host, when this editor is attached to one.
     host: Option<Shared>,
+    /// The Themes mode's listing, reloaded when the mode is entered so a save
+    /// or a delete made elsewhere is not shown stale.
+    themes: Option<library_dialog::LibraryDialog>,
     /// Which top-level surface the header is showing. The editor body stays
     /// mounted while another mode shows, so the open document survives.
     mode: ShellMode,
@@ -394,6 +397,7 @@ impl EditorWindow {
             renaming: None,
             editing: None,
             overlay: None,
+            themes: None,
             status: None,
             focus: cx.focus_handle(),
             canvas_bounds: Rc::new(Cell::new(None)),
@@ -818,6 +822,8 @@ impl EditorWindow {
         if let Some(Overlay::Library(dialog)) = &mut self.overlay {
             dialog.entries = self.library.list();
         }
+        // The Themes mode reads its own copy; dropping it reloads on next draw.
+        self.themes = None;
     }
 
     fn export(&mut self) {
@@ -1943,6 +1949,27 @@ impl EditorWindow {
         cx.notify();
     }
 
+    /// The canvas menu from the keyboard: where the platform's own menu key
+    /// would put it, at the selection's bottom-left corner.
+    fn context_from_keyboard(&mut self, cx: &mut Context<Self>) {
+        let Some((id, rect, _)) = self.primary_rect() else {
+            return;
+        };
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let at = point(
+            bounds.origin.x + px(self.viewport.offset.0 + rect.0 as f32 * self.viewport.scale),
+            bounds.origin.y + px(self.viewport.offset.1 + rect.3 as f32 * self.viewport.scale),
+        );
+        self.selection.replace(id.clone());
+        self.overlay = Some(Overlay::ContextMenu {
+            at,
+            object: Some(id),
+        });
+        cx.notify();
+    }
+
     /// The transforms a move or nudge may change: the unlocked selected nodes.
     fn start_transforms(&self) -> Vec<(String, Transform)> {
         let document = self.editor.document();
@@ -2994,6 +3021,14 @@ impl EditorWindow {
             if keystroke.key == "?" {
                 self.overlay = Some(Overlay::Shortcuts);
                 cx.notify();
+                return;
+            }
+            // The platform's own menu key, so the canvas menu is not a
+            // pointer-only surface.
+            if keystroke.key == "contextmenu"
+                || (keystroke.key == "f10" && keystroke.modifiers.shift)
+            {
+                self.context_from_keyboard(cx);
                 return;
             }
             if self.zoom_key(&keystroke.key, keystroke.modifiers.shift) {

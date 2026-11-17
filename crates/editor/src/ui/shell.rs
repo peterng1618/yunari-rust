@@ -127,6 +127,9 @@ fn toolbar_icon(command: Command) -> IconName {
 impl EditorWindow {
     pub(super) fn set_mode(&mut self, mode: ShellMode, cx: &mut Context<Self>) {
         self.mode = mode;
+        if mode == ShellMode::Themes {
+            self.themes = Some(crate::ui::library_dialog::LibraryDialog::new(&self.library));
+        }
         cx.notify();
     }
 
@@ -341,7 +344,20 @@ impl EditorWindow {
                     .when(self.mode != ShellMode::Editor, |this| this.invisible())
                     .child(editor),
             )
-            .when(self.mode != ShellMode::Editor, |this| {
+            .when(self.mode == ShellMode::Themes, |this| {
+                let dialog = self
+                    .themes
+                    .clone()
+                    .unwrap_or_else(|| crate::ui::library_dialog::LibraryDialog::new(&self.library));
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(cx.theme().background)
+                        .child(crate::ui::library_dialog::page(&dialog, cx)),
+                )
+            })
+            .when(self.mode == ShellMode::Settings, |this| {
                 this.child(
                     div()
                         .absolute()
@@ -355,7 +371,7 @@ impl EditorWindow {
                                 EmptyHeader::new()
                                     .title(EmptyTitle::new().child(self.mode.label()))
                                     .description(EmptyDescription::new().child(
-                                        "This surface lands in P4; the open theme is kept.",
+                                        "Settings as a surface lands in P4; the open theme is kept.",
                                     )),
                             ),
                         ),

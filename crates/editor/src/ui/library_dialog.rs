@@ -5,6 +5,7 @@ use yunari_library::{Library, ThemeEntry};
 
 use crate::ui::EditorWindow;
 
+#[derive(Clone)]
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
 }
@@ -35,9 +36,34 @@ fn action(
         .on_click(cx.listener(on_click))
 }
 
+/// The Themes mode's surface: the stored themes under the mode's own heading,
+/// with no dismiss footer because nothing was opened over the editor.
+pub fn page(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
+    use gpui_kit::component::scroll::ScrollableElement;
+
+    div()
+        .id("themes-page")
+        .size_full()
+        .min_h(px(0.0))
+        .overflow_y_scrollbar()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .child(
+                    div()
+                        .text_color(rgb(0xe8e8ea))
+                        .child("Stored themes"),
+                )
+                .child(list(dialog, cx)),
+        )
+}
+
 /// The list's contents: one row per stored theme, or why there are none. A
 /// theme that cannot be read is already skipped by the listing.
-pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
+fn list(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> AnyElement {
     let rows: Vec<_> = dialog
         .entries
         .iter()
@@ -95,6 +121,11 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
             .children(rows)
             .into_any_element()
     };
+    body
+}
+
+/// The `Open` dialog: the list, then the way out of it.
+pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -106,7 +137,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
                 .text_color(rgb(0xe8e8ea))
                 .child("Stored themes"),
         )
-        .child(body)
+        .child(list(dialog, cx))
         .child(
             div()
                 .id("library-cancel")

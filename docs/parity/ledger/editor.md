@@ -68,8 +68,11 @@ the rail's active-slot press closes it, matching the source's rail press.
 - **Pane scrolling.** Resolved: the pane bodies use the kit's
   `ScrollableElement` scroll area, so the wheel and the scrollbar share one
   offset instead of the old row-count estimate.
-- **Mode surfaces.** Themes and Settings render a named empty state, not their
-  source surfaces. P4.
+- **Mode surfaces.** Themes is live: the header segment shows the stored-theme
+  list (open / duplicate / delete) in a scrolling page, reloaded whenever the
+  mode is entered or the library changes. Settings still renders a named empty
+  state; its surface is P4. P4 owns the source's library grid, halves and
+  facets.
 
 ### Not yet judged
 
