@@ -97,9 +97,9 @@ pub const TOOLBAR_GROUPS: [&[Command]; 3] = [
     &[
         Command::Save,
         Command::SaveAs,
+        Command::OpenDisplay,
         Command::Export,
         Command::ExportWidget,
-        Command::OpenDisplay,
     ],
     &[Command::AssetFinder],
 ];
@@ -434,9 +434,9 @@ mod tests {
                 &[
                     Command::Save,
                     Command::SaveAs,
+                    Command::OpenDisplay,
                     Command::Export,
                     Command::ExportWidget,
-                    Command::OpenDisplay,
                 ][..],
                 &[Command::AssetFinder][..],
             ]
