@@ -325,6 +325,7 @@ fn grid(
             let duplicate_id = entry.id.clone();
             let delete_id = entry.id.clone();
             let preview_height = (row.height - 26.0).max(24.0);
+            let group = format!("theme-card-{}", entry.id);
             let picture = match dialog.frames.get(&entry.id) {
                 Some(frame) => div()
                     .relative()
@@ -345,13 +346,48 @@ fn grid(
                     .bg(panel)
                     .into_any_element(),
             };
+            // The source keeps the author on a hover chip and puts the name,
+            // day and actions on one line. The day is the resting reading;
+            // attending the card replaces it with the actions in place.
+            let date = time::OffsetDateTime::from(entry.updated_at).date();
+            let byline = format!(
+                "{:04}-{:02}-{:02}",
+                date.year(),
+                date.month() as u8,
+                date.day()
+            );
+            let author = entry
+                .author
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("© {value}"))
+                .unwrap_or_else(|| "No author".to_owned());
+            let chip_group = group.clone();
+            let action_group = group.clone();
+            let day_group = group.clone();
             cards.push(
                 div()
                     .id(("library-card", item.index))
+                    .group(group)
+                    .relative()
                     .w(px(item.width))
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(8.0))
+                            .right(px(8.0))
+                            .rounded_full()
+                            .bg(panel)
+                            .px_2()
+                            .py_0p5()
+                            .text_xs()
+                            .text_color(muted)
+                            .opacity(0.0)
+                            .group_hover(chip_group, |style| style.opacity(1.0))
+                            .child(author),
+                    )
                     .child(
                         div()
                             .id(("library-card-open", item.index))
@@ -363,18 +399,32 @@ fn grid(
                     )
                     .child(
                         div()
+                            .relative()
                             .flex()
                             .items_center()
-                            .justify_between()
                             .gap_2()
+                            .px_2()
+                            .py_1()
                             .text_xs()
                             .text_color(ink)
-                            .child(div().truncate().child(entry.name.clone()))
+                            .child(div().flex_1().truncate().child(entry.name.clone()))
                             .child(
                                 div()
+                                    .text_xs()
+                                    .font_family("monospace")
+                                    .text_color(muted)
+                                    .group_hover(day_group, |style| style.opacity(0.0))
+                                    .child(byline),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right(px(8.0))
                                     .flex()
                                     .gap_2()
                                     .text_color(muted)
+                                    .opacity(0.0)
+                                    .group_hover(action_group, |style| style.opacity(1.0))
                                     .child(action(
                                         ("library-card-duplicate", item.index),
                                         "Duplicate",

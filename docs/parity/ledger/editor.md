@@ -158,6 +158,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-themes-current-footer.png` — 1920x1080,
+  the current-source card footer: name/day at rest, actions on hover.
 - `test-results/parity-shots/editor-port-themes-contain2.png` — 1920x1080, the
   justified gallery reading the box's own `thumbnail.png` files; each picture
   is shown whole, not cropped. Seeded mode reverted after the shot.
@@ -194,6 +196,34 @@ pinned `1241866e5`) found:
 - Store is a half of Library, not its own mode.
 
 These are P4 gaps, not claims of parity.
+
+### Folding in the newer source
+
+The user asked that the library/store changes made after the port's pinned
+commit be folded in. The source `main` HEAD is now `c40dd16d`; between the pin
+and HEAD there are 73 changed files in `library-mode`, `store-mode`,
+`settings-mode` and `ui-copy.ts` (16,162 insertions / 7,865 deletions), from
+"Library a mode with type navigation" through "collection consent". The live
+host on this box was started from `main` with `--app-dir ~/.yunari` and showed
+132 themes. Capture: `source-library-current.png`.
+
+P4 surfaces now follow HEAD rather than the pin: the Library/Themes gallery,
+Settings mode navigation and publish copy are compared against `c40dd16d`.
+The rest of the port stays on the pinned commitment. Concrete folding so far:
+
+- The gallery reads each theme's `thumbnail.png` and uses the source's
+  justified rows, not a uniform wrap.
+- The card's footer follows the current source: name and day share one line;
+  the day is the resting reading and Duplicate/Delete fade in over it when the
+  card is attended. The author is a hover chip above the picture. A `time`
+  dependency formats the ISO day from `ThemeEntry::updated_at`.
+- Themes sort defaults to Updated in the source; the port keeps Name as its
+  default until the sort control is folded in with the rest of the toolbar.
+
+Still to fold: Local library / Online store halves, type navigation, state
+filter, search, five facets, sort well and density slider; collection cards
+and consent; the remaining Settings pages; and the host-reported publish
+address. These are P4, not claims of parity.
 
 ## Source-reading gate
 
