@@ -230,27 +230,111 @@ pub struct ShortcutRow {
 /// publish row is the one absent — its surface lands in P4, and a sheet that
 /// printed a chord for nothing is the lie the table exists to prevent.
 pub const SHORTCUT_REFERENCE: [ShortcutRow; 21] = [
-    ShortcutRow { group: "File", label: "New theme", chord: "Ctrl+N" },
-    ShortcutRow { group: "File", label: "Import theme", chord: "Ctrl+O" },
-    ShortcutRow { group: "File", label: "Save", chord: "Ctrl+S" },
-    ShortcutRow { group: "File", label: "Find assets…", chord: "Ctrl+Shift+F" },
-    ShortcutRow { group: "Edit", label: "Redo", chord: "Ctrl+Shift+Z · Ctrl+Y" },
-    ShortcutRow { group: "Edit", label: "Undo", chord: "Ctrl+Z" },
-    ShortcutRow { group: "Edit", label: "Copy", chord: "Ctrl+C" },
-    ShortcutRow { group: "Edit", label: "Cut", chord: "Ctrl+X" },
-    ShortcutRow { group: "Edit", label: "Paste", chord: "Ctrl+V" },
-    ShortcutRow { group: "Edit", label: "Duplicate", chord: "Ctrl+D" },
-    ShortcutRow { group: "Edit", label: "Ungroup", chord: "Ctrl+Shift+G" },
-    ShortcutRow { group: "Edit", label: "Group", chord: "Ctrl+G" },
-    ShortcutRow { group: "Edit", label: "Delete", chord: "Delete · Backspace" },
-    ShortcutRow { group: "Canvas", label: "Select all", chord: "Ctrl+A" },
-    ShortcutRow { group: "Canvas", label: "Bring to front", chord: "Ctrl+} · Ctrl+]" },
-    ShortcutRow { group: "Canvas", label: "Send to back", chord: "Ctrl+{ · Ctrl+[" },
-    ShortcutRow { group: "Canvas", label: "Nudge left", chord: "←" },
-    ShortcutRow { group: "Canvas", label: "Nudge right", chord: "→" },
-    ShortcutRow { group: "Canvas", label: "Nudge up", chord: "↑" },
-    ShortcutRow { group: "Canvas", label: "Nudge down", chord: "↓" },
-    ShortcutRow { group: "Help", label: "Keyboard shortcuts", chord: "?" },
+    ShortcutRow {
+        group: "File",
+        label: "New theme",
+        chord: "Ctrl+N",
+    },
+    ShortcutRow {
+        group: "File",
+        label: "Import theme",
+        chord: "Ctrl+O",
+    },
+    ShortcutRow {
+        group: "File",
+        label: "Save",
+        chord: "Ctrl+S",
+    },
+    ShortcutRow {
+        group: "File",
+        label: "Find assets…",
+        chord: "Ctrl+Shift+F",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Redo",
+        chord: "Ctrl+Shift+Z · Ctrl+Y",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Undo",
+        chord: "Ctrl+Z",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Copy",
+        chord: "Ctrl+C",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Cut",
+        chord: "Ctrl+X",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Paste",
+        chord: "Ctrl+V",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Duplicate",
+        chord: "Ctrl+D",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Ungroup",
+        chord: "Ctrl+Shift+G",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Group",
+        chord: "Ctrl+G",
+    },
+    ShortcutRow {
+        group: "Edit",
+        label: "Delete",
+        chord: "Delete · Backspace",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Select all",
+        chord: "Ctrl+A",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Bring to front",
+        chord: "Ctrl+} · Ctrl+]",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Send to back",
+        chord: "Ctrl+{ · Ctrl+[",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Nudge left",
+        chord: "←",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Nudge right",
+        chord: "→",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Nudge up",
+        chord: "↑",
+    },
+    ShortcutRow {
+        group: "Canvas",
+        label: "Nudge down",
+        chord: "↓",
+    },
+    ShortcutRow {
+        group: "Help",
+        label: "Keyboard shortcuts",
+        chord: "?",
+    },
 ];
 
 #[cfg(test)]
@@ -355,8 +439,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["New theme", "Import theme", "Save", "Find assets…"]
         );
-        assert!(SHORTCUT_REFERENCE
-            .iter()
-            .any(|row| row.label == "Keyboard shortcuts" && row.chord == "?"));
+        assert!(
+            SHORTCUT_REFERENCE
+                .iter()
+                .any(|row| row.label == "Keyboard shortcuts" && row.chord == "?")
+        );
     }
 }

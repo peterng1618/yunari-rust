@@ -52,11 +52,7 @@ pub fn page(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
                 .flex_col()
                 .gap_2()
                 .p_3()
-                .child(
-                    div()
-                        .text_color(rgb(0xe8e8ea))
-                        .child("Stored themes"),
-                )
+                .child(div().text_color(rgb(0xe8e8ea)).child("Stored themes"))
                 .child(list(dialog, cx)),
         )
 }

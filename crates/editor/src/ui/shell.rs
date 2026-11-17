@@ -157,7 +157,9 @@ impl EditorWindow {
 
     pub(super) fn rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::{
-            ActiveTheme, Sizable, button::{Button, ButtonVariants}, v_flex,
+            ActiveTheme, Sizable,
+            button::{Button, ButtonVariants},
+            v_flex,
         };
 
         let active = self.left_pane;
@@ -177,9 +179,9 @@ impl EditorWindow {
                     .icon(pane.icon())
                     .tooltip(pane.label())
                     .toggled(pane == active && !self.left_collapsed)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.choose_pane(pane, cx)
-                    }))
+                    .on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| this.choose_pane(pane, cx)),
+                    )
             }))
             .child(div().flex_1())
             .child(
@@ -196,8 +198,10 @@ impl EditorWindow {
 
     pub(super) fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::{
-            ActiveTheme, Sizable, TitleBar, button::{Button, ButtonVariants, Toggle, ToggleGroup},
-            h_flex, toolbar::Toolbar,
+            ActiveTheme, Sizable, TitleBar,
+            button::{Button, ButtonVariants, Toggle, ToggleGroup},
+            h_flex,
+            toolbar::Toolbar,
         };
 
         let mode = self.mode;
@@ -268,9 +272,9 @@ impl EditorWindow {
                         } else {
                             "Hide left pane"
                         })
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.toggle_left_pane(cx)
-                        })),
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_left_pane(cx)),
+                        ),
                 )
                 .child(
                     Button::new("toggle-right-pane")
@@ -282,9 +286,9 @@ impl EditorWindow {
                         } else {
                             "Hide inspector"
                         })
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.toggle_right_pane(cx)
-                        })),
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_right_pane(cx)),
+                        ),
                 ),
         )
     }
@@ -427,11 +431,19 @@ impl EditorWindow {
         right = right.child(
             h_flex()
                 .gap_1()
-                .child(div().text_color(if live {
-                    cx.theme().success
-                } else {
-                    cx.theme().muted_foreground
-                }).child(if live { IconName::Check } else { IconName::CircleX }))
+                .child(
+                    div()
+                        .text_color(if live {
+                            cx.theme().success
+                        } else {
+                            cx.theme().muted_foreground
+                        })
+                        .child(if live {
+                            IconName::Check
+                        } else {
+                            IconName::CircleX
+                        }),
+                )
                 .child(if live { "live" } else { "offline" }),
         );
 

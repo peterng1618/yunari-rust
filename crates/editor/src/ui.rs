@@ -23,9 +23,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 use yunari_host::http::Shared;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
@@ -312,7 +312,7 @@ pub(super) const INSERT_GROUPS: [(&str, &[Command]); 4] = [
 
 /// One row of the canvas menu: a command, or a restack the registry does not
 /// name. The words are the source's `object-actions.ts` labels.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum CanvasMenuEntry {
     Command(Command),
     Restack(LayerMove),
@@ -385,6 +385,19 @@ fn run_canvas_entry(
         }
     }
 }
+
+/// The arrange actions, in the source's order. The source puts them in the
+/// selection inspector, one row of six alignments and one of two distributions.
+pub(super) const ARRANGE_ACTIONS: [Command; 8] = [
+    Command::AlignLeft,
+    Command::AlignCenterX,
+    Command::AlignRight,
+    Command::AlignTop,
+    Command::AlignCenterY,
+    Command::AlignBottom,
+    Command::DistributeX,
+    Command::DistributeY,
+];
 
 /// The object menu's groups, in the source's registry order.
 const OBJECT_MENU: [&[CanvasMenuEntry]; 5] = [
@@ -2365,17 +2378,54 @@ impl EditorWindow {
     /// The selection inspector: the selected subject's sections and the binding
     /// affordance. With nothing selected it says so, as the source does.
     fn inspector_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut children = match self.selection.first() {
-            Some(id) => self.section_children(inspector::sections(self.editor.document(), id), cx),
-            None => vec![
+        let mut children: Vec<AnyElement> = Vec::new();
+        if self.selection.first().is_some() {
+            // The source keeps the eight arrange actions in the selection
+            // inspector rather than the canvas dock.
+            use gpui_kit::component::{
+                Sizable,
+                button::{Button, ButtonVariants},
+                h_flex,
+            };
+            children.push(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Arrange")
+                    .into_any_element(),
+            );
+            children.push(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .px_3()
+                    .py_1()
+                    .children(ARRANGE_ACTIONS.map(|command| {
+                        Button::new(format!("arrange-{:?}", command))
+                            .ghost()
+                            .small()
+                            .label(command.label())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.apply(command, window, cx)
+                            }))
+                    }))
+                    .into_any_element(),
+            );
+        }
+        match self.selection.first() {
+            Some(id) => children
+                .extend(self.section_children(inspector::sections(self.editor.document(), id), cx)),
+            None => children.push(
                 div()
                     .p_3()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("Select an object on the canvas to inspect it.")
                     .into_any_element(),
-            ],
-        };
+            ),
+        }
         if self.selection.first().is_some() {
             children.push(
                 div()
@@ -2562,7 +2612,9 @@ impl EditorWindow {
     /// source's three families plus media.
     fn add_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::{
-            Sizable, button::{Button, ButtonVariants}, h_flex,
+            Sizable,
+            button::{Button, ButtonVariants},
+            h_flex,
         };
 
         const GROUPS: [(&str, &[Command]); 4] = INSERT_GROUPS;
@@ -2805,8 +2857,7 @@ impl EditorWindow {
         use gpui_kit::component::scroll::ScrollableElement;
 
         let theme = cx.theme();
-        let (background, border, foreground) =
-            (theme.background, theme.border, theme.foreground);
+        let (background, border, foreground) = (theme.background, theme.border, theme.foreground);
         let mut root = div()
             .size_full()
             .flex()
@@ -2833,14 +2884,7 @@ impl EditorWindow {
                 .w_full()
                 .min_h(px(0.0))
                 .overflow_y_scrollbar()
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .pb_2()
-                        .children(children),
-                ),
+                .child(div().w_full().flex().flex_col().pb_2().children(children)),
         )
     }
 
@@ -3332,12 +3376,7 @@ impl EditorWindow {
                             .text_color(ink)
                             .child(row.name.clone()),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(row.role),
-                    )
+                    .child(div().text_xs().text_color(muted).child(row.role))
                     .child(
                         div()
                             .id(("eye", index))
@@ -3468,65 +3507,67 @@ impl EditorWindow {
                     .size_full()
                     .child(
                         canvas(
-                    move |bounds, _, _| {
-                        bounds_cell.set(Some(bounds));
-                        bounds
-                    },
-                    move |_, bounds, window, cx| {
-                        let fit = yunari_render_gpui::Fit {
-                            scale: view.scale,
-                            origin: (
-                                f32::from(bounds.origin.x) + view.offset.0,
-                                f32::from(bounds.origin.y) + view.offset.1,
-                            ),
-                        };
-                        let mut store = images.borrow_mut();
-                        yunari_render_gpui::paint_fitted(&list, fit, window, cx, &mut store);
-                        for (x, y, width, height) in &selections {
-                            window.paint_quad(PaintQuad {
-                                bounds: Bounds {
-                                    origin: fit.point(*x as f32, *y as f32),
-                                    size: size(
-                                        px(*width as f32 * fit.scale),
-                                        px(*height as f32 * fit.scale),
-                                    ),
-                                },
-                                corner_radii: Corners::default(),
-                                background: transparent_black().into(),
-                                border_widths: Edges::all(px(1.0)),
-                                border_color: rgb(ACCENT).into(),
-                                border_style: BorderStyle::Solid,
-                            });
-                        }
-                        for guide in &guides {
-                            paint_guide(guide, &view, bounds, window);
-                        }
-                        for (handle, (x, y)) in &handles {
-                            paint_handle(*handle, *x, *y, &view, bounds, window);
-                        }
-                        let Some((anchor, current)) = marquee else {
-                            return;
-                        };
-                        window.paint_quad(PaintQuad {
-                            bounds: Bounds {
-                                origin: point(
-                                    bounds.origin.x + px(anchor.0.min(current.0)),
-                                    bounds.origin.y + px(anchor.1.min(current.1)),
-                                ),
-                                size: size(
-                                    px((current.0 - anchor.0).abs()),
-                                    px((current.1 - anchor.1).abs()),
-                                ),
+                            move |bounds, _, _| {
+                                bounds_cell.set(Some(bounds));
+                                bounds
                             },
-                            corner_radii: Corners::default(),
-                            background: transparent_black().into(),
-                            border_widths: Edges::all(px(1.0)),
-                            border_color: rgb(ACCENT).into(),
-                            border_style: BorderStyle::Solid,
-                        });
-                    },
-                )
-                .size_full(),
+                            move |_, bounds, window, cx| {
+                                let fit = yunari_render_gpui::Fit {
+                                    scale: view.scale,
+                                    origin: (
+                                        f32::from(bounds.origin.x) + view.offset.0,
+                                        f32::from(bounds.origin.y) + view.offset.1,
+                                    ),
+                                };
+                                let mut store = images.borrow_mut();
+                                yunari_render_gpui::paint_fitted(
+                                    &list, fit, window, cx, &mut store,
+                                );
+                                for (x, y, width, height) in &selections {
+                                    window.paint_quad(PaintQuad {
+                                        bounds: Bounds {
+                                            origin: fit.point(*x as f32, *y as f32),
+                                            size: size(
+                                                px(*width as f32 * fit.scale),
+                                                px(*height as f32 * fit.scale),
+                                            ),
+                                        },
+                                        corner_radii: Corners::default(),
+                                        background: transparent_black().into(),
+                                        border_widths: Edges::all(px(1.0)),
+                                        border_color: rgb(ACCENT).into(),
+                                        border_style: BorderStyle::Solid,
+                                    });
+                                }
+                                for guide in &guides {
+                                    paint_guide(guide, &view, bounds, window);
+                                }
+                                for (handle, (x, y)) in &handles {
+                                    paint_handle(*handle, *x, *y, &view, bounds, window);
+                                }
+                                let Some((anchor, current)) = marquee else {
+                                    return;
+                                };
+                                window.paint_quad(PaintQuad {
+                                    bounds: Bounds {
+                                        origin: point(
+                                            bounds.origin.x + px(anchor.0.min(current.0)),
+                                            bounds.origin.y + px(anchor.1.min(current.1)),
+                                        ),
+                                        size: size(
+                                            px((current.0 - anchor.0).abs()),
+                                            px((current.1 - anchor.1).abs()),
+                                        ),
+                                    },
+                                    corner_radii: Corners::default(),
+                                    background: transparent_black().into(),
+                                    border_widths: Edges::all(px(1.0)),
+                                    border_color: rgb(ACCENT).into(),
+                                    border_style: BorderStyle::Solid,
+                                });
+                            },
+                        )
+                        .size_full(),
                     )
                     .child(self.stage_overlay(cx)),
             )
@@ -3536,15 +3577,13 @@ impl EditorWindow {
     /// and the inspector toggle. Overlay chrome, not document content.
     fn stage_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::{
-            IconName, Sizable, button::{Button, ButtonVariants}, h_flex,
+            IconName, Sizable,
+            button::{Button, ButtonVariants},
+            h_flex,
         };
 
         let theme = cx.theme();
-        let (panel, border, foreground) = (
-            theme.popover,
-            theme.border,
-            theme.foreground,
-        );
+        let (panel, border, foreground) = (theme.popover, theme.border, theme.foreground);
         let present = format!("{:.0}%", self.viewport.scale * 100.0);
         let right = self.right_collapsed;
         let document = self.editor.document();
@@ -3577,9 +3616,9 @@ impl EditorWindow {
                     } else {
                         "Hide inspector"
                     })
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.toggle_right_pane(cx)
-                    })),
+                    .on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_right_pane(cx)),
+                    ),
             )
             .child(
                 Button::new("stage-zoom-out")
@@ -3600,9 +3639,7 @@ impl EditorWindow {
                     .text_color(foreground)
                     .cursor_pointer()
                     .child(present)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.reset_stage(cx)
-                    })),
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.reset_stage(cx))),
             )
             .child(
                 Button::new("stage-zoom-in")
@@ -3610,9 +3647,9 @@ impl EditorWindow {
                     .small()
                     .icon(IconName::Plus)
                     .tooltip("Zoom in")
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.zoom_stage(ZOOM_STEP, cx)
-                    })),
+                    .on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.zoom_stage(ZOOM_STEP, cx)),
+                    ),
             )
             .child(
                 Button::new("stage-fit")
@@ -3645,20 +3682,16 @@ impl EditorWindow {
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.fit_stage(cx))),
             )
             .child(
-                div()
-                    .absolute()
-                    .bottom(px(14.0))
-                    .left(px(14.0))
-                    .child(
-                        Button::new("stage-assets")
-                            .ghost()
-                            .small()
-                            .icon(IconName::GalleryVerticalEnd)
-                            .tooltip("Find assets")
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.apply(Command::AssetFinder, window, cx)
-                            })),
-                    ),
+                div().absolute().bottom(px(14.0)).left(px(14.0)).child(
+                    Button::new("stage-assets")
+                        .ghost()
+                        .small()
+                        .icon(IconName::GalleryVerticalEnd)
+                        .tooltip("Find assets")
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.apply(Command::AssetFinder, window, cx)
+                        })),
+                ),
             )
             // The source's canvas dock: the object commands this selection can
             // run, floating over the stage. The eight arrange actions stay in
@@ -3756,12 +3789,10 @@ impl EditorWindow {
                     .cursor_pointer()
                     .hover(|this| this.bg(hover))
                     .child(label)
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            this.overlay = None;
-                            run_canvas_entry(this, entry, window, cx);
-                        },
-                    ))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.overlay = None;
+                        run_canvas_entry(this, entry, window, cx);
+                    }))
                     .into_any_element(),
             );
         };
@@ -3850,13 +3881,7 @@ impl EditorWindow {
                                     .h(self.window_height.min(px(520.0)))
                                     .min_h(px(0.0))
                                     .overflow_y_scrollbar()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .py_1()
-                                            .children(entries),
-                                    ),
+                                    .child(div().flex().flex_col().py_1().children(entries)),
                             ),
                     ),
             )
@@ -4665,17 +4690,13 @@ fn window_for(host: Option<Shared>, command: Option<Command>, cx: &mut App) -> A
         cx,
     )));
     options.window_min_size = Some(size(px(1024.0), px(700.0)));
-    open_window(
-        options,
-        cx,
-        move |window, cx| {
-            let editor = cx.new(|cx| EditorWindow::new(library, host, cx));
-            if let Some(command) = command {
-                editor.update(cx, |editor, cx| editor.apply(command, window, cx));
-            }
-            editor
-        },
-    )
+    open_window(options, cx, move |window, cx| {
+        let editor = cx.new(|cx| EditorWindow::new(library, host, cx));
+        if let Some(command) = command {
+            editor.update(cx, |editor, cx| editor.apply(command, window, cx));
+        }
+        editor
+    })
     .expect("failed to open the editor window")
     .0
 }
@@ -4725,10 +4746,27 @@ mod tests {
                 "Space Y",
             ]
         );
-        assert!(matches!(
-            OBJECT_MENU[2][0],
-            CanvasMenuEntry::Restack(_)
-        ));
+        assert!(matches!(OBJECT_MENU[2][0], CanvasMenuEntry::Restack(_)));
+    }
+
+    #[test]
+    fn the_inspector_keeps_the_eight_arrange_actions_the_dock_leaves_out() {
+        use super::{ARRANGE_ACTIONS, CanvasMenuEntry, DOCK_ACTIONS};
+
+        assert_eq!(
+            ARRANGE_ACTIONS.map(|command| command.label()),
+            [
+                "Align L", "Centre X", "Align R", "Align T", "Centre Y", "Align B", "Space X",
+                "Space Y",
+            ]
+        );
+        // The dock must not repeat what the inspector owns.
+        for command in ARRANGE_ACTIONS {
+            assert!(
+                !DOCK_ACTIONS.contains(&CanvasMenuEntry::Command(command)),
+                "{command:?} is in both surfaces"
+            );
+        }
     }
 
     #[test]

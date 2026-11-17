@@ -66,6 +66,15 @@ the rail's active-slot press closes it, matching the source's rail press.
   too. The menu flips above the press when it would run off the foot, and
   bounds itself to 520px so a short window scrolls it instead of clipping it.
   Snap guides against the source and drag feedback remain P3.
+- **Arrange.** The eight arrange actions sit at the top of the selection
+  inspector, which is where the source keeps them: the dock deliberately does
+  not repeat them. Each button routes through `Command::apply`, so an
+  ineligible selection reports the count it needs in the status bar rather than
+  the button going quiet. Evidence:
+  `test-results/parity-shots/editor-port-arrange.png` (1280x875, seeded
+  two-object selection, reverted after the shot) and
+  `the_inspector_keeps_the_eight_arrange_actions_the_dock_leaves_out`, which
+  also pins that no arrange command appears in the dock.
 
 The app now embeds gpui-kit's full Lucide catalog (`AllAssets`) rather than the
 default bundle, because the source's dock marks (scissors, clipboard, group,
