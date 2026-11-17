@@ -225,14 +225,24 @@ pub fn spawn(app: Shared) {
                         now_ms,
                     ))
                 });
+                // The shared protocol's batch: an ISO `sentAt` and one
+                // `{semanticKey, sample}` entry per requested key.
                 let samples: Vec<serde_json::Value> = keys
                     .iter()
                     .filter_map(|key| readings.get(key))
-                    .map(crate::frame::sample_json)
+                    .map(|reading| {
+                        serde_json::json!({
+                            "semanticKey": &reading.semantic_key,
+                            "sample": crate::frame::sample_json(reading),
+                        })
+                    })
                     .collect();
+                let sent_at = jiff::Timestamp::from_millisecond(now)
+                    .unwrap_or_else(|_| jiff::Timestamp::now())
+                    .to_string();
                 let payload = serde_json::json!({
                     "version": PROTOCOL_VERSION,
-                    "sentAt": jiff::Timestamp::now().as_millisecond(),
+                    "sentAt": sent_at,
                     "samples": samples,
                     "frame": frame_json,
                 });
@@ -242,6 +252,10 @@ pub fn spawn(app: Shared) {
                     &format!("event: {SAMPLE_EVENT}\ndata: {data}\n\n"),
                 );
             }
+            // Sampling can outrun the interval, and a task that never returns
+            // Pending starves its worker's ready queue: a connection woken by
+            // this tick would wait for the loop to pause.
+            tokio::task::yield_now().await;
         }
     });
 }
@@ -363,7 +377,16 @@ mod tests {
         let payload = payload.expect("a samples frame");
         let batch: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(batch["version"], 1);
-        assert_eq!(batch["samples"][0]["sensorId"], "host:cpu.load");
+        let sent_at = batch["sentAt"]
+            .as_str()
+            .expect("sentAt is an ISO string, as the shared protocol says");
+        assert!(
+            sent_at.parse::<jiff::Timestamp>().is_ok() && sent_at.ends_with('Z'),
+            "sentAt is an RFC 3339 UTC string: {sent_at}"
+        );
+        let entry = &batch["samples"][0];
+        assert_eq!(entry["semanticKey"], "cpu.load");
+        assert_eq!(entry["sample"]["sensorId"], "host:cpu.load");
         assert_eq!(batch["frame"]["width"], 320.0);
         assert!(
             batch["frame"]["ops"]
