@@ -156,3 +156,28 @@ Evidence:
   small toolbar buttons and the primary accent publish button.
 
 
+
+## P4 — source research
+
+A read-only pass over the source checkout (HEAD `c40dd16d`, newer than the
+pinned `1241866e5`) found:
+
+- The Publish surface reads its address, port, host name and pairing code from
+  the host (`/api/hosting`, `/api/pairing/code`); it never composes them in the
+  editor. The port has no equivalent answer yet, so the port prints no address,
+  code or QR, and says so above. Its `http://{port}` line was a defect and was
+  removed.
+- Settings is a two-group navigation (This PC, Editor) with one title and hint
+  per page; the port's Settings mode still points at one dialog.
+- Library is a two-half catalogue with nav groups, search, five facets, sort
+  and a density control; the port's Themes mode still lists stored themes.
+- Asset Finder has six tabs (Colors, Fonts, Icons, Images, Videos, Wallpaper
+  Engine) with per-tab search and empty/key-required/error states; the port has
+  one picture list plus stock sources.
+- The source has no Widget picker, Typography, MCP or Path preset dialog. The
+  port's versions of those are extra surfaces; widget insert lives in the
+  source's library detail, type authoring in the Tokens pane, path presets in
+  Settings, and MCP in a separate server.
+- Store is a half of Library, not its own mode.
+
+These are P4 gaps, not claims of parity.

@@ -279,7 +279,7 @@ impl EditorWindow {
                         .child("Yunari"),
                 )
                 .child(
-                        ToggleGroup::new("shell-modes")
+                    ToggleGroup::new("shell-modes")
                         .small()
                         .single()
                         .segmented()
@@ -302,7 +302,18 @@ impl EditorWindow {
                         gpui_kit::component::button::Button::new("publish-open")
                             .primary()
                             .small()
-                            .label(crate::ui::menus::Command::Publish.label())
+                            .child(
+                                h_flex()
+                                    .gap(cx.theme().spacing_tokens().sm)
+                                    .child(crate::ui::menus::Command::Publish.label())
+                                    .child(div().size(px(6.0)).rounded_full().bg(
+                                        if self.host.is_some() {
+                                            cx.theme().success
+                                        } else {
+                                            cx.theme().muted_foreground
+                                        },
+                                    )),
+                            )
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.apply(crate::ui::menus::Command::Publish, window, cx)
                             })),
