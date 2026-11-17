@@ -75,7 +75,7 @@ impl Images {
     /// A picture the caller holds in memory, such as one just imported and not
     /// yet saved. It takes the same path the document will store it under.
     pub fn put(&mut self, path: &str, bytes: &[u8]) {
-        let decoded = decode_bytes(bytes);
+        let decoded = decode_bytes_at(Path::new(path), bytes);
         self.cache.insert(path.to_owned(), decoded);
     }
 
@@ -255,7 +255,48 @@ fn ffmpeg() -> Option<PathBuf> {
 
 fn decode(path: &Path) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
-    decode_bytes(&bytes)
+    decode_bytes_at(path, &bytes)
+}
+
+fn decode_bytes_at(path: &Path, bytes: &[u8]) -> Option<Decoded> {
+    match path.extension() {
+        Some(extension) if extension.eq_ignore_ascii_case("svg") => decode_svg(bytes),
+        _ => decode_bytes(bytes),
+    }
+}
+
+/// The source's ceiling on a detached raster (`scene-fabric/render-scale.ts:8`).
+/// An untrusted `viewBox` cannot ask for a larger allocation than this.
+const MAX_SVG_PIXELS: f32 = 2_073_600.0;
+
+/// `image` has no SVG codec, so the vector is parsed and painted by resvg at
+/// its own size. The source rasterises at the node box instead
+/// (`scene-fabric/fabric-image.ts:52-63`), so an SVG smaller than its box is
+/// sampled up here rather than rendered crisp.
+fn decode_svg(bytes: &[u8]) -> Option<Decoded> {
+    let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default()).ok()?;
+    let size = tree.size();
+    let area = size.width() * size.height();
+    if !area.is_finite() || area <= 0.0 {
+        return None;
+    }
+    let scale = (MAX_SVG_PIXELS / area).sqrt().min(1.0);
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(
+            width as f32 / size.width(),
+            height as f32 / size.height(),
+        ),
+        &mut pixmap.as_mut(),
+    );
+    Some(Decoded {
+        width,
+        height,
+        rgba: crate::straight_rgba(&pixmap),
+    })
 }
 
 fn decode_bytes(bytes: &[u8]) -> Option<Decoded> {
@@ -282,6 +323,17 @@ mod tests {
     fn an_empty_store_has_no_pictures() {
         let mut images = Images::empty();
         assert!(images.load("assets/a.png").is_none());
+    }
+
+    #[test]
+    fn an_svg_is_rasterised_at_its_own_size() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">
+            <rect width="8" height="8" fill="#ff0000"/></svg>"##;
+        let mut images = Images::empty();
+        images.put("assets/icon.svg", svg);
+        let decoded = images.load("assets/icon.svg").expect("an SVG is a picture");
+        assert_eq!((decoded.width, decoded.height), (8, 8));
+        assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
     }
 
     #[test]

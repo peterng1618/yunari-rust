@@ -77,7 +77,7 @@ pub fn asset_path_refusal(path: &str, kind: AssetKind) -> Option<&'static str> {
     }
     let extension = rest.rsplit_once('.').map(|(_, extension)| extension);
     let matches_kind = match kind {
-        AssetKind::Image => matches!(extension, Some("png" | "jpg" | "jpeg" | "webp")),
+        AssetKind::Image => matches!(extension, Some("png" | "jpg" | "jpeg" | "webp" | "avif")),
         AssetKind::Svg => extension == Some("svg"),
         AssetKind::Gif => extension == Some("gif"),
         AssetKind::Video => matches!(extension, Some("mp4" | "webm" | "mov")),
@@ -1390,6 +1390,15 @@ mod tests {
             .assets
             .push(asset("a", AssetKind::Video, "assets/a.png"));
         assert_eq!(paths(validate_document(&document)), vec!["assets/0/path"]);
+    }
+
+    #[test]
+    fn accepts_avif_image_assets() {
+        let mut document = minimal();
+        document
+            .assets
+            .push(asset("a", AssetKind::Image, "assets/a.avif"));
+        assert!(validate_document(&document).is_ok());
     }
 
     #[test]
