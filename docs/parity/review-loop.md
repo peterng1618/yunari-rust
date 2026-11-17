@@ -9,11 +9,13 @@ stage below is built so a claim without an artifact cannot pass.
 
 ## Roles
 
-Four roles, each a fresh agent with a narrow brief. No agent does two roles on
-the same finding.
+Five roles. The orchestrator is the one long-lived agent; every other role is a
+fresh agent in its own Orca workspace. No agent does two roles on the same
+finding.
 
 | Role | Does | Does not |
 |---|---|---|
+| Orchestrator | Owns the queue, decides what runs in parallel, launches workers in Orca workspaces, merges verified PRs, keeps the ledger and metrics | Audit, fix or verify anything itself; edit port code |
 | Auditor | Derives expected behaviour from the source app, inspects the port, files issues with a repro | Edit port code, edit the parity sweep, close issues |
 | Triager | Reproduces, dedupes, classifies, labels `state:ready`; closes invalid | Fix code |
 | Fixer | Writes a failing test first, fixes the smallest cause, opens a PR | Triage their own issue, mark it verified |
@@ -21,6 +23,57 @@ the same finding.
 
 The verifier sees only the issue and the PR diff — not the fixer's reasoning.
 That is deliberate: a wrong explanation should not survive by being persuasive.
+
+## Orchestration and workspaces
+
+The orchestrator runs in the primary checkout, which stays on `main`, clean and
+pulled. It never edits port code; its output is issues, labels, PR merges and
+the ledger. That keeps one tree always buildable for anyone who opens the app.
+
+Every worker gets its own Orca workspace, so nothing blocks on another agent's
+dirty tree, branch or running `cargo test`:
+
+```powershell
+orca worktree create --no-parent --name parity-<role>-<issue> --json
+orca agent launch --agent claude --worktree <id-from-create> --prompt "<role brief>" --json
+```
+
+- `--no-parent`: workers are independent checkouts based on `origin/main`, not
+  children of the orchestrator's tree.
+- The worktree id printed by `create` (`<repoId>::<path>`) is the handle for
+  `agent launch`, `terminal read`/`send`, and `worktree set --comment`.
+- Workers commit on their own branch and open their PR; they never push to
+  `main`.
+- Close a finished workspace's terminals with `terminal close --worktree <id>
+  --all` and remove the checkout with `worktree rm --worktree <id> --force` only
+  after the PR is merged or closed.
+- If Orca is unavailable, fall back to `git worktree add ../yunari-parity-<n>
+  -b parity/<n>-<slug> origin/main` — same rule: one checkout per worker.
+
+State in the workflow goes through GitHub, not through the agent's context:
+issues carry evidence and status labels, PRs carry the diff, and the orchestrator
+reads `gh` output to decide what runs next. An agent's summary is a claim; only
+labels, tests and merged diffs are state.
+
+### Parallelism rule
+
+Two fixers may run at once only when their changes cannot touch the same file:
+
+- **Disjoint areas** — different crates and no shared generated file. Example
+  lanes: `crates/render` charts, `crates/host` stream/HTTP, `crates/player` UI,
+  `crates/editor`, `crates/model`.
+- **Same crate, different files** — allowed only if neither touches the module
+  root (`mod.rs`, `lib.rs`) or a shared test fixture. Otherwise run sequentially.
+- **Protocol/contract changes** — one at a time, since both sides of a stream
+  contract usually move together.
+- Verifiers and auditors always run in their own workspace and may run
+  concurrently with a fixer on a different area; a verifier never shares a
+  workspace with the fixer it checks.
+- The orchestrator merges one PR at a time onto `main`, re-running the three
+  gates on the merge result before the next merge.
+
+The cap in "Backlog drain" still applies: parallelism is for throughput between
+independent areas, not a licence to flood the queue.
 
 ## Stage 0 — one-time setup
 
@@ -170,7 +223,8 @@ rows. Disagreement becomes a new audit task, not a debate in the issue.
 
 ## Stage 3 — fix
 
-One fixer per issue, or one per group of issues touching the same file.
+One fixer per issue, in its own Orca workspace, or one per group of issues
+touching the same file.
 
 1. Write a test that fails for the source-expected behaviour. Paste the failing
    output into the PR.
@@ -185,7 +239,7 @@ One fixer per issue, or one per group of issues touching the same file.
 
 ## Stage 4 — verify
 
-The verifier, on a clean worktree:
+The verifier, in its own Orca workspace based on the PR's parent commit:
 
 1. Checks out the PR's parent, applies the new test alone, and confirms it
    fails for the stated reason.
@@ -208,8 +262,10 @@ return as new failures.
 ## Backlog drain
 
 - Queue: `gh issue list --label state:ready`, ordered `severity` then oldest.
-- One or two fixers in parallel, only on disjoint crates; otherwise sequential
-  to keep diffs and test runs sane.
+- The orchestrator drains it: pick the next issues, group them into disjoint
+  lanes (see "Parallelism rule"), and launch one fixer workspace per lane.
+- Two or three fixers run concurrently, never two on the same file; a lane's
+  next issue starts only after its verifier closes the previous one.
 - Batch cap per pass (for example 10 fixes) and a re-audit after every pass.
   Bigger batches make verification shallow.
 - `wontfix` requires a one-paragraph product reason recorded in the issue; the
@@ -261,19 +317,36 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 
 **Fixer**
 
-> Pick issue `#<n>` (`state:ready`). Reproduce it first from the issue alone.
-> Add the failing test, paste the failing output, fix the smallest cause, run
-> the three gates, open a PR that closes the issue. Do not touch other
-> behaviour, the parity sweep, or the test's assertions after it passes.
+> Pick issue `#<n>` (`state:ready`). Work only inside your Orca workspace,
+> based on `origin/main`. Reproduce the issue first from the issue alone. Add
+> the failing test, paste the failing output, fix the smallest cause, run the
+> three gates, commit on a `parity/<n>-<slug>` branch, and open a PR that
+> closes the issue. Do not touch other behaviour, the parity sweep, or the
+> test's assertions after it passes. Do not merge.
 > If the issue is wrong, say why with evidence and stop.
 
 **Verifier**
 
-> Issue `#<n>`, PR `<url>`. Do not read the fixer's explanation first. On a
-> clean worktree: apply only the new test to the PR's parent and confirm it
+> Issue `#<n>`, PR `<url>`. Do not read the fixer's explanation first. In your
+> own Orca workspace, on the PR's parent: apply only the new test and confirm it
 > fails for the stated reason; then apply the PR and confirm the behaviour
 > against the source citation. Run the surface's checks yourself. Report
 > `verified` or reopen with the command output that makes the decision.
+
+**Orchestrator**
+
+> You own the loop, not the code. Stay on `main` in the primary checkout.
+> 1. Read `gh issue list --label state:ready`, the ledger, and open PRs.
+> 2. Pick the next issues, group them into disjoint lanes, and launch one Orca
+>    workspace per worker with the brief above.
+> 3. Track each workspace with `worktree set --comment` and read its terminal,
+>    not its claims.
+> 4. Merge verified PRs one at a time: `gh pr checks`, then `gh pr merge`,
+>    re-running the three gates on `main` after each.
+> 5. Update `docs/parity/ledger/summary.md` per pass: precision, escape rate,
+>    coverage, test independence, and what is next.
+> Never edit port code, never triage or verify an issue yourself, and never
+> merge a PR whose issue is not `verified`.
 
 ## Risks
 
