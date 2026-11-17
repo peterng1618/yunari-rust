@@ -1,0 +1,13 @@
+[package]
+name = "coverage-gaps-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: this probe is audit evidence, not a port crate.
+[workspace]
+
+[dependencies]
+yunari-model = { path = "../../../../crates/model" }
+yunari-render = { path = "../../../../crates/render" }
+yunari-render-raster = { path = "../../../../crates/raster" }
