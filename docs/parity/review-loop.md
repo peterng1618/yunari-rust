@@ -50,12 +50,19 @@ orca agent launch --agent claude --worktree <id-from-create> --prompt "<role bri
   issues from the orchestrator's context and leaves no workspace the next pass
   can inspect.
 - **A finished Orca agent does not message the orchestrator.** Completion is
-  workspace state, not an inbox event: after launching, and at every step of the
-  pass, the orchestrator polls `orca worktree ps --json` and reads
-  `agents[].state` / `lastAssistantMessage`, then checks `gh pr list` and the
-  issue labels. `orca worktree ps --agent-wait --json` blocks until activity
-  instead of polling on a timer. Treat a `done` agent with no PR, no label
-  change and no terminal report as stalled, not finished.
+  workspace state, not an inbox event. Every dispatch brief therefore ends with
+  a report step:
+  `orca worktree set --worktree active --workspace-status in-review --comment
+  "<role>: <verdict or PR #n>"`.
+  The orchestrator polls `orca worktree ps --json` and reads
+  `agents[].state` / `lastAssistantMessage` plus the workspace status and
+  comment, then checks `gh pr list` and the issue labels.
+  `orca worktree ps --agent-wait --json` blocks until activity instead of
+  polling on a timer. Treat a `done` agent with no PR, no label change, no
+  status update and no terminal report as stalled, not finished.
+- The comment is one line of state, not a summary: `fixer: PR #23 open`,
+  `verifier: #19/#20 verified`, `auditor: 8 issues, ledger PR #22`,
+  `triage: 6/6 confirmed`. The full report belongs in the issue or PR.
   Address the returned `launch.outcome.handle` with `terminal read`/`wait`, and
   treat the terminal output as the worker's report.
 - The worktree id printed by `create` (`<repoId>::<path>`) is the handle for
@@ -462,6 +469,9 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 >    cramped/clipped control is the finding.
 > You may not edit port code. If you cannot reproduce, file it as `suspect`
 > with the missing evidence named.
+> When finished, report in the workspace: `orca worktree set --worktree active
+> --workspace-status in-review --comment "auditor: <n> issues, ledger PR #<n>"`.
+> Then stop.
 
 **Fixer**
 
@@ -472,6 +482,8 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 > closes the issue. Do not touch other behaviour, the parity sweep, or the
 > test's assertions after it passes. Do not merge.
 > If the issue is wrong, say why with evidence and stop.
+> When finished, report in the workspace: `orca worktree set --worktree active
+> --workspace-status in-review --comment "fixer: PR #<n> open"`. Then stop.
 
 **Verifier**
 
@@ -480,6 +492,9 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 > fails for the stated reason; then apply the PR and confirm the behaviour
 > against the source citation. Run the surface's checks yourself. Report
 > `verified` or reopen with the command output that makes the decision.
+> When finished, report in the workspace: `orca worktree set --worktree active
+> --workspace-status in-review --comment "verifier: #<n> verified|reopened"`.
+> Then stop.
 
 **Orchestrator**
 
@@ -492,7 +507,8 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 > 4. Batch up to 3 issues per lane, group lanes into disjoint files, and launch
 >    one Orca workspace per worker with the brief above.
 > 5. Track each workspace with `worktree set --comment` and read its terminal,
->    not its claims.
+>    not its claims. Poll `worktree ps --json` for `agents[].state`, the
+>    workspace status and comment; an agent that reports `in-review` is done.
 > 6. Merge verified PRs one at a time: `gh pr checks`, then `gh pr merge`,
 >    re-running the three gates on `main` after each.
 > 7. Retire immediately: close the issue, close the workspace's terminals,
@@ -513,6 +529,8 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 > extend `scripts/parity-fixtures.mjs` and its Rust fixture test instead of a
 > hand-written assertion. A probe must be cheap and deterministic; anything
 > needing the screen or hardware is marked `manual` in the matrix.
+> When finished, report in the workspace: `orca worktree set --worktree active
+> --workspace-status in-review --comment "probe: R<n> registered, PR #<n>"`.
 
 ## Risks
 
