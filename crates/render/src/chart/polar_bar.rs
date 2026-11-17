@@ -42,54 +42,61 @@ pub fn build(
         draw_axes(&mut ops, request, centre, inner, outer, start);
     }
 
-    // One binding is one category: its slot is the whole turn, and the gap is
-    // the share left empty on each side of the bar.
+    // One binding is one category: its own slice of the turn, with the gap a
+    // share left empty on each side of the bar.
+    let categories = request.readings.len();
+    if categories == 0 || outer <= inner {
+        return ops;
+    }
+    let slot = 360.0 / categories as f32;
     let gap = number(settings, "categoryGapPercent", CATEGORY_GAP_DEFAULT).clamp(0.0, 100.0);
     let width = setting_number(settings, "barWidth")
         .map(|width| width.abs())
-        .unwrap_or(360.0 * (1.0 - gap / 100.0))
-        .clamp(0.0, 360.0);
-    if width <= 0.0 || outer <= inner {
+        .unwrap_or(slot * (1.0 - gap / 100.0))
+        .clamp(0.0, slot);
+    if width <= 0.0 {
         return ops;
     }
 
-    // Bars run clockwise from the category's start, centred in its slot.
-    let midpoint = start - 180.0;
-    let from = midpoint + width / 2.0;
-    let to = midpoint - width / 2.0;
-
     let track = paint_setting(request, "track", TRACK_DEFAULT, issues);
     let fill = paint_setting(request, "fill", FILL_DEFAULT, issues);
-    let reading = request.reading.filter(|value| value.is_finite());
     let min = finite(number(settings, "min", 0.0), 0.0);
     let max = finite(number(settings, "max", 100.0), 100.0);
-    let at = reading.map_or(0.0, |value| position(value, min, max));
 
-    let band = Sector {
-        centre,
-        inner,
-        outer,
-        from,
-        to,
-    };
-    if let Some(track) = &track {
-        let paint = band.paint(track, false, 0.0);
-        if let Some(op) = sector_op(band.path(track_corner), paint) {
-            ops.push(op);
+    for (index, reading) in request.readings.iter().enumerate() {
+        let reading = reading.filter(|value| value.is_finite());
+        let at = reading.map_or(0.0, |value| position(value, min, max));
+        // Bars run clockwise from the category's start, centred in its slot.
+        let midpoint = start - slot * (index as f32 + 0.5);
+        let from = midpoint + width / 2.0;
+        let to = midpoint - width / 2.0;
+
+        let band = Sector {
+            centre,
+            inner,
+            outer,
+            from,
+            to,
+        };
+        if let Some(track) = &track {
+            let paint = band.paint(track, false, 0.0);
+            if let Some(op) = sector_op(band.path(track_corner), paint) {
+                ops.push(op);
+            }
         }
-    }
 
-    if fill.is_some() && reading.is_some() && at > 0.0 {
-        let Some(fill) = &fill else {
-            return ops;
-        };
-        let filled = Sector {
-            outer: inner + (outer - inner) * at,
-            ..band
-        };
-        let paint = filled.paint(fill, true, at);
-        if let Some(op) = sector_op(filled.path(corner), paint) {
-            ops.push(op);
+        if fill.is_some() && reading.is_some() && at > 0.0 {
+            let Some(fill) = &fill else {
+                return ops;
+            };
+            let filled = Sector {
+                outer: inner + (outer - inner) * at,
+                ..band
+            };
+            let paint = filled.paint(fill, true, at);
+            if let Some(op) = sector_op(filled.path(corner), paint) {
+                ops.push(op);
+            }
         }
     }
     ops
@@ -250,6 +257,14 @@ fn draw_axes(
 mod tests {
     use super::*;
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> yunari_model::document::ThemeDocument {
         yunari_model::document::parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -265,12 +280,13 @@ mod tests {
         let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };

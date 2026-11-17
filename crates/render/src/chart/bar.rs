@@ -40,8 +40,17 @@ pub fn build(
     // absence, not a reason to withhold a bar the document did resolve.
     let track = paint_setting(request, "track", TRACK_DEFAULT, issues);
     let fill = paint_setting(request, "fill", FILL_DEFAULT, issues);
-    let reading = request.reading.filter(|value| value.is_finite());
-    let at = reading.map_or(0.0, |value| position(value, min, max));
+    // One binding is one category: a binding nothing read keeps its slot and
+    // draws no value, as the source's null datum does.
+    let values: Vec<Option<f32>> = request
+        .readings
+        .iter()
+        .map(|value| {
+            value
+                .filter(|value| value.is_finite())
+                .map(|value| value as f32)
+        })
+        .collect();
 
     let (x0, y0, x1, y1) = if show_axes {
         (AXIS_INSET, 0.0, request.width, request.height - AXIS_INSET)
@@ -50,26 +59,7 @@ pub fn build(
     };
     let span = if horizontal { x1 - x0 } else { y1 - y0 }.max(0.0);
     let across = if horizontal { y1 - y0 } else { x1 - x0 }.max(0.0);
-    // An authored width wins. With no width, an authored gap asks for a share
-    // of the category slot; neither authored takes the family's 14 px default.
-    let gap = number(settings, "categoryGapPercent", 40.0).clamp(0.0, 100.0);
-    let thickness = setting_number(settings, "barWidth")
-        .unwrap_or(if settings.contains_key("categoryGapPercent") {
-            across * (1.0 - gap / 100.0)
-        } else {
-            BAR_WIDTH_DEFAULT
-        })
-        .max(0.0)
-        .min(across);
-    let frame = Frame {
-        horizontal,
-        x0,
-        y0,
-        x1,
-        y1,
-        thickness,
-    };
-
+    let across_start = if horizontal { y0 } else { x0 };
     let mut ops = Vec::new();
     if show_axes {
         draw_axes(
@@ -82,52 +72,81 @@ pub fn build(
             (x0, y0, x1, y1),
         );
     }
-
-    let count = segment_count(segment_divisor_of(settings));
-    if count <= 1 {
-        if let Some(track) = &track {
-            let paint = frame.mark_paint(0.0, span, track, false, 0.0);
-            push(&mut ops, frame.rect(0.0, span, track_corner, paint));
-        }
-        if let (Some(fill), true) = (&fill, reading.is_some() && at > 0.0) {
-            let paint = frame.mark_paint(0.0, at * span, fill, true, at);
-            push(&mut ops, frame.rect(0.0, at * span, corner, paint));
-        }
+    let categories = values.len();
+    if categories == 0 || across <= 0.0 {
         return ops;
     }
+    // An authored width wins. With no width, an authored gap asks for a share
+    // of the category slot; neither authored takes the family's 14 px default.
+    let gap = number(settings, "categoryGapPercent", 40.0).clamp(0.0, 100.0);
+    let slot = across / categories as f32;
+    let thickness = setting_number(settings, "barWidth")
+        .unwrap_or(if settings.contains_key("categoryGapPercent") {
+            slot * (1.0 - gap / 100.0)
+        } else {
+            BAR_WIDTH_DEFAULT
+        })
+        .max(0.0)
+        .min(slot);
 
-    // Segmented: the reading decides reach, the bands only decide the cuts.
-    let band = span / count as f32;
-    let visible = (band - bar_gap_px(band, segment_spacing_percent_of(settings))).max(0.0);
-    let whole = segment_fill_of(settings, SegmentFill::Partial) == SegmentFill::Whole;
-    let reach = at * span;
-    if let Some(track) = &track {
-        for index in 0..count {
-            let colour = band_colour(track, (index as f32 + 0.5) / count as f32, 1.0, false);
-            push(
-                &mut ops,
-                frame.rect(
-                    index as f32 * band,
-                    visible,
-                    track_corner,
-                    Paint::Solid(colour),
-                ),
-            );
-        }
-    }
-    if let (Some(fill), true) = (&fill, reading.is_some() && at > 0.0) {
-        for index in 0..count {
-            let offset = index as f32 * band;
-            let length = (reach - offset).clamp(0.0, visible);
-            if length <= 0.0 || (whole && length < visible) {
-                continue;
+    let count = segment_count(segment_divisor_of(settings));
+    for (index, reading) in values.iter().enumerate() {
+        let at = reading.map_or(0.0, |value| position(f64::from(value), min, max));
+        let frame = Frame {
+            horizontal,
+            x0,
+            y0,
+            x1,
+            y1,
+            thickness,
+            middle: across_start + slot * (index as f32 + 0.5),
+        };
+        if count <= 1 {
+            if let Some(track) = &track {
+                let paint = frame.mark_paint(0.0, span, track, false, 0.0);
+                push(&mut ops, frame.rect(0.0, span, track_corner, paint));
             }
-            let length = if whole { visible } else { length };
-            let colour = band_colour(fill, (index as f32 + 0.5) / count as f32, at, true);
-            push(
-                &mut ops,
-                frame.rect(offset, length, corner, Paint::Solid(colour)),
-            );
+            if let (Some(fill), true) = (&fill, reading.is_some() && at > 0.0) {
+                let paint = frame.mark_paint(0.0, at * span, fill, true, at);
+                push(&mut ops, frame.rect(0.0, at * span, corner, paint));
+            }
+            continue;
+        }
+
+        // Segmented: the reading decides reach, the bands only decide the cuts.
+        let band = span / count as f32;
+        let visible = (band - bar_gap_px(band, segment_spacing_percent_of(settings))).max(0.0);
+        let whole = segment_fill_of(settings, SegmentFill::Partial) == SegmentFill::Whole;
+        let reach = at * span;
+        if let Some(track) = &track {
+            for band_index in 0..count {
+                let colour =
+                    band_colour(track, (band_index as f32 + 0.5) / count as f32, 1.0, false);
+                push(
+                    &mut ops,
+                    frame.rect(
+                        band_index as f32 * band,
+                        visible,
+                        track_corner,
+                        Paint::Solid(colour),
+                    ),
+                );
+            }
+        }
+        if let (Some(fill), true) = (&fill, reading.is_some() && at > 0.0) {
+            for band_index in 0..count {
+                let offset = band_index as f32 * band;
+                let length = (reach - offset).clamp(0.0, visible);
+                if length <= 0.0 || (whole && length < visible) {
+                    continue;
+                }
+                let length = if whole { visible } else { length };
+                let colour = band_colour(fill, (band_index as f32 + 0.5) / count as f32, at, true);
+                push(
+                    &mut ops,
+                    frame.rect(offset, length, corner, Paint::Solid(colour)),
+                );
+            }
         }
     }
     ops
@@ -270,7 +289,7 @@ fn line(from: (f32, f32), to: (f32, f32)) -> Vec<PathCommand> {
     ]
 }
 
-/// Where the bars live and which way they grow, in node coordinates.
+/// Where one category's bar lives and which way it grows, in node coordinates.
 struct Frame {
     horizontal: bool,
     x0: f32,
@@ -278,6 +297,8 @@ struct Frame {
     x1: f32,
     y1: f32,
     thickness: f32,
+    /// The bar's centre on the category axis.
+    middle: f32,
 }
 
 impl Frame {
@@ -291,11 +312,7 @@ impl Frame {
     }
 
     fn centre(&self) -> f32 {
-        if self.horizontal {
-            (self.y0 + self.y1) / 2.0
-        } else {
-            (self.x0 + self.x1) / 2.0
-        }
+        self.middle
     }
 
     /// A bar grows from the minimum edge: right for horizontal, up for vertical,
@@ -414,6 +431,14 @@ fn draw_axes(
 mod tests {
     use super::*;
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> yunari_model::document::ThemeDocument {
         yunari_model::document::parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -429,12 +454,13 @@ mod tests {
         let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };
@@ -484,6 +510,37 @@ mod tests {
         // No width authored but a gap is: the slot share sizes it.
         let gap_sized = ops(r#"{"categoryGapPercent":40}"#, Some(50.0));
         assert!((rect(&gap_sized[0]).3 - 120.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn each_binding_is_a_category() {
+        let document = document("{}");
+        let node = &document.nodes[0];
+        let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
+            panic!("expected a chart");
+        };
+        let readings = [Some(50.0), Some(100.0)];
+        let request = ChartRequest {
+            document: &document,
+            node_id: &node.id,
+            width: 200.0,
+            height: 200.0,
+            readings: &readings,
+            opacity: 1.0,
+            settings: &content.settings.0,
+        };
+        let mut issues = Vec::new();
+        let ops = super::build(&request, &mut crate::Fonts::new(), &mut issues);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(ops.len(), 4, "a track and a value per category");
+        let values: Vec<(f32, f32, f32, f32, f32)> = ops
+            .iter()
+            .filter(|op| op.fill == Some(Paint::Solid(FILL_DEFAULT)))
+            .map(rect)
+            .collect();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], (0.0, 43.0, 100.0, 14.0, 7.0));
+        assert_eq!(values[1], (0.0, 143.0, 200.0, 14.0, 7.0));
     }
 
     #[test]

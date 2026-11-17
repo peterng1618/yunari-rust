@@ -1,8 +1,7 @@
 //! Pie chart.
 //!
-//! One reading makes one slice — or a slice plus a fixed total's remainder.
-//! Several readings per slice are out of scope until the request carries them,
-//! so this is deliberately the single-slice composition.
+//! One binding is one slice, with a fixed total leaving a remainder slice. A
+//! binding nothing read is absent rather than a zero share.
 //!
 //! Upstream draws no engine text for a pie and offers no setting to turn it on
 //! (`label: { show: false }` is unconditional), so no labels are drawn here.
@@ -43,15 +42,18 @@ pub fn build(
 ) -> Vec<Op> {
     let settings = request.settings;
 
-    // A negative or non-finite composition part has no angle; upstream treats
-    // it as missing rather than fabricating a zero.
-    let Some(reading) = request
-        .reading
-        .filter(|value| value.is_finite() && *value >= 0.0)
-    else {
+    // One binding is one slice. A negative or non-finite part has no angle;
+    // upstream treats it as missing rather than fabricating a zero.
+    let values: Vec<f32> = request
+        .readings
+        .iter()
+        .filter_map(|value| value.filter(|value| value.is_finite() && *value >= 0.0))
+        .map(|value| value as f32)
+        .collect();
+    if values.is_empty() {
         return Vec::new();
-    };
-    let reading = reading as f32;
+    }
+    let sum: f32 = values.iter().sum();
 
     let start = number(settings, "startAngle", START_DEFAULT);
     let end = settings
@@ -89,24 +91,28 @@ pub fn build(
     }
 
     let fixed = fixed_total(settings);
-    let overflow = fixed.is_some_and(|total| reading > total);
+    let overflow = fixed.is_some_and(|total| sum > total);
     let whole = match fixed {
         Some(total) if !overflow => total,
-        _ => reading,
+        _ => sum,
     };
-    let slice_share = if whole > 0.0 { reading / whole } else { 0.0 };
     let remainder = match fixed {
-        Some(total) if !overflow => Some(total - reading),
+        Some(total) if !overflow => Some(total - sum),
         _ => None,
     };
 
     let mut items = Vec::new();
-    if slice_share > 0.0 {
-        items.push(Slice {
-            share: slice_share,
-            paint_at: slice_share,
-            fill: palette_fill(request, 0, issues),
-        });
+    if whole > 0.0 {
+        for (index, value) in values.iter().enumerate() {
+            let share = value / whole;
+            if share > 0.0 {
+                items.push(Slice {
+                    share,
+                    paint_at: share,
+                    fill: palette_fill(request, index, issues),
+                });
+            }
+        }
     }
     if let Some(remainder) = remainder.filter(|value| *value > 0.0) {
         items.push(Slice {
@@ -290,6 +296,14 @@ mod tests {
     use crate::display_list::Shape;
     use yunari_model::document::{NodeKind, ThemeDocument, parse_document};
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> ThemeDocument {
         parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -305,12 +319,13 @@ mod tests {
         let NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };

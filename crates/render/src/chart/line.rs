@@ -1,8 +1,8 @@
-//! Line chart: cartesian axes, grid and the reading's mark.
+//! Line chart: cartesian axes, grid and each binding's series mark.
 //!
-//! The request carries one reading, so the series has one point: it is drawn
-//! as a symbol, because a polyline through one point has no length. Axis
-//! furniture is drawn even when the reading is absent; nothing is made from a
+//! The request carries one figure per binding, so a series has one point and
+//! is drawn as a symbol: a polyline through one point has no length. Axis
+//! furniture is drawn even when every reading is absent; nothing is made from a
 //! zero that was not measured.
 //!
 //! Upstream hides axis tick labels (`axisLabel.show: false`); this port draws
@@ -50,11 +50,13 @@ pub fn build(
     let window_seconds = finite(settings, "windowSeconds", 60.0).max(1.0);
 
     // A reading that is not a finite number is an absence, never a zero.
-    let reading = request
-        .reading
-        .filter(|value| value.is_finite())
-        .map(|value| value as f32);
-    let range = value_range(settings, reading);
+    let values: Vec<f32> = request
+        .readings
+        .iter()
+        .filter_map(|value| value.filter(|value| value.is_finite()))
+        .map(|value| value as f32)
+        .collect();
+    let range = value_range(settings, &values);
 
     // Y tick texts first: the widest decides how far the plot moves right, so
     // the labels stay inside the node.
@@ -159,36 +161,39 @@ pub fn build(
         }
     }
 
-    if let (Some(value), Some((low, high)), Some(stroke)) =
-        (reading, range, series_fill(request, settings, issues))
-    {
-        let at = position(f64::from(value), low, high);
-        let point = (plot.right, plot.bottom - at * (plot.bottom - plot.top));
-        // A lone point would otherwise be invisible, so it is always marked.
-        let size = clamp_length(finite(settings, "markerSize", 4.0), plot);
-        push_symbol(&mut ops, point, size, stroke.for_mark(1.0, true));
+    if let Some((low, high)) = range {
+        for (index, value) in values.iter().enumerate() {
+            let Some(stroke) = series_fill(request, settings, index, issues) else {
+                continue;
+            };
+            let at = position(f64::from(*value), low, high);
+            let point = (plot.right, plot.bottom - at * (plot.bottom - plot.top));
+            // A lone point would otherwise be invisible, so it is always marked.
+            let size = clamp_length(finite(settings, "markerSize", 4.0), plot);
+            push_symbol(&mut ops, point, size, stroke.for_mark(1.0, true));
+        }
     }
 
     ops
 }
 
-/// The first series' paint: the palette entry when present, else `stroke`.
-///
-/// `palette` is a positional per-series list upstream; this single-reading
-/// chart only draws series 0. An authored paint that cannot resolve is an
-/// absence, not a substituted colour.
+/// One series' paint: the palette entry at its own index when present, else
+/// `stroke`. An authored paint that cannot resolve is an absence, not a
+/// substituted colour.
 fn series_fill(
     request: &ChartRequest<'_>,
     settings: &serde_json::Map<String, serde_json::Value>,
+    index: usize,
     issues: &mut Vec<PlanIssue>,
 ) -> Option<ChartFill> {
     let palette_entry = settings
         .get("palette")
         .and_then(|value| value.as_array())
-        .and_then(|entries| entries.first());
+        .filter(|entries| !entries.is_empty())
+        .map(|entries| (entries, index % entries.len()));
     let (value, key) = match palette_entry {
-        Some(paint) => (Some(paint), "palette.0"),
-        None => (settings.get("stroke"), "stroke"),
+        Some((entries, at)) => (Some(&entries[at]), format!("palette.{at}")),
+        None => (settings.get("stroke"), "stroke".to_owned()),
     };
     let path = format!("nodes/{}/settings/{key}", request.node_id);
     match value {
@@ -209,24 +214,26 @@ fn series_fill(
 /// grows rather than divides by zero.
 fn value_range(
     settings: &serde_json::Map<String, serde_json::Value>,
-    reading: Option<f32>,
+    values: &[f32],
 ) -> Option<(f32, f32)> {
     let min = optional(settings, "min");
     let max = optional(settings, "max");
     match (min, max) {
         (Some(low), Some(high)) => (high > low).then_some((low, high)),
         _ => {
-            let value = reading?;
-            let mut low = min.unwrap_or_else(|| value.min(0.0));
-            let mut high = max.unwrap_or_else(|| value.max(0.0));
+            let first = *values.first()?;
+            let lowest = values.iter().copied().fold(first, f32::min);
+            let highest = values.iter().copied().fold(first, f32::max);
+            let mut low = min.unwrap_or_else(|| lowest.min(0.0));
+            let mut high = max.unwrap_or_else(|| highest.max(0.0));
             if high <= low {
                 if min.is_some() {
                     high = low + 1.0;
                 } else if max.is_some() {
                     low = high - 1.0;
                 } else {
-                    low = value - 1.0;
-                    high = value + 1.0;
+                    low = first - 1.0;
+                    high = first + 1.0;
                 }
             }
             Some((low, high))
@@ -325,6 +332,14 @@ mod tests {
     use super::*;
     use yunari_model::document::parse_document;
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> yunari_model::document::ThemeDocument {
         parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -340,12 +355,13 @@ mod tests {
         let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };
@@ -394,6 +410,35 @@ mod tests {
         values.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| {
             (low.min(value), high.max(value))
         })
+    }
+
+    #[test]
+    fn every_binding_draws_its_own_series_mark() {
+        let document = document(r#"{"showAxes": false, "min": 0, "max": 100}"#);
+        let node = &document.nodes[0];
+        let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
+            panic!("expected a chart");
+        };
+        let readings = [Some(25.0), Some(75.0)];
+        let request = ChartRequest {
+            document: &document,
+            node_id: &node.id,
+            width: 200.0,
+            height: 200.0,
+            readings: &readings,
+            opacity: 1.0,
+            settings: &content.settings.0,
+        };
+        let mut issues = Vec::new();
+        let ops = super::build(&request, &mut crate::Fonts::new(), &mut issues);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(ops.len(), 2);
+        let centres: Vec<f32> = ops
+            .iter()
+            .map(|op| marker(std::slice::from_ref(op)).0.1)
+            .collect();
+        assert!((centres[0] - 152.0).abs() < 0.01, "{centres:?}");
+        assert!((centres[1] - 56.0).abs() < 0.01, "{centres:?}");
     }
 
     #[test]

@@ -48,8 +48,14 @@ pub fn build(
     );
 
     // One condition for the whole arc: a missing reading shows only the track,
-    // and a paint that resolves to nothing is the same absence.
-    let reading = request.reading;
+    // and a paint that resolves to nothing is the same absence. A gauge reads
+    // its first binding, as the source's gauge series does.
+    let reading = request
+        .readings
+        .first()
+        .copied()
+        .flatten()
+        .filter(|value| value.is_finite());
     let drawn = reading.is_some() && progress.is_some();
     let at = reading.map_or(0.0, |value| position(value, min, max));
 
@@ -227,6 +233,14 @@ mod tests {
     use crate::display_list::Shape;
     use yunari_model::document::parse_document;
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> yunari_model::document::ThemeDocument {
         parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -242,12 +256,13 @@ mod tests {
         let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };

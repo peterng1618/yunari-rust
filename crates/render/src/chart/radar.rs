@@ -2,8 +2,8 @@
 //!
 //! The frame is drawn whenever the node has bindings: one spoke per binding,
 //! `splitNumber` concentric rings, and the binding's semantic key at each
-//! spoke. The request carries one reading, so it is drawn on every spoke;
-//! per-binding readings are out of scope until the request carries them.
+//! spoke. Each binding's own reading sets how far its spoke reaches; a spoke
+//! nothing read leaves the outline open rather than drawing a zero.
 
 use crate::chart::{
     ChartFill, ChartRequest, LabelStyle, boolean, chart_fill, circle, filled, label, number,
@@ -141,31 +141,62 @@ pub fn build(
 
     let min = number(settings, "min", MIN_DEFAULT);
     let max = number(settings, "max", MAX_DEFAULT);
-    let reading = request.reading.filter(|value| value.is_finite());
-    // A polygon needs a resolved outline, three spokes and a real scale; a
-    // missing reading is never drawn as zero.
-    let drawable = reading.is_some() && stroke.is_some() && count >= 3 && max > min;
-    if drawable {
-        let Some(reading) = reading else { return ops };
-        let at = position(reading, min, max);
-        let vertices: Vec<(f32, f32)> = angles
-            .iter()
-            .map(|angle| point_on(centre, radius * at, *angle))
-            .collect();
+    // One binding is one spoke; a spoke nothing read is absent, never zero.
+    let values: Vec<Option<f32>> = request
+        .readings
+        .iter()
+        .take(count)
+        .map(|value| {
+            value
+                .filter(|value| value.is_finite())
+                .map(|value| value as f32)
+        })
+        .collect();
+    let at: Vec<Option<f32>> = values
+        .iter()
+        .map(|value| value.map(|value| position(f64::from(value), min, max)))
+        .collect();
+    let vertices: Vec<Option<(f32, f32)>> = at
+        .iter()
+        .zip(&angles)
+        .map(|(at, angle)| at.map(|at| point_on(centre, radius * at, *angle)))
+        .collect();
 
-        if let Some(area) = &area {
-            ops.extend(filled(polygon(&vertices), ChartFill::Solid(area.at(1.0))));
+    if stroke.is_some() && count >= 3 && max > min {
+        if let Some(area) = &area
+            && vertices.iter().all(Option::is_some)
+        {
+            let points: Vec<(f32, f32)> = vertices.iter().flatten().copied().collect();
+            ops.extend(filled(polygon(&points), ChartFill::Solid(area.at(1.0))));
         }
         if let Some(stroke) = &stroke {
             let color = stroke.at(1.0);
             let width = number(settings, "lineWidth", LINE_DEFAULT).max(0.0);
-            if let Some(op) = stroked(polygon(&vertices), true, color, width) {
-                ops.push(op);
+            // The outline runs through consecutive valued spokes; a spoke
+            // nothing read leaves a gap rather than a chord across it.
+            if vertices.iter().all(Option::is_some) {
+                let points: Vec<(f32, f32)> = vertices.iter().flatten().copied().collect();
+                if let Some(op) = stroked(polygon(&points), true, color, width) {
+                    ops.push(op);
+                }
+            } else {
+                for window in vertices.windows(2) {
+                    let (Some(from), Some(to)) = (window[0], window[1]) else {
+                        continue;
+                    };
+                    let run = vec![
+                        PathCommand::MoveTo(from.0, from.1),
+                        PathCommand::LineTo(to.0, to.1),
+                    ];
+                    if let Some(op) = stroked(run, false, color, width) {
+                        ops.push(op);
+                    }
+                }
             }
             if boolean(settings, "showMarkers", true) {
                 let marker = number(settings, "markerSize", MARKER_DEFAULT).max(0.0) / 2.0;
                 if marker > 0.0 {
-                    for vertex in &vertices {
+                    for vertex in vertices.iter().flatten() {
                         if let Some(op) = filled(circle(*vertex, marker), ChartFill::Solid(color)) {
                             ops.push(op);
                         }
@@ -229,6 +260,14 @@ mod tests {
     use crate::display_list::Shape;
     use yunari_model::document::{NodeKind, ThemeDocument, parse_document};
 
+    /// A single-figure fixture, read as one figure per binding.
+    fn readings_of(
+        document: &yunari_model::document::ThemeDocument,
+        reading: Option<f64>,
+    ) -> Vec<Option<f64>> {
+        vec![reading; document.bindings.get("c").map_or(1, Vec::len)]
+    }
+
     fn document(settings: &str) -> ThemeDocument {
         parse_document(&format!(
             r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
@@ -254,12 +293,13 @@ mod tests {
         let NodeKind::Chart { content } = &node.kind else {
             panic!("expected a chart");
         };
+        let readings = readings_of(&document, reading);
         let request = ChartRequest {
             document: &document,
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
-            reading,
+            readings: &readings,
             opacity: 1.0,
             settings: &content.settings.0,
         };

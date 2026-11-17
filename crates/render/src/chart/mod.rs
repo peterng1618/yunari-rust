@@ -30,8 +30,10 @@ pub struct ChartRequest<'a> {
     /// The node's box, in artboard units.
     pub width: f32,
     pub height: f32,
-    /// What the node's bindings read, when anything has been sampled yet.
-    pub reading: Option<f64>,
+    /// What the node's bindings read, in binding order, with each binding's
+    /// authored scale and offset applied. A binding nothing read is `None`, and
+    /// every family treats that as an absence rather than a zero.
+    pub readings: &'a [Option<f64>],
     pub opacity: f32,
     pub settings: &'a serde_json::Map<String, serde_json::Value>,
 }

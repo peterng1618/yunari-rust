@@ -247,12 +247,13 @@ fn walk(
             )
         }
         NodeKind::Chart { content } => {
+            let values = chart_values(document, &node.id, readings, issues);
             let request = crate::chart::ChartRequest {
                 document,
                 node_id: &node.id,
                 width: box_width,
                 height: box_height,
-                reading: None,
+                readings: &values,
                 opacity,
                 settings: &content.settings.0,
             };
@@ -406,6 +407,43 @@ fn walk(
             issues,
         );
     }
+}
+
+/// One figure per binding, in binding order, with the binding's own scale and
+/// offset applied the way a value run applies them. A key nothing has read is
+/// `None` and is reported, so a chart's gap says which key it is missing.
+fn chart_values(
+    document: &ThemeDocument,
+    node_id: &str,
+    readings: &Readings,
+    issues: &mut Vec<PlanIssue>,
+) -> Vec<Option<f64>> {
+    let Some(bindings) = document.bindings.get(node_id) else {
+        return Vec::new();
+    };
+    bindings
+        .iter()
+        .map(|binding| {
+            let value = readings
+                .get(&binding.semantic_key)
+                .filter(|reading| reading.status == yunari_providers::sample::Status::Ok)
+                .and_then(|reading| reading.value)
+                .filter(|value| value.is_finite());
+            match value {
+                Some(value) => {
+                    Some(value * binding.scale.unwrap_or(1.0) + binding.offset.unwrap_or(0.0))
+                }
+                None => {
+                    issues.push(PlanIssue {
+                        code: IssueCode::UnmappedKey,
+                        node_id: Some(node_id.to_owned()),
+                        detail: format!("No sensor is mapped to {:?}.", binding.semantic_key),
+                    });
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 /// A text node's paragraph, arranged for the box it declares.
@@ -1214,6 +1252,48 @@ mod tests {
         let (text, issues) = value_run_text(&document, &readings);
         assert_eq!(text, "23:07");
         assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_chart_reads_every_binding_it_declares() {
+        let (list, issues) = build_with(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+                    "nodes":[{"id":"p","transform":{"width":200,"height":200},
+                    "kind":{"type":"chart","content":{"family":"pie",
+                    "settings":{"innerRadiusPercent":0}}}}],
+                    "bindings":{"p":[
+                        {"id":"a","semanticKey":"cpu.load"},
+                        {"id":"b","semanticKey":"ram.used"}]}}"##,
+            ),
+            &mut Fonts::new(),
+            &Readings::new([
+                reading("cpu.load", 30.0, "%"),
+                reading("ram.used", 70.0, "%"),
+            ]),
+            &UnitPreferences::default(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let slices = list.ops.iter().filter(|op| op.fill.is_some()).count();
+        assert_eq!(slices, 2, "one slice per binding");
+    }
+
+    #[test]
+    fn a_chart_names_the_binding_nothing_read() {
+        let (_, issues) = build_with(
+            &document(
+                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+                    "nodes":[{"id":"g","transform":{"width":200,"height":200},
+                    "kind":{"type":"chart","content":{"family":"gauge","settings":{}}}}],
+                    "bindings":{"g":[{"id":"a","semanticKey":"cpu.load"}]}}"##,
+            ),
+            &mut Fonts::new(),
+            &Readings::default(),
+            &UnitPreferences::default(),
+        );
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, IssueCode::UnmappedKey);
+        assert!(issues[0].detail.contains("cpu.load"));
     }
 
     #[test]
