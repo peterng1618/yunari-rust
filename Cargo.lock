@@ -9222,6 +9222,7 @@ name = "yunari-render-raster"
 version = "0.1.0"
 dependencies = [
  "image",
+ "resvg 0.45.1",
  "tiny-skia",
  "yunari-golden",
  "yunari-model",
