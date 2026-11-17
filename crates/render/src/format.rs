@@ -28,16 +28,20 @@ pub fn format_number(value: f64, precision: Option<u8>, decimal_separator: char)
 }
 
 /// `Math.round` in the source rounds a half up, which `f64::round` does not
-/// for negative values; a reading of `-0.05` must print `0`, not `-0.1`.
+/// for negative values; a reading of `-0.05` must print `0`, not `-0.1` in the
+/// default (unpinned) branch.
 fn round_half_up(value: f64) -> f64 {
     (value + 0.5).floor()
 }
 
 /// Rounds to `digits` decimals first, then writes the rounded integer, so the
 /// decimal writer never rounds a second time.
+///
+/// Pinned precision goes through `Intl.NumberFormat` in the source, which
+/// rounds a half away from zero: `-5.5` at zero decimals is `-6`, not `-5`.
 fn format_fixed(value: f64, digits: u8, decimal_separator: char) -> String {
     let factor = 10f64.powi(i32::from(digits));
-    let scaled = round_half_up(value * factor);
+    let scaled = (value * factor).abs().round().copysign(value);
     let negative = scaled < 0.0;
     let mut text = format!("{:.0}", scaled.abs());
     if digits > 0 {

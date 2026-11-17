@@ -1,0 +1,62 @@
+[
+  {
+    "row": "R1",
+    "name": "background modes and composition",
+    "args": ["test", "-p", "yunari-render", "--lib", "background"]
+  },
+  {
+    "row": "R2",
+    "name": "artboard validation and disc cropping",
+    "args": ["test", "-p", "yunari-model", "--lib", "validate"]
+  },
+  {
+    "row": "R4",
+    "name": "chart families geometry and defaults",
+    "args": ["test", "-p", "yunari-render", "--lib", "chart::"]
+  },
+  {
+    "row": "R5",
+    "name": "chart paints and thresholds",
+    "args": ["test", "-p", "yunari-render", "--lib", "chart::"]
+  },
+  {
+    "row": "R6",
+    "name": "text layout and measurement",
+    "args": ["test", "-p", "yunari-render", "--lib", "text::"]
+  },
+  {
+    "row": "R7",
+    "name": "type tokens and size ladder",
+    "args": ["test", "-p", "yunari-render", "--lib", "plan::tests"]
+  },
+  {
+    "row": "R8",
+    "name": "asset faces and media types",
+    "args": ["test", "-p", "yunari-render", "--lib", "text::"]
+  },
+  {
+    "row": "R10",
+    "name": "readings, absence and gaps",
+    "args": ["test", "-p", "yunari-render", "--lib", "history"]
+  },
+  {
+    "row": "R11",
+    "name": "player surface",
+    "args": ["test", "-p", "yunari-player"]
+  },
+  {
+    "row": "R12",
+    "name": "live frame stream contract",
+    "args": ["test", "-p", "yunari-host", "--lib", "stream"]
+  },
+  {
+    "row": "R14",
+    "name": "panel still fitting (protocol half)",
+    "args": ["test", "-p", "yunari-host", "--lib", "panels"]
+  },
+  {
+    "row": "R15",
+    "name": "formatting against source fixtures",
+    "args": ["test", "-p", "yunari-render", "--test", "source_fixtures"]
+  }
+]

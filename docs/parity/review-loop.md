@@ -20,6 +20,7 @@ finding.
 | Triager | Reproduces, dedupes, classifies, labels `state:ready`; closes invalid | Fix code |
 | Fixer | Writes a failing test first, fixes the smallest cause, opens a PR | Triage their own issue, mark it verified |
 | Verifier | Reproduces on the parent commit, checks the fix and the test, runs the surface, closes or reopens | Trust the fixer's description or evidence |
+| Probe worker | Turns a matched row or finding into a registered, deterministic probe or fixture | Re-audit the row or change product behaviour |
 
 The verifier sees only the issue and the PR diff — not the fixer's reasoning.
 That is deliberate: a wrong explanation should not survive by being persuasive.
@@ -119,25 +120,42 @@ git branch -D parity/<n>-<slug>        # local, if it exists here
    - source entry points (file/symbol),
    - port entry points,
    - the behaviours a user can observe,
-   - how each is checked (test, driven window, screenshot, HTTP call, pixel
-     diff),
-   - the evidence path that satisfies it.
+   - the probe that proves it (`probe:<row>`, or `—` when unprobed),
+   - the source oracle the probe derives from (test file or fixture).
    The matrix is the audit's coverage ledger. An auditor may not leave a row
    unchecked; "no finding" still needs a ledger line.
-3. Labels: `parity`, `surface:<editor|render|player|host|providers|panels|mcp|store|packs|tray>`,
+3. Register each probe in `docs/parity/probes.json` (row, name, cargo args).
+   `scripts/parity-sweep.ps1` runs them all, writes
+   `target/parity/report.json`, and exits non-zero on a regression.
+4. Generate the differential fixtures from the source before auditing:
+   `cd D:/git-repos/yunari/src/web` then
+   `npx tsx D:/git-repos/yunari-rust/scripts/parity-fixtures.mjs
+   D:/git-repos/yunari-rust/crates/render/tests/fixtures`.
+   The generator records the source commit; regenerate when the source's
+   renderer changes and say which commit the fixtures came from.
+5. Labels: `parity`, `surface:<editor|render|player|host|providers|panels|mcp|store|packs|tray>`,
    `class:<regression|missing|wrong-default|interaction|copy|layout|state|perf|a11y>`,
-   `severity:<S1|S2|S3|S4>`, `state:<needs-repro|ready|in-fix|fixed|verified|wontfix>`.
-4. Issue body template `docs/parity/issue-template.md` with the fields below as
-   required; issues are filed with `gh issue create --body-file`, which handles
-   the quoting.
-5. Probe helpers:
+   `severity:<S1|S2|S3|S4>`, `state:<needs-repro|ready|in-fix|fixed|verified|wontfix>`,
+   `needs:human` for an escalation.
+6. Probe helpers:
    - source: the existing Playwright setup in `src/web` (the editor serves at
      `/editor`; `playwright.parity.config.ts` shows the pattern),
    - port: a headless raster probe plus window capture; keyboard-only driving
      through the app's own test seam. Never take over the user's pointer or
      keyboard.
+7. Issue body template `docs/parity/issue-template.md` with the fields below as
+   required; issues are filed with `gh issue create --body-file`, which handles
+   the quoting.
 
 ## Stage 1 — audit (per surface)
+
+Audit cost is spent on what a probe cannot prove. Each pass starts with the
+sweep, then audits only:
+
+1. rows whose probe failed (the report names the row and the failing output),
+2. rows marked `—` unprobed in the matrix,
+3. a 10% resample of rows marked matched, chosen by risk (recent churn, S1
+   surface), not at random.
 
 One auditor per surface, run in parallel, each blind to the port's spec claims.
 The brief is fixed (see "Auditor brief").
@@ -299,8 +317,11 @@ return as new failures.
 - Queue: `gh issue list --label state:ready`, ordered `severity` then oldest.
 - The orchestrator drains it: pick the next issues, group them into disjoint
   lanes (see "Parallelism rule"), and launch one fixer workspace per lane.
+- **Batch by lane, not by issue**: up to 3 issues on the same files go to one
+  fixer as one PR. One repo tour, one gate run, one verification per batch —
+  this is where token spend actually drops.
 - Two or three fixers run concurrently, never two on the same file; a lane's
-  next issue starts only after its verifier closes the previous one.
+  next batch starts only after its verifier closes the previous one.
 - Batch cap per pass (for example 10 fixes) and a re-audit after every pass.
   Bigger batches make verification shallow.
 - `wontfix` requires a one-paragraph product reason recorded in the issue; the
@@ -308,19 +329,23 @@ return as new failures.
 
 ## The self-improvement loop
 
-The loop runs without a human in it: audit → triage → fix → verify → retire →
-re-audit. Each pass starts where the last ledger ended and ends with no
+The loop runs without a human in it: sweep → audit → triage → fix → verify →
+retire → re-audit. Each pass starts where the last ledger ended and ends with no
 leftovers.
 
-1. **Audit** the ledger's unchecked rows first, then re-audit rows touched by
-   the last pass. Findings become issues.
-2. **Triage** every new issue before any fix starts.
-3. **Drain** `state:ready` in severity order, within the lane and batch caps.
-4. **Verify** each fix independently; merged means verified plus gates green on
+1. **Sweep** `scripts/parity-sweep.ps1`: every registered probe, no agents.
+   Failures are the pass's first work; the report is the evidence.
+2. **Audit** only the failed rows, the unprobed rows, and a 10% risk-weighted
+   resample of matched rows. Findings become issues, and each finding that can
+   be automated becomes a probe.
+3. **Triage** every new issue before any fix starts.
+4. **Drain** `state:ready` in severity order, batched by lane, within the lane
+   and batch caps.
+5. **Verify** each fix independently; merged means verified plus gates green on
    the merge result.
-5. **Retire** workspace, branch, and issue the moment it merges.
-6. **Re-audit** the closed issues' matrix rows and the rows still unchecked.
-7. **Publish** the pass in `docs/parity/ledger/summary.md`, then start the next
+6. **Retire** workspace, branch, and issue the moment it merges.
+7. **Re-audit** the closed issues' matrix rows and the rows still unprobed.
+8. **Publish** the pass in `docs/parity/ledger/summary.md`, then start the next
    pass from the ledger.
 
 ### Stop conditions
@@ -329,8 +354,9 @@ A pass ends — and the orchestrator reports rather than inventing work — when
 any of these holds:
 
 - the `state:ready` queue is empty and the last audit filed no new S1/S2;
-- every matrix row has evidence (matched or dropped with a reason);
+- every matrix row has evidence (probed passing, or dropped with a reason);
 - the batch cap is reached, with the remainder carried to the next pass;
+- the pass budget is spent (see "Budget");
 - the same issue fails verification twice: stop that lane, mark it
   `state:needs-repro` with both failure reports, and move on;
 - an audit pass files issues below the precision floor (~70%) twice in a row:
@@ -338,6 +364,33 @@ any of these holds:
 
 An empty pass is a valid result. Filing issues to look busy is the failure the
 loop exists to prevent.
+
+### Escalation — the only human stops
+
+The orchestrator never waits for a human. It labels the issue or the ledger line
+`needs:human` with one sentence naming the decision, parks that lane, and
+continues everything else. The four legitimate human stops:
+
+- a product/ambiguity decision the source app does not answer;
+- a security, licensing or irreversible action;
+- verification that needs the physical panel, a paired phone, or the user's
+  hardware;
+- a budget increase beyond the pass cap.
+
+### Budget
+
+Per pass, the orchestrator records in `summary.md`:
+
+- **token budget** — a cap for the pass, split audit/fix/verify (rough split
+  40/40/20). Hitting it is a stop condition, not a reason to keep spending.
+- **wall clock** — a cap after which remaining lanes are carried to the next
+  pass.
+- **agent count** — at most 3 fix lanes + 1 auditor + 1 verifier per pass.
+
+Waste rules: no agent re-derives what a fixture encodes; a verifier runs the
+probe and the new test, not the whole workspace (the full suite runs once per
+merge on `main`); a worker gets issue IDs, lane files and probe commands, never
+a repo tour.
 
 ### Bounded growth
 
@@ -361,9 +414,13 @@ loop exists to prevent.
   auditor brief or evidence bar is too loose.
 - **Escape rate:** issues the verifier reopens / fixes attempted. Non-zero
   means the fix stage is claiming too early.
-- **Coverage:** ledger rows with evidence / total matrix rows.
+- **Coverage:** probed rows passing / total matrix rows; unprobed rows are debt
+  and are listed by row number, never hidden in a percentage.
 - **Test independence:** fixes whose new test fails on the parent / all fixes.
   Anything else is a tautological test.
+- **Cost:** tokens and wall clock per verified fix; a lane batching 3 issues
+  should cost less than 3 separate lanes. A rising cost with flat queue means
+  the brief or the tooling is wasting work.
 
 These are reported per pass in `docs/parity/ledger/summary.md`.
 
@@ -420,21 +477,35 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 **Orchestrator**
 
 > You own the loop, not the code. Stay on `main` in the primary checkout.
-> 1. Read `gh issue list --label state:ready`, the ledger, and open PRs.
-> 2. Pick the next issues, group them into disjoint lanes, and launch one Orca
->    workspace per worker with the brief above.
-> 3. Track each workspace with `worktree set --comment` and read its terminal,
+> 1. Run `scripts/parity-sweep.ps1` first. Read `target/parity/report.json`;
+>    its failures are the pass's first work.
+> 2. Read `gh issue list --label state:ready`, the ledger, and open PRs.
+> 3. Audit only the failed rows, the rows marked unprobed, and a 10% risk
+>    resample. Never re-audit a passing probed row for reassurance.
+> 4. Batch up to 3 issues per lane, group lanes into disjoint files, and launch
+>    one Orca workspace per worker with the brief above.
+> 5. Track each workspace with `worktree set --comment` and read its terminal,
 >    not its claims.
-> 4. Merge verified PRs one at a time: `gh pr checks`, then `gh pr merge`,
+> 6. Merge verified PRs one at a time: `gh pr checks`, then `gh pr merge`,
 >    re-running the three gates on `main` after each.
-> 5. Retire immediately: close the issue, close the workspace's terminals,
+> 7. Retire immediately: close the issue, close the workspace's terminals,
 >    `worktree rm --force`, delete the branch locally and on the remote.
-> 6. Update `docs/parity/ledger/summary.md` per pass: precision, escape rate,
->    coverage, test independence, and what is next.
-> 7. Stop at a stop condition and report the ledger state; do not file work to
->    stay busy. An empty queue with full coverage ends the loop.
+> 8. Update `docs/parity/ledger/summary.md` per pass: precision, escape rate,
+>    coverage, test independence, tokens and wall clock spent, and what is next.
+> 9. Stop at a stop condition and report the ledger state; do not file work to
+>    stay busy. An empty queue with full coverage ends the loop. Park a
+>    `needs:human` decision and keep draining the rest.
 > Never edit port code, never triage or verify an issue yourself, and never
 > merge a PR whose issue is not `verified`.
+
+**Probe/fixture worker**
+
+> Turn a matched row or a filed finding into a probe, not another audit:
+> register it in `docs/parity/probes.json`, make it fail on the parent behaviour
+> and pass now, then run `scripts/parity-sweep.ps1`. For data-shaped behaviour,
+> extend `scripts/parity-fixtures.mjs` and its Rust fixture test instead of a
+> hand-written assertion. A probe must be cheap and deterministic; anything
+> needing the screen or hardware is marked `manual` in the matrix.
 
 ## Risks
 

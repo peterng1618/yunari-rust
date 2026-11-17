@@ -1,6 +1,6 @@
 /target
 /dist
 /test-results/
+/.playwright-mcp/
 /.cargo/config.toml
 
-.playwright-mcp/test-results/
