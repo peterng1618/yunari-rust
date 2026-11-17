@@ -108,6 +108,34 @@ Classes of regression the audit must look for explicitly:
 - **Silent fallbacks** — a missing reading, asset or face drawn as something
   plausible instead of an absence with a reason.
 
+## UI screenshots
+
+Every UI or layout finding is judged at fullscreen in a 16:9 2560x1440 client
+area. A smaller viewport is not a substitute; if the host panel cannot show
+that size, the shot is taken offscreen/through the raster path and the issue
+says so.
+
+- **Source:** start the source through its own host (its Playwright webServer
+  boots the real host and serves `/editor` and `/player`; a bare
+  `vite preview` has no API and only shows the read-failure state), then drive
+  Chromium with viewport `{width: 2560, height: 1440}` and screenshot the full
+  viewport.
+- **Port:** `scripts/capture-window.ps1 -Exe <Yunari.exe> -Width 2560 -Height
+  1440 -Out <png>` resizes the window's client area and captures it with
+  `PrintWindow`/`PW_RENDERFULLCONTENT`, so the window is never foregrounded and
+  the pointer and keyboard stay the user's. The raster path can render the same
+  theme at 2560x1440 for a pixel-level check.
+- Same theme document, same artboard, same zoom/fit, same language, same
+  scroll position on both sides.
+
+Evaluate, in this order: visible regions and their hierarchy; spacing and
+alignment; clipping and overflow; hit-target size and position; copy; state
+(selected, disabled, focus, empty, error). A pixel diff is supporting evidence,
+not the verdict. Name the region and the measured difference, not "looks off".
+
+Shots live under `test-results/parity-shots/` (not committed); the issue names
+the exact file paths and what to look at, and the verifier regenerates them.
+
 ## Stage 2 — triage
 
 The triager runs every repro on a clean checkout and marks:
@@ -203,6 +231,8 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 >    classification). No finding without both citations and a repro.
 > 4. Fill every ledger row, including matches. Write
 >    `docs/parity/ledger/<surface>.md`.
+> 5. UI/layout findings need 2560x1440 fullscreen shots for both sides
+>    (source through its own host, port through `scripts/capture-window.ps1`).
 > You may not edit port code. If you cannot reproduce, file it as `suspect`
 > with the missing evidence named.
 

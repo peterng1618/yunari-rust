@@ -2,4 +2,4 @@
 /dist
 /.cargo/config.toml
 
-.playwright-mcp/
+.playwright-mcp/test-results/
