@@ -90,11 +90,15 @@ arrow-to-line) are outside the default subset and drew empty.
 - **Pane scrolling.** Resolved: the pane bodies use the kit's
   `ScrollableElement` scroll area, so the wheel and the scrollbar share one
   offset instead of the old row-count estimate.
-- **Mode surfaces.** Themes is live: the header segment shows the stored-theme
-  list (open / duplicate / delete) in a scrolling page, reloaded whenever the
-  mode is entered or the library changes. Settings names what it holds and
-  opens the one settings dialog; its own surface is P4. P4 also owns the
-  source's library grid, halves and facets.
+- **Mode surfaces.** Themes is live: the header segment shows stored themes
+  as a card grid (open / duplicate / delete on each card), sorted by Name or
+  Updated, with the author and node count on the tile. The page scrolls and
+  reloads whenever the mode is entered or the library changes. The source's
+  real previews are still absent: rastering each stored theme's artboard is
+  the next step, and the cards do not pretend to have one. The `Open` dialog
+  keeps a compact list, as the source's chooser does. Settings names what it
+  holds and opens the one settings dialog; its own surface is P4, along with
+  the source's catalogue halves and facets.
 
 ### Not yet judged (added after the interactive checks)
 
@@ -150,6 +154,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-themes-grid.png` — 1280x875, four
+  columns of stored-theme cards with Name/Updated sort. Seeded mode reverted.
 - `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` —
   1920x1080, the mode toggles with the kit's `spacing_tokens().sm` gap between
   icon and label, a segmented container behind the mode group, a bolder brand,
