@@ -2425,6 +2425,58 @@ impl EditorWindow {
         self.scrolling_pane("add-body", Some("Add"), children, cx)
     }
 
+    /// The left pane's Widgets slot: one row per unit of every installed pack.
+    fn widgets_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (foreground, muted, input) = (
+            cx.theme().foreground,
+            cx.theme().muted_foreground,
+            cx.theme().input,
+        );
+        let packs = yunari_packs::installed(&self.packs_directory());
+        let mut children: Vec<AnyElement> = Vec::new();
+        let mut rows: usize = 0;
+        for pack in packs {
+            for unit in pack.units {
+                let unit = unit.clone();
+                let label = format!(
+                    "{}  ·  {}",
+                    pack.name.clone().unwrap_or(pack.id.clone()),
+                    unit.label
+                );
+                children.push(
+                    div()
+                        .id(("widget", rows))
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .text_sm()
+                        .text_color(foreground)
+                        .hover(|this| this.bg(input))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.insert_widget(unit.clone(), cx)
+                        }))
+                        .into_any_element(),
+                );
+                rows += 1;
+            }
+        }
+        if rows == 0 {
+            children.push(
+                div()
+                    .p_3()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(
+                        "No widget packs are installed. Put a .yunari-widget-package in the host's settings/widget-packs folder.",
+                    )
+                    .into_any_element(),
+            );
+        }
+        self.scrolling_pane("widgets-body", Some("Widgets"), children, cx)
+    }
+
     /// The left pane's Assets slot: every declared file, with the two ways to
     /// add more.
     fn assets_view(&self, cx: &mut Context<Self>) -> impl IntoElement {

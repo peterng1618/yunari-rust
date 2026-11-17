@@ -303,7 +303,7 @@ impl EditorWindow {
                 LeftPane::Tokens => self.tokens_view(cx).into_any_element(),
                 LeftPane::Assets => self.assets_view(cx).into_any_element(),
                 LeftPane::Add => self.add_view(cx).into_any_element(),
-                other => pane_placeholder(other, cx).into_any_element(),
+                LeftPane::Widgets => self.widgets_view(cx).into_any_element(),
             };
             editor = editor.child(div().w(px(246.0)).flex_shrink_0().h_full().child(pane));
         }
@@ -395,29 +395,6 @@ impl EditorWindow {
 
         StatusBar::new().left(left).right(right)
     }
-}
-
-/// A rail slot whose pane the rebuild has not built yet. It names the pane
-/// rather than rendering an empty column.
-fn pane_placeholder(pane: LeftPane, cx: &mut App) -> impl IntoElement {
-    use gpui_kit::component::{
-        ActiveTheme,
-        empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
-    };
-
-    div()
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(cx.theme().background)
-        .child(
-            Empty::new().header(
-                EmptyHeader::new()
-                    .title(EmptyTitle::new().child(pane.label()))
-                    .description(EmptyDescription::new().child("This pane lands in P2.")),
-            ),
-        )
 }
 
 #[cfg(test)]
