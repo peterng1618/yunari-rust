@@ -112,7 +112,7 @@ Classes of regression the audit must look for explicitly:
 
 ## UI screenshots
 
-Every UI or layout finding is judged at fullscreen in a 16:9 2560x1440 client
+Every UI or layout finding is judged at fullscreen in a 16:9 1920x1080 client
 area. A smaller viewport is not a substitute; if the host panel cannot show
 that size, the shot is taken offscreen/through the raster path and the issue
 says so.
@@ -120,13 +120,13 @@ says so.
 - **Source:** start the source through its own host (its Playwright webServer
   boots the real host and serves `/editor` and `/player`; a bare
   `vite preview` has no API and only shows the read-failure state), then drive
-  Chromium with viewport `{width: 2560, height: 1440}` and screenshot the full
+  Chromium with viewport `{width: 1920, height: 1080}` and screenshot the full
   viewport.
-- **Port:** `scripts/capture-window.ps1 -Exe <Yunari.exe> -Width 2560 -Height
-  1440 -Out <png>` resizes the window's client area and captures it with
+- **Port:** `scripts/capture-window.ps1 -Exe <Yunari.exe> -Width 1920 -Height
+  1080 -Out <png>` resizes the window's client area and captures it with
   `PrintWindow`/`PW_RENDERFULLCONTENT`, so the window is never foregrounded and
   the pointer and keyboard stay the user's. The raster path can render the same
-  theme at 2560x1440 for a pixel-level check.
+  theme at 1920x1080 for a pixel-level check.
 - Same theme document, same artboard, same zoom/fit, same language, same
   scroll position on both sides.
 
@@ -149,7 +149,7 @@ Judge, in this order:
 
 A valid UI finding names the observable loss: a control that is gone,
 unreachable, mis-wired, unlabelled, clipped, too small to hit, or a state that
-cannot be told apart — with a 2560x1440 shot of both sides and the concrete
+cannot be told apart — with a 1920x1080 shot of both sides and the concrete
 region. "Spacing differs", "control looks different", "font is system" are not
 findings by themselves; a deliberate, coherent adaptation is the point of the
 port. A pixel diff is supporting evidence, not the verdict.
@@ -252,7 +252,7 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 >    classification). No finding without both citations and a repro.
 > 4. Fill every ledger row, including matches. Write
 >    `docs/parity/ledger/<surface>.md`.
-> 5. UI/layout findings need 2560x1440 fullscreen shots for both sides
+> 5. UI/layout findings need 1920x1080 fullscreen shots for both sides
 >    (source through its own host, port through `scripts/capture-window.ps1`),
 >    and judge function and aesthetic intent, not pixel identity: gpui-kit
 >    adaptation is expected; a lost function, hidden action, unreadable state or

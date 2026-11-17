@@ -6,8 +6,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Exe,
     [string]$Theme = "",
-    [int]$Width = 2560,
-    [int]$Height = 1440,
+    [int]$Width = 1920,
+    [int]$Height = 1080,
     [Parameter(Mandatory = $true)][string]$Out,
     [int]$DelaySeconds = 5
 )
