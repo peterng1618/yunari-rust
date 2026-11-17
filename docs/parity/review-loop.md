@@ -39,16 +39,15 @@ That is deliberate: a wrong explanation should not survive by being persuasive.
 3. Labels: `parity`, `surface:<editor|render|player|host|providers|panels|mcp|store|packs|tray>`,
    `class:<regression|missing|wrong-default|interaction|copy|layout|state|perf|a11y>`,
    `severity:<S1|S2|S3|S4>`, `state:<needs-repro|ready|in-fix|fixed|verified|wontfix>`.
-4. Issue template `.github/ISSUE_TEMPLATE/parity.yml` with the fields below as
-   required.
+4. Issue body template `docs/parity/issue-template.md` with the fields below as
+   required; issues are filed with `gh issue create --body-file`, which handles
+   the quoting.
 5. Probe helpers:
    - source: the existing Playwright setup in `src/web` (the editor serves at
      `/editor`; `playwright.parity.config.ts` shows the pattern),
    - port: a headless raster probe plus window capture; keyboard-only driving
      through the app's own test seam. Never take over the user's pointer or
      keyboard.
-6. A filing script (`scripts/parity-file.ps1`) that takes one JSON file and
-   calls `gh issue create` — no free-text shell quoting.
 
 ## Stage 1 — audit (per surface)
 
