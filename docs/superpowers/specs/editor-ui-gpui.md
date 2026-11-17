@@ -1,11 +1,15 @@
 # Editor UI in gpui-kit — element map and design
 
-**Status:** proposed 2026-11-17, for approval. This reverses the desktop-editor
-part of `2026-11-17-nsh-ui-migration.md`. NSH remains the stack for the
-separate mobile player app; the editor and desktop player stay on gpui-kit.
+**Status:** approved 2026-11-17. This reverses the desktop-editor part of
+`2026-11-17-nsh-ui-migration.md`. NSH remains the stack for the separate mobile
+player app; the editor and desktop player stay on gpui-kit.
 Source of truth for the UI is the pinned tree
 `1241866e53df252307e22ff3c51c842f89e458c8` in `D:\git-repos\yunari`,
 `src/web/packages/editor/src`.
+
+**Source correction (2026-11-17):** the source header has no menu bar.
+`shell-menu-bar.tsx` is the editor toolbar; the mode switch is a `ToggleGroup`
+with Library, Editor and Settings. The shell section below reflects that.
 
 This is not a line-by-line React translation. Where the source has a bespoke
 control, the table names the gpui-kit component that owns the same behaviour,
@@ -72,8 +76,8 @@ Replace:
 
 - `crates/editor/src/ui.rs` and `crates/editor/src/ui/*` with kit-composed
   screens;
-- `crates/app` shell chrome with `TitleBar`, `AppMenuBar`, `h_resizable`,
-  `Toolbar` and `StatusBar`;
+- `crates/app` shell chrome with `TitleBar`, `h_resizable`, `Toolbar` and
+  `StatusBar`;
 - ad-hoc colour/radius/spacing constants with `ActiveTheme` tokens.
 
 Add:
@@ -123,8 +127,8 @@ styled layer is not an example we copy: it is a dependency we theme.
 Relevant components, all documented under `https://gpui-kit.com/component/`
 (the page name is the component slug):
 
-- shell: `TitleBar`, `AppMenuBar`, `Toolbar`, `StatusBar`, `Command`, `Menu`,
-  `PopupMenu`, `ContextMenu`, `Tabs`, `TabBar`, `Sidebar`, `Resizable`;
+- shell: `TitleBar`, `Toolbar`, `StatusBar`, `Command`, `Menu`, `PopupMenu`,
+  `ContextMenu`, `Tabs`, `TabBar`, `Sidebar`, `Resizable`;
 - content: `Tree`, `List`, `VirtualList`, `DataTable`, `Table`, `Accordion`,
   `Collapsible`, `DescriptionList`, `GroupBox`, `Settings`;
 - inputs: `Input`, `Textarea`, `NumberInput`, `Select`, `Combobox`,
@@ -147,11 +151,9 @@ menus. Call both once at app boot.
 ## Shell
 
 ```
-custom title bar: brand · document identity · window controls     TitleBar
+custom title bar: brand · mode switch · file actions · document actions · publish
 ┌──────────────────────────────────────────────────────────────┐
-│ File Edit View Theme Help                                    │  AppMenuBar
-├──────────────────────────────────────────────────────────────┤
-│ modes | file actions | document actions | publish            │  Toolbar
+│ Yunari  [Library|Editor|Settings]  [open…] [save] [find]  Publish │  TitleBar
 ├───────────────┬──────────────────────────────┬───────────────┤
 │ left pane     │ stage                        │ inspector     │  h_resizable
 │ Layers        │  raster artboard             │  sections     │
@@ -165,17 +167,21 @@ custom title bar: brand · document identity · window controls     TitleBar
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- `TitleBar` carries brand, document identity and pane toggles as child content;
+- The source header is **one row**: brand, mode switch, the editor's toolbar
+  and its publish control. `TitleBar` carries all of it as child content;
   build the window from `TitleBar::window_options()`.
-- `AppMenuBar` renders File/Edit/View/Theme/Help from `Command::ALL`.
-- Mode switch is a `TabBar` with underline tabs, in source order Themes, Editor,
-  Settings. The gear remains a Settings shortcut.
+- There is no source menu bar. `shell-menu-bar.tsx` is the editor toolbar, not
+  File/Edit/View menus; do not add an `AppMenuBar` that the source does not
+  have. Commands without a visible toolbar control live in the command
+  palette and their shortcuts (P3).
+- Mode switch is a `ToggleGroup` (segmented well) with the source's three
+  modes, in order Library, Editor, Settings, not a `TabBar`.
 - `h_resizable` with `resizable_panel` for the three regions; pane widths and
   collapse state are editor view state, never document state.
 - `StatusBar` left/right/center regions: counts, message, diagnostics, save
   state, publish indicator, live/offline.
 - Left pane tabs are a compact `Sidebar` rail (icon + tooltip); `TabBar` is
-  horizontal and is used for mode/store/section tabs, not the rail.
+  horizontal and is used for store/section tabs, not the rail.
 
 ```rust
 use gpui_kit::component::*;
@@ -206,9 +212,9 @@ surface for no product gain. Revisit only for a multi-panel workspace.
 | Yunari element (source) | Job | gpui-kit proposal | Docs | Notes |
 |---|---|---|---|---|
 | Brand (`<strong>`) `shell-layout.tsx` | identity | `TitleBar` child content + `svg` logo | [TitleBar](https://gpui-kit.com/component/title-bar) | `TitleBar::window_options()` |
-| Mode switch (`ModeSwitch`) | Themes/Editor/Settings | `TabBar` + `Tab` underline | [Tabs](https://gpui-kit.com/component/tabs) | same order; gear opens Settings |
+| Mode switch (`ModeSwitch`) | Library/Editor/Settings | `ToggleGroup` + `Toggle` | [ToggleGroup](https://gpui-kit.com/component/toggle-group) | source order; segmented well in header |
 | Store halves (`StoreHalves`) | Local/Online tabs | `TabBar` pill inside Store header | [Tabs](https://gpui-kit.com/component/tabs) | not global chrome |
-| Shell menu actions (`shell-menu-bar.tsx`) | File/Edit/View/Theme/Help | `AppMenuBar` + `Menu`/`MenuItem` from `Command::ALL` | [Menu](https://gpui-kit.com/component/menu) | drawn menu bar |
+| Header toolbar (`shell-menu-bar.tsx`) | open/save/export/find | `Toolbar` + `Button` from `Command::ALL` | [Toolbar](https://gpui-kit.com/component/toolbar) | no menu bar in source |
 | Toolbar open actions | New, template, library, recent, import | `Toolbar` + `Button`; recent = `PopupMenu`/`Menu` | [Toolbar](https://gpui-kit.com/component/toolbar) | `Kbd` in tooltip |
 | Toolbar document actions | Save, Save as, Activate, Export | `Toolbar`; Save primary; Export `Button` | [Toolbar](https://gpui-kit.com/component/toolbar) | disabled from session |
 | Find assets | open finder | `Button` + `Kbd` tooltip; action binding | [Button](https://gpui-kit.com/component/button) | also command palette |
