@@ -2344,6 +2344,84 @@ impl EditorWindow {
         self.scrolling_pane("tokens-body", Some("Design tokens"), children, cx)
     }
 
+    /// The left pane's Assets slot: every declared file, with the two ways to
+    /// add more.
+    fn assets_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::IconName;
+        use yunari_model::document::AssetKind;
+
+        let (foreground, muted) = (cx.theme().foreground, cx.theme().muted_foreground);
+        let assets = self.editor.document().assets.clone();
+        let mut children: Vec<AnyElement> = Vec::new();
+        if assets.is_empty() {
+            children.push(
+                div()
+                    .p_3()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("No assets in this theme yet.")
+                    .into_any_element(),
+            );
+        }
+        for (index, asset) in assets.into_iter().enumerate() {
+            let (icon, kind) = match asset.kind {
+                AssetKind::Image | AssetKind::Gif => (IconName::GalleryVerticalEnd, "Image"),
+                AssetKind::Svg => (IconName::Frame, "SVG"),
+                AssetKind::Video => (IconName::Play, "Video"),
+                AssetKind::Font => (IconName::CaseSensitive, "Font"),
+            };
+            let name = asset
+                .path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&asset.path)
+                .to_owned();
+            children.push(
+                div()
+                    .id(("asset", index))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .child(div().text_xs().text_color(muted).child(icon))
+                    .child(div().flex_1().text_color(foreground).child(name))
+                    .child(div().text_xs().text_color(muted).child(kind))
+                    .into_any_element(),
+            );
+        }
+        children.push(
+            div()
+                .id("asset-import")
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(muted)
+                .cursor_pointer()
+                .child("+ Import asset")
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.apply(Command::ImportAsset, window, cx)
+                }))
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .id("asset-find")
+                .px_3()
+                .py_1()
+                .text_sm()
+                .text_color(muted)
+                .cursor_pointer()
+                .child("Find assets")
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.apply(Command::AssetFinder, window, cx)
+                }))
+                .into_any_element(),
+        );
+        self.scrolling_pane("assets-body", Some("Assets"), children, cx)
+    }
+
     /// One section's title and its property rows, as click-to-edit fields.
     fn section_children(
         &self,

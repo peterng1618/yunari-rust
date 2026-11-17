@@ -301,6 +301,7 @@ impl EditorWindow {
                 LeftPane::Layers => self.layers_view(cx).into_any_element(),
                 LeftPane::Document => self.document_view(cx).into_any_element(),
                 LeftPane::Tokens => self.tokens_view(cx).into_any_element(),
+                LeftPane::Assets => self.assets_view(cx).into_any_element(),
                 other => pane_placeholder(other, cx).into_any_element(),
             };
             editor = editor.child(div().w(px(246.0)).flex_shrink_0().h_full().child(pane));

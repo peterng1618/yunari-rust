@@ -52,8 +52,8 @@ the rail's active-slot press closes it, matching the source's rail press.
   template, open recent (menu), activate theme, preview/live source toggle.
   The port toolbar carries New, Open, Import / Save, Save as, Export, Export
   widget, Open display / Find assets. P3 (commands).
-- **Rail pane bodies.** Layers, Design tokens and Theme settings have bodies;
-  Add, Widgets and Assets still show a named placeholder. P2 (panels).
+- **Rail pane bodies.** Layers, Assets, Design tokens and Theme settings have
+  bodies; Add and Widgets still show a named placeholder. P2 (panels).
 - **Stage chrome.** Artboard label chip, zoom/fit cluster and the bottom asset
   button are absent. P3 (canvas).
 - **Layer rows** print raw ids instead of the source's kind column. P2.
