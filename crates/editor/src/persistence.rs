@@ -115,6 +115,7 @@ mod tests {
             id: id.to_owned(),
             metadata: Metadata {
                 name: Some(format!("Theme {id}")),
+                theme_language: Some("en".to_owned()),
                 ..Metadata::default()
             },
             artboard: Artboard {

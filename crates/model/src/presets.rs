@@ -56,6 +56,7 @@ pub fn blank() -> ThemeDocument {
         id: "untitled".to_owned(),
         metadata: Metadata {
             name: Some("Untitled".to_owned()),
+            theme_language: Some("en".to_owned()),
             ..Metadata::default()
         },
         artboard: Artboard {

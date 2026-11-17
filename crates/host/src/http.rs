@@ -1603,7 +1603,10 @@ mod tests {
         let document = yunari_model::document::ThemeDocument {
             schema_version: yunari_model::document::SCHEMA_VERSION.to_owned(),
             id: id.to_owned(),
-            metadata: yunari_model::document::Metadata::default(),
+            metadata: yunari_model::document::Metadata {
+                theme_language: Some("en".to_owned()),
+                ..Default::default()
+            },
             artboard: yunari_model::document::Artboard {
                 width: 100.0,
                 height: 100.0,

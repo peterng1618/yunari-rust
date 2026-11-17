@@ -49,6 +49,9 @@ pub fn of(
         ));
     }
     let mut fonts = yunari_render::text::Fonts::new();
+    for refusal in fonts.load_faces(document, |path| assets.get(path).cloned()) {
+        eprintln!("{refusal}");
+    }
     let (list, _issues) = yunari_render::plan::build(document, &mut fonts);
     let mut images = yunari_render_raster::Images::empty();
     for (path, bytes) in assets {

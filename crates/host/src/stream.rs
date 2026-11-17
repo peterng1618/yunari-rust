@@ -202,6 +202,15 @@ pub fn spawn(app: Shared) {
                     if !documents.contains_key(&id)
                         && let Ok(stored) = app.library.read(&id)
                     {
+                        // A theme's own faces are registered once, when its
+                        // bytes are first read, so every later frame shapes
+                        // with the family the theme names.
+                        let base = app.library.root().join(&id);
+                        for refusal in fonts.load_faces(&stored.document, |path| {
+                            std::fs::read(base.join(path)).ok()
+                        }) {
+                            eprintln!("{refusal}");
+                        }
                         documents.insert(id.clone(), stored.document);
                     }
                     let document = documents.get(&id)?;

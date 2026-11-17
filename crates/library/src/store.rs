@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 use yunari_model::credits::ThemeCredits;
 use yunari_model::document::ThemeDocument;
-use yunari_model::validate::{ValidationIssue, is_stable_id, validate_document};
+use yunari_model::validate::{ValidationIssue, is_stable_id, validate_for_save};
 
 /// The attribution member beside a theme document, in a folder and a package.
 pub const CREDITS: &str = "credits.json";
@@ -204,7 +204,7 @@ impl Library {
                 request.document.id, request.id
             )));
         }
-        if let Err(issues) = validate_document(request.document) {
+        if let Err(issues) = validate_for_save(request.document) {
             return Err(LibraryError::Invalid(issues));
         }
         let bytes = serde_json::to_string_pretty(request.document)
@@ -531,6 +531,7 @@ mod tests {
             id: id.to_owned(),
             metadata: Metadata {
                 name: Some(format!("Theme {id}")),
+                theme_language: Some("en".to_owned()),
                 ..Metadata::default()
             },
             artboard: Artboard {
@@ -621,7 +622,7 @@ mod tests {
         let stored = temp.library.read("stored").expect("a readable theme");
         assert_eq!(stored.document.nodes.len(), 1);
         assert_eq!(stored.document.palette["bg"].name, "Backdrop");
-        assert_eq!(validate_document(&stored.document), Ok(()));
+        assert_eq!(yunari_model::validate::validate_document(&stored.document), Ok(()));
     }
 
     #[test]
@@ -708,6 +709,25 @@ mod tests {
             overwrite: false,
         });
         assert!(matches!(result, Err(LibraryError::Unreadable(_))));
+    }
+
+    #[test]
+    fn a_theme_that_declares_no_language_is_not_stored() {
+        let temp = TempLibrary::new();
+        let mut document = document("alpha");
+        document.metadata.theme_language = None;
+        let result = temp.library.save(&SaveRequest {
+            id: "alpha",
+            document: &document,
+            assets: &BTreeMap::new(),
+            credits: None,
+            base: None,
+            overwrite: false,
+        });
+        let Err(LibraryError::Invalid(issues)) = result else {
+            panic!("a language-less theme is refused: {result:?}");
+        };
+        assert_eq!(issues[0].path, "metadata/themeLanguage");
     }
 
     #[test]

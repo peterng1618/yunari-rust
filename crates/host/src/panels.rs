@@ -284,6 +284,16 @@ impl PanelFrames {
             return Some(document.clone());
         }
         let stored = self.library.read(theme).ok()?;
+        // The theme's own faces are registered before its first frame, so a
+        // family the document names shapes the panel.
+        let base = self.library.root().join(theme);
+        if let Ok(mut fonts) = self.fonts.lock() {
+            for refusal in
+                fonts.load_faces(&stored.document, |path| std::fs::read(base.join(path)).ok())
+            {
+                eprintln!("{refusal}");
+            }
+        }
         documents.insert(theme.to_owned(), stored.document.clone());
         Some(stored.document)
     }
@@ -398,7 +408,10 @@ mod tests {
             let document = ThemeDocument {
                 schema_version: yunari_model::document::SCHEMA_VERSION.to_owned(),
                 id: "fixture".to_owned(),
-                metadata: Metadata::default(),
+                metadata: Metadata {
+                    theme_language: Some("en".to_owned()),
+                    ..Metadata::default()
+                },
                 artboard: Artboard {
                     width: 100.0,
                     height: 100.0,

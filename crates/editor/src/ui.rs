@@ -333,6 +333,22 @@ impl EditorWindow {
             self.editor.assets(),
         );
         self.images = Rc::new(RefCell::new(images));
+        // The faces a theme ships are registered from the same two places, so
+        // a reopened theme paints its own family before it is re-saved.
+        let base = match self.editor.source() {
+            Source::Library { id, .. } => Some(self.library.root().join(id)),
+            Source::Unsaved => None,
+        };
+        let assets = self.editor.assets();
+        let refusals = self.fonts.load_faces(self.editor.document(), |path| {
+            assets.get(path).cloned().or_else(|| {
+                base.as_ref()
+                    .and_then(|base| std::fs::read(base.join(path)).ok())
+            })
+        });
+        for refusal in refusals {
+            eprintln!("{refusal}");
+        }
     }
 
     fn apply(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {

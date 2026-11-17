@@ -18,7 +18,7 @@ use std::io::{Cursor, Read, Write};
 use serde::{Deserialize, Serialize};
 use yunari_model::credits::ThemeCredits;
 use yunari_model::document::ThemeDocument;
-use yunari_model::validate::validate_document;
+use yunari_model::validate::{validate_document, validate_for_save};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -65,7 +65,7 @@ pub fn write_package(
     thumbnail: Option<&[u8]>,
     credits: Option<&ThemeCredits>,
 ) -> Result<Vec<u8>, String> {
-    if let Err(issues) = validate_document(document) {
+    if let Err(issues) = validate_for_save(document) {
         return Err(issues.first().map_or_else(
             || "the theme is not valid".to_owned(),
             |issue| issue.to_string(),
@@ -318,6 +318,7 @@ mod tests {
             id: id.to_owned(),
             metadata: Metadata {
                 name: Some(format!("Theme {id}")),
+                theme_language: Some("en".to_owned()),
                 ..Metadata::default()
             },
             artboard: Artboard {

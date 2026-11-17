@@ -14,3 +14,4 @@ svgtypes = "0.16"
 yunari-model.workspace = true
 yunari-locale.workspace = true
 yunari-providers.workspace = true
+wuff = "0.2"

@@ -5,12 +5,15 @@
 //! resulting segment sits inside the node's box. Backends shape the segment
 //! they are handed and paint it; they never re-wrap.
 
+use std::sync::Arc;
+
 use serde::Serialize;
 
 use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style as TextPosture,
-    Weight,
+    Weight, fontdb,
 };
+use yunari_model::document::{AssetKind, FontFormat, ThemeDocument};
 
 // Re-exported so a backend shapes with the same settings this module measured
 // with, without depending on the shaper itself.
@@ -41,6 +44,59 @@ impl Fonts {
     /// the same way the layout measured them.
     pub fn system_mut(&mut self) -> &mut FontSystem {
         &mut self.system
+    }
+
+    /// Register every face `document` declares, reading each font asset's bytes
+    /// through `read` (called with the path as the document writes it).
+    ///
+    /// A face whose bytes cannot be read, decompressed or parsed is answered as
+    /// one refusal sentence and left unregistered: a run that names it falls
+    /// back to the shaper's own family rather than painting wrong glyphs.
+    pub fn load_faces(
+        &mut self,
+        document: &ThemeDocument,
+        mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> Vec<String> {
+        let mut refusals = Vec::new();
+        for asset in &document.assets {
+            if asset.kind != AssetKind::Font {
+                continue;
+            }
+            let Some(bytes) = read(&asset.path) else {
+                refusals.push(format!("The face at {:?} could not be read.", asset.path));
+                continue;
+            };
+            let format = asset.format.unwrap_or_else(|| format_of(&asset.path));
+            let font = match format {
+                FontFormat::Woff2 => wuff::decompress_woff2(&bytes).map_err(|_| "an invalid woff2"),
+                FontFormat::Woff => wuff::decompress_woff1(&bytes).map_err(|_| "an invalid woff"),
+                FontFormat::Ttf | FontFormat::Otf => Ok(bytes),
+            };
+            match font {
+                Ok(font) => {
+                    let source = fontdb::Source::Binary(Arc::new(font));
+                    if self.system.db_mut().load_font_source(source).is_empty() {
+                        refusals.push(format!(
+                            "The face at {:?} carries no readable font.",
+                            asset.path
+                        ));
+                    }
+                }
+                Err(reason) => refusals.push(format!("The face at {:?} is {reason}.", asset.path)),
+            }
+        }
+        refusals
+    }
+}
+
+/// A format the document left out is read from the path's tail; the validator
+/// refuses a font without one, so this only serves an unvalidated document.
+fn format_of(path: &str) -> FontFormat {
+    match path.rsplit_once('.').map(|(_, extension)| extension) {
+        Some("woff2") => FontFormat::Woff2,
+        Some("woff") => FontFormat::Woff,
+        Some("otf") => FontFormat::Otf,
+        _ => FontFormat::Ttf,
     }
 }
 
@@ -496,5 +552,60 @@ mod tests {
         let laid = layout(&mut fonts(), &request);
         assert!(laid.segments.len() > 1);
         assert!(laid.segments[1].origin.1 > laid.segments[0].origin.1);
+    }
+
+    fn document_with_font(path: &str, format: &str) -> ThemeDocument {
+        yunari_model::document::parse_document(&format!(
+            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":100,"height":100}},
+                "nodes":[],
+                "assets":[{{"id":"f","kind":"font","path":{path:?},"family":"Test Face",
+                    "weight":400,"style":"normal","format":{format:?}}}]}}"##
+        ))
+        .expect("fixture parses")
+    }
+
+    #[test]
+    fn a_woff2_face_that_will_not_decode_is_refused_by_its_own_format() {
+        let document = document_with_font("assets/a.woff2", "woff2");
+        let mut fonts = fonts();
+        let refusals = fonts.load_faces(&document, |_| Some(b"not a font".to_vec()));
+        assert_eq!(
+            refusals,
+            vec!["The face at \"assets/a.woff2\" is an invalid woff2.".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_face_whose_bytes_are_missing_is_refused_with_its_path() {
+        let document = document_with_font("assets/a.ttf", "ttf");
+        let refusals = fonts().load_faces(&document, |_| None);
+        assert_eq!(
+            refusals,
+            vec!["The face at \"assets/a.ttf\" could not be read.".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_declared_ttf_is_registered_in_the_shaping_database() {
+        // A system face stands in for a theme's own: the bytes go through the
+        // same registration path. Absent on a host without it, the test says so
+        // rather than failing.
+        let path = [
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+        ]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).is_file());
+        let Some(path) = path else {
+            eprintln!("no system face to stand in for a theme's own");
+            return;
+        };
+        let bytes = std::fs::read(path).expect("the face is readable");
+        let document = document_with_font("assets/a.ttf", "ttf");
+        let mut fonts = fonts();
+        let before = fonts.system_mut().db().faces().count();
+        let refusals = fonts.load_faces(&document, |_| Some(bytes.clone()));
+        assert!(refusals.is_empty(), "{refusals:?}");
+        assert!(fonts.system_mut().db().faces().count() > before);
     }
 }

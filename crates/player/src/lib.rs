@@ -76,6 +76,14 @@ impl Stage {
         let mut fonts = Fonts::new();
         let document =
             yunari_model::document::parse_document(&json).map_err(|error| error.to_string())?;
+        // The faces the theme ships are read from beside it, as its pictures
+        // are; a face that will not load is reported and the shaper falls back.
+        if let Some(base) = path.and_then(Path::parent) {
+            for refusal in fonts.load_faces(&document, |asset| std::fs::read(base.join(asset)).ok())
+            {
+                eprintln!("{refusal}");
+            }
+        }
         let mut sampler = Sampler::new(registry);
         // Ask once for exactly the keys this theme's value runs name.
         sampler.request("window", yunari_render::reading::wanted_keys(&document));

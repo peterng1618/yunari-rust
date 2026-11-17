@@ -112,6 +112,30 @@ pub fn validate_document(document: &ThemeDocument) -> Result<(), Vec<ValidationI
     }
 }
 
+/// The rules a theme must meet before it is stored or carried in a package.
+///
+/// A document the model can hold may omit its language — an old native theme
+/// still opens and paints in English — but a theme leaving this build must say
+/// which language its text is written in, so a reader knows what to render.
+pub fn validate_for_save(document: &ThemeDocument) -> Result<(), Vec<ValidationIssue>> {
+    let mut issues = match validate_document(document) {
+        Ok(()) => Vec::new(),
+        Err(issues) => issues,
+    };
+    if document.metadata.theme_language.is_none() {
+        issues.push(issue(
+            "metadata/themeLanguage",
+            "A theme must declare its language, so its text reads in the language it was written in.",
+        ));
+        issues.sort();
+    }
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(issues)
+    }
+}
+
 fn issue(path: impl Into<String>, message: impl Into<String>) -> ValidationIssue {
     ValidationIssue {
         path: path.into(),
@@ -142,6 +166,16 @@ fn validate_schema_version(version: &str, issues: &mut Vec<ValidationIssue>) {
 }
 
 fn validate_metadata(metadata: &Metadata, issues: &mut Vec<ValidationIssue>) {
+    // A language this build cannot render would read as English — the same
+    // setting that appears to do nothing the zone validator refuses.
+    if let Some(language) = &metadata.theme_language
+        && !yunari_locale::is_language(language)
+    {
+        issues.push(issue(
+            "metadata/themeLanguage",
+            format!("themeLanguage {language:?} is not a language this runtime can render."),
+        ));
+    }
     if metadata
         .name
         .as_ref()
@@ -1515,5 +1549,40 @@ mod tests {
         let mut sorted = issues.clone();
         sorted.sort();
         assert_eq!(issues, sorted);
+    }
+
+    #[test]
+    fn a_language_this_runtime_cannot_render_is_refused() {
+        let mut document = minimal();
+        document.metadata.theme_language = Some("not a tag!".to_owned());
+        assert_eq!(
+            paths(validate_document(&document)),
+            vec!["metadata/themeLanguage"]
+        );
+        document.metadata.theme_language = Some("xx".to_owned());
+        assert_eq!(
+            paths(validate_document(&document)),
+            vec!["metadata/themeLanguage"],
+            "a well-formed tag with no data would read as English"
+        );
+        document.metadata.theme_language = Some("fr".to_owned());
+        assert_eq!(validate_document(&document), Ok(()));
+    }
+
+    #[test]
+    fn a_theme_leaving_this_build_declares_its_language() {
+        let mut document = minimal();
+        document.metadata.theme_language = None;
+        assert_eq!(
+            validate_document(&document),
+            Ok(()),
+            "an old theme still opens"
+        );
+        assert_eq!(
+            paths(validate_for_save(&document)),
+            vec!["metadata/themeLanguage"]
+        );
+        document.metadata.theme_language = Some("en".to_owned());
+        assert_eq!(validate_for_save(&document), Ok(()));
     }
 }
