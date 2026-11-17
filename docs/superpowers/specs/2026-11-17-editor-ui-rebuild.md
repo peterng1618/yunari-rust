@@ -67,9 +67,9 @@ vite-preview page is not evidence.
 - Library / Themes mode, Editor mode, Settings mode and Store mode are distinct
   surfaces with persistent navigation, as in the source — not rows of buttons.
 - Editor mode: persistent left pane (layers/assets), canvas centre, right
-  inspector, top command bar, status bar. Panes are resizable and collapsible
-  through the kit's `h_resizable` panels and `TabBar`/`Sidebar` navigation,
-  not manual pixel layout.
+  inspector, top command bar, status bar. Panes use the source's fixed 246px /
+  1fr / 276px columns and collapse to give their width back, not a manual
+  pixel layout.
 - Every command in the current `Command::ALL` maps to a labelled control in the
   same group the source uses (menu, toolbar, context menu, shortcut), and the
   keyboard path exists for each.
@@ -102,7 +102,8 @@ both; the fixer's screenshots are not enough.
 divergence list, acceptance checklists. Exit: reference doc PR merged.
 
 **P1 — shell.** Navigation between library/editor/settings/store, editor frame
-with resizable left/canvas/right panes, top bar, status bar, theme applied. Exit:
+with the rail plus fixed left/canvas/right columns, top bar, status bar, the
+Graphite theme applied. Exit:
 editor opens with the reference layout at 1080p; no command row overflows;
 screenshot pair accepted.
 

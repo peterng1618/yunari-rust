@@ -12,6 +12,7 @@ pub mod menus;
 pub mod path_preset_dialog;
 pub mod prompt;
 pub mod settings_dialog;
+pub mod shell;
 pub mod store_dialog;
 pub mod typography_dialog;
 pub mod widget_dialog;
@@ -23,6 +24,7 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::*;
+use gpui_kit::component::{ActiveTheme, TitleBar};
 use yunari_host::http::Shared;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
@@ -47,6 +49,7 @@ use self::menus::Command;
 use self::path_preset_dialog::PathPresetDialog;
 use self::prompt::{Outcome, Prompt};
 use self::settings_dialog::SettingsDialog;
+use self::shell::{LeftPane, ShellMode};
 use self::store_dialog::StoreDialog;
 use self::typography_dialog::TypographyDialog;
 use self::widget_dialog::WidgetDialog;
@@ -243,6 +246,15 @@ pub struct EditorWindow {
     inspector_scroll: f32,
     /// The running host, when this editor is attached to one.
     host: Option<Shared>,
+    /// Which top-level surface the header is showing. The editor body stays
+    /// mounted while another mode shows, so the open document survives.
+    mode: ShellMode,
+    /// The left and right panes' collapsed state. View state, never document
+    /// state.
+    left_collapsed: bool,
+    right_collapsed: bool,
+    /// The rail slot the left pane is showing.
+    left_pane: LeftPane,
 }
 
 impl EditorWindow {
@@ -292,6 +304,10 @@ impl EditorWindow {
             polling: false,
             inspector_scroll: 0.0,
             host,
+            mode: ShellMode::Editor,
+            left_collapsed: false,
+            right_collapsed: false,
+            left_pane: LeftPane::Layers,
         }
     }
 
@@ -2353,9 +2369,7 @@ impl EditorWindow {
         // scroll container, so the panel keeps the offset and clips.
         let max_scroll = (children.len() as f32 * 30.0 - 500.0).max(0.0);
         div()
-            .w(px(260.0))
-            .flex_shrink_0()
-            .h_full()
+            .size_full()
             .flex()
             .flex_col()
             .border_l_1()
@@ -2785,33 +2799,6 @@ impl EditorWindow {
         self.resume(resume, cx);
     }
 
-    fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let buttons: Vec<_> = Command::ALL
-            .into_iter()
-            .enumerate()
-            .map(|(index, command)| {
-                div()
-                    .id(("command", index))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .text_color(rgb(INK))
-                    .child(command.label())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.apply(command, window, cx)
-                    }))
-            })
-            .collect();
-        div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .p_2()
-            .bg(rgb(PANEL))
-            .children(buttons)
-    }
-
     fn layers_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = layers::rows(self.editor.document(), &self.selection, &self.expanded);
         let items: Vec<AnyElement> = rows
@@ -2903,9 +2890,7 @@ impl EditorWindow {
             })
             .collect();
         div()
-            .w(px(220.0))
-            .flex_shrink_0()
-            .h_full()
+            .size_full()
             .flex()
             .flex_col()
             .border_l_1()
@@ -2941,7 +2926,9 @@ impl EditorWindow {
         let view = self.viewport;
         div()
             .id("canvas")
-            .flex_1()
+            .size_full()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
             .bg(rgb(0x101014))
             .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| this.on_scroll(event, cx)))
             .on_mouse_down(
@@ -3033,51 +3020,6 @@ impl EditorWindow {
                 )
                 .size_full(),
             )
-    }
-
-    fn status_view(&self) -> impl IntoElement {
-        let document = self.editor.document();
-        let name = document
-            .metadata
-            .name
-            .clone()
-            .unwrap_or_else(|| document.id.clone());
-        let state = if self.editor.is_dirty() {
-            "unsaved changes"
-        } else {
-            "saved"
-        };
-        let mut line = div()
-            .h(px(26.0))
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .bg(rgb(PANEL))
-            .text_sm()
-            .text_color(rgb(MUTED))
-            .child(format!("{name} · {state}"))
-            .child(match self.editor.source() {
-                Source::Library { id, .. } => format!("· {id}"),
-                Source::Unsaved => "· not in the library".to_owned(),
-            });
-        let zoom = format!("{:.0}%", self.viewport.scale * 100.0);
-        line = line.child(zoom);
-        if !self.selection.is_empty() {
-            line = line.child(format!("{} selected", self.selection.len()));
-        }
-        if let Some(status) = &self.status {
-            line = line.child(
-                div()
-                    .text_color(if status.error {
-                        rgb(0xf38ba8)
-                    } else {
-                        rgb(0xa6e3a1)
-                    })
-                    .child(status.text.clone()),
-            );
-        }
-        line
     }
 
     fn prompt_panel(prompt: &Prompt, cx: &mut Context<Self>) -> AnyElement {
@@ -3283,35 +3225,20 @@ impl Render for EditorWindow {
             .ok();
             close
         });
-        let mut rows: Vec<AnyElement> = Vec::new();
-        rows.push(self.toolbar(cx).into_any_element());
-        rows.push(
-            div()
-                .flex()
-                .flex_1()
-                .w_full()
-                .min_h(px(0.0))
-                .overflow_hidden()
-                .child(self.layers_view(cx))
-                .child(self.canvas_view(cx))
-                .child(self.inspector_view(cx))
-                .into_any_element(),
-        );
-        rows.push(self.status_view().into_any_element());
-        if let Some(overlay) = self.overlay_view(cx) {
-            rows.push(overlay);
-        }
         div()
             .size_full()
             .relative()
             .flex()
             .flex_col()
-            .bg(rgb(0x15151a))
-            .text_color(rgb(INK))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             .on_key_up(cx.listener(Self::on_key_up))
-            .children(rows)
+            .child(self.header(cx))
+            .child(self.body(cx))
+            .child(self.status_bar(cx))
+            .children(self.overlay_view(cx))
     }
 }
 
@@ -3801,19 +3728,19 @@ pub fn open_command(host: Option<Shared>, command: Command, cx: &mut App) -> Any
 
 fn window_for(host: Option<Shared>, command: Option<Command>, cx: &mut App) -> AnyWindowHandle {
     let library = Library::new(default_root());
+    let mut options = TitleBar::window_options();
+    options.titlebar = Some(TitlebarOptions {
+        title: Some("Yunari — Editor".into()),
+        ..TitleBar::title_bar_options()
+    });
+    options.window_bounds = Some(WindowBounds::Windowed(Bounds::centered(
+        None,
+        size(px(1440.0), px(900.0)),
+        cx,
+    )));
+    options.window_min_size = Some(size(px(1024.0), px(700.0)));
     open_window(
-        WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("Yunari — Editor".into()),
-                ..Default::default()
-            }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(960.0), px(640.0)),
-                cx,
-            ))),
-            ..Default::default()
-        },
+        options,
         cx,
         move |window, cx| {
             let editor = cx.new(|cx| EditorWindow::new(library, host, cx));

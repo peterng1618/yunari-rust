@@ -9,7 +9,12 @@ Source of truth for the UI is the pinned tree
 
 **Source correction (2026-11-17):** the source header has no menu bar.
 `shell-menu-bar.tsx` is the editor toolbar; the mode switch is a `ToggleGroup`
-with Library, Editor and Settings. The shell section below reflects that.
+with Themes, Editor and Settings. The shell section below reflects that.
+
+**App theme (2026-11-17):** the shell ships on the source's **Graphite** palette
+(`[data-shell-palette="graphite"]` in `editor-shell.css`) — a dark shell. Other
+palettes come later. The values are transcribed into `apply_graphite` in
+`crates/app/src/main.rs`, not re-tuned.
 
 This is not a line-by-line React translation. Where the source has a bespoke
 control, the table names the gpui-kit component that owns the same behaviour,
@@ -26,9 +31,10 @@ the app supplies placement, data and the canvas.
 - **No second design system.** Use `gpui_kit::component` and `ActiveTheme`
   directly; `crates/ui` holds only repeated compositions (property row, theme
   card, gradient control, crop overlay), not a wrapper around every kit control.
-- **No Dock for the editor shell.** The editor is a fixed three-region
-  workspace; `h_resizable` is the honest primitive. Dock is reconsidered only
-  if the product gains user-arranged panels.
+- **No Dock for the editor shell.** The editor is a fixed-column workspace,
+  matching the source's 46px rail + 246px / 1fr / 276px grid; `h_flex` with
+  `flex_shrink_0` side columns is the honest primitive. Dock is reconsidered
+  only if the product gains user-arranged panels.
 
 The workspace already depends on gpui-kit 0.9.1 and opens windows through
 `gpui_kit::open_window`. The defect is the surface: `crates/editor/src/ui.rs`
@@ -76,7 +82,7 @@ Replace:
 
 - `crates/editor/src/ui.rs` and `crates/editor/src/ui/*` with kit-composed
   screens;
-- `crates/app` shell chrome with `TitleBar`, `h_resizable`, `Toolbar` and
+- `crates/app` shell chrome with `TitleBar`, `Toolbar`, `h_flex` and
   `StatusBar`;
 - ad-hoc colour/radius/spacing constants with `ActiveTheme` tokens.
 
@@ -114,8 +120,9 @@ crates/model, render, raster, library, store, theme, locale, player-core
    GPUI painting. Kit `Chart`/`Plot` never draws a theme chart.
 6. **Every control has states and a keyboard path.** Rest, hover, focus,
    pressed, disabled, selected, empty, loading and error must be visible.
-7. **No Dock for the fixed shell.** Use `h_resizable` with three panels. Dock
-   is a workspace product decision, not a styling one.
+7. **No Dock for the fixed shell.** Use `h_flex` with three fixed columns
+   (246px / 1fr / 276px), matching the source grid. Dock is a workspace product
+   decision, not a styling one.
 8. **No business logic in UI modules.** UI reads state and dispatches commands.
 
 ## What gpui-kit 0.9.1 provides
@@ -138,7 +145,7 @@ Relevant components, all documented under `https://gpui-kit.com/component/`
   `Tooltip`, `Notification`, `Alert`, `Progress`, `Spinner`, `Skeleton`,
   `Empty`, `Badge`, `Tag`, `Kbd`;
 - data: `Chart`, `Plot`, `Diff`, `Editor`, `TextView`;
-- layout: `h_resizable`, `resizable_panel`, `GridLayout`, `Scrollable`;
+- layout: `h_flex`, `GridLayout`, `Scrollable`;
 - large lists: `v_virtual_list`/`h_virtual_list` (documented as VirtualList).
 
 Use them directly. Do not add `crates/ui` wrappers that only forward props:
@@ -152,19 +159,19 @@ menus. Call both once at app boot.
 
 ```
 custom title bar: brand · mode switch · file actions · document actions · publish
-┌──────────────────────────────────────────────────────────────┐
-│ Yunari  [Library|Editor|Settings]  [open…] [save] [find]  Publish │  TitleBar
-├───────────────┬──────────────────────────────┬───────────────┤
-│ left pane     │ stage                        │ inspector     │  h_resizable
-│ Layers        │  raster artboard             │  sections     │
-│ Add           │  selection/guides overlay    │  fields       │
-│ Widgets       │  zoom/display cluster        │               │
-│ Assets        │  canvas context menu         │               │
-│ Tokens        │                              │               │
-│ Document      │                              │               │
-├───────────────┴──────────────────────────────┴───────────────┤
-│ counts · message · diagnostics · save · publish · live       │  StatusBar
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│ Yunari [Themes|Editor|Settings] [open] [save] [find]      Publish   │ TitleBar
+├────┬───────────────┬──────────────────────────────┬─────────────────┤
+│rail│ left pane     │ stage                        │ inspector       │ h_flex
+│    │ Layers        │  raster artboard             │  sections       │
+│    │ Add           │  selection/guides overlay    │  fields         │
+│    │ Widgets       │  zoom/display cluster        │                 │
+│    │ Assets        │  canvas context menu         │                 │
+│    │ Tokens        │                              │                 │
+│    │ Document      │                              │                 │
+├────┴───────────────┴──────────────────────────────┴─────────────────┤
+│ counts · message · diagnostics · save · publish · live              │ StatusBar
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 - The source header is **one row**: brand, mode switch, the editor's toolbar
@@ -175,9 +182,10 @@ custom title bar: brand · mode switch · file actions · document actions · pu
   have. Commands without a visible toolbar control live in the command
   palette and their shortcuts (P3).
 - Mode switch is a `ToggleGroup` (segmented well) with the source's three
-  modes, in order Library, Editor, Settings, not a `TabBar`.
-- `h_resizable` with `resizable_panel` for the three regions; pane widths and
-  collapse state are editor view state, never document state.
+  modes, in order Themes, Editor, Settings, not a `TabBar`.
+- Fixed columns match the source grid: 46px rail, 246px left pane, 1fr stage,
+  276px inspector. Pane collapse changes the column set; it never resizes the
+  stage under a drag. The widths are editor view state, never document state.
 - `StatusBar` left/right/center regions: counts, message, diagnostics, save
   state, publish indicator, live/offline.
 - Left pane tabs are a compact `Sidebar` rail (icon + tooltip); `TabBar` is
@@ -186,40 +194,36 @@ custom title bar: brand · mode switch · file actions · document actions · pu
 ```rust
 use gpui_kit::component::*;
 
-h_resizable("editor-split")
-    .child(
-        resizable_panel()
-            .size(px(288.))
-            .size_range(px(220.)..px(380.))
-            .child(self.left_pane(cx)),
-    )
-    .child(resizable_panel().child(self.stage(cx)))
-    .child(
-        resizable_panel()
-            .size(px(300.))
-            .size_range(px(260.)..px(460.))
-            .child(self.inspector(cx)),
-    )
+h_flex()
+    .size_full()
+    .child(div().w(px(46.0)).flex_shrink_0().h_full().child(self.rail(cx)))
+    .when(!left_collapsed, |this| {
+        this.child(div().w(px(246.0)).flex_shrink_0().h_full().child(self.left_pane(cx)))
+    })
+    .child(div().flex_1().min_w(px(0.0)).h_full().child(self.stage(cx)))
+    .when(!right_collapsed, |this| {
+        this.child(div().w(px(276.0)).flex_shrink_0().h_full().child(self.inspector(cx)))
+    })
 ```
 
 Why not Dock: Dock is a tabbed, draggable workspace. The editor has fixed
-semantic regions and no user-arranged panels. Using Dock means disabling its
-tab drag, close and zoom, then carrying its layout persistence and migration
-surface for no product gain. Revisit only for a multi-panel workspace.
+semantic regions and no user-arranged panels. Why not `h_resizable`: the source
+does not resize its panes, and a resizable group fights the fixed 246/276
+columns when the window changes size. Revisit only for a multi-panel workspace.
 
 ## Shell and navigation
 
 | Yunari element (source) | Job | gpui-kit proposal | Docs | Notes |
 |---|---|---|---|---|
 | Brand (`<strong>`) `shell-layout.tsx` | identity | `TitleBar` child content + `svg` logo | [TitleBar](https://gpui-kit.com/component/title-bar) | `TitleBar::window_options()` |
-| Mode switch (`ModeSwitch`) | Library/Editor/Settings | `ToggleGroup` + `Toggle` | [ToggleGroup](https://gpui-kit.com/component/toggle-group) | source order; segmented well in header |
+| Mode switch (`ModeSwitch`) | Themes/Editor/Settings | `ToggleGroup` + `Toggle` | [ToggleGroup](https://gpui-kit.com/component/toggle-group) | source order; segmented well in header |
 | Store halves (`StoreHalves`) | Local/Online tabs | `TabBar` pill inside Store header | [Tabs](https://gpui-kit.com/component/tabs) | not global chrome |
 | Header toolbar (`shell-menu-bar.tsx`) | open/save/export/find | `Toolbar` + `Button` from `Command::ALL` | [Toolbar](https://gpui-kit.com/component/toolbar) | no menu bar in source |
 | Toolbar open actions | New, template, library, recent, import | `Toolbar` + `Button`; recent = `PopupMenu`/`Menu` | [Toolbar](https://gpui-kit.com/component/toolbar) | `Kbd` in tooltip |
 | Toolbar document actions | Save, Save as, Activate, Export | `Toolbar`; Save primary; Export `Button` | [Toolbar](https://gpui-kit.com/component/toolbar) | disabled from session |
 | Find assets | open finder | `Button` + `Kbd` tooltip; action binding | [Button](https://gpui-kit.com/component/button) | also command palette |
 | Publish control + indicator | publish live / assign | `Button` primary + `Dialog`; status `Badge` | [Dialog](https://gpui-kit.com/component/dialog) | dialog hosts assign + QR |
-| Pane switch (`rail.tsx`) | choose left pane | compact `Sidebar` rail with icon + tooltip | [Sidebar](https://gpui-kit.com/component/sidebar) | six panes; settings gear stays header |
+| Pane switch (`rail.tsx`) | choose left pane | 46px rail of ghost `Button`s, icon + tooltip, `toggled` for the active slot | [Button](https://gpui-kit.com/component/button) | six panes; settings gear at the rail's foot |
 | Pane chrome (`pane.tsx`) | icon, title, count, body, footer | `v_flex`; tab label; footer `Toolbar` | [Toolbar](https://gpui-kit.com/component/toolbar) | counts from same store |
 | Pane footer actions (`LayerActions`) | object actions | `Toolbar` + ghost/danger `Button`s | [Toolbar](https://gpui-kit.com/component/toolbar) | filter ineligible actions |
 | Document identity | name, dirty, rename | `Input` inline rename; dirty `Badge`/`Marker` | [Input](https://gpui-kit.com/component/input) | one owner |
@@ -227,7 +231,7 @@ surface for no product gain. Revisit only for a multi-panel workspace.
 | Background playback | play/pause video | icon `Button` in zoom toolbar | [Button](https://gpui-kit.com/component/button) | state from player core |
 | Canvas dock (`canvas-dock.tsx`) | contextual object actions | floating `Toolbar` over stage | [Toolbar](https://gpui-kit.com/component/toolbar) | hide when no document |
 | Canvas context menu | right-click actions | `ContextMenu` from `Command::ALL` | [Menu](https://gpui-kit.com/component/menu) | grouped like source |
-| Inspector toggle | collapse right pane | icon `Button` + resizable state | [Resizable](https://gpui-kit.com/component/resizable) | persisted view state |
+| Inspector toggle | collapse right pane | icon `Button` + fixed column state | [Button](https://gpui-kit.com/component/button) | persisted view state |
 | Shortcut reference (`?`) | list all shortcuts | `Command` palette, or `Sheet` + `Kbd` rows | [Command](https://gpui-kit.com/component/command) | prefer palette |
 | Status readout | object/selection counts | `StatusBar` left region | [StatusBar](https://gpui-kit.com/component/status-bar) | no bridge = empty |
 | Status message / diagnostics | transient + persistent | `Notification`; persistent `StatusBar` item + `Alert` | [Notification](https://gpui-kit.com/component/notification) | one status owner per mode |
@@ -556,8 +560,8 @@ longer the editor map.
 
 ## What changes from the source (greenfield choices)
 
-1. **Fixed three-region shell** with `h_resizable`, not the source rail plus a
-   hidden pane. Left pane tabs, resizable inspector.
+1. **Fixed three-region shell** with `h_flex`, matching the source's 246px /
+   1fr / 276px grid. Pane collapse changes the columns; no drag-resize.
 2. **Kit chrome and theme** instead of raw `div()` and hard-coded colours;
    `ActiveTheme` owns every visual token.
 3. **One property-row renderer** built from kit `field` + controls; no bespoke
@@ -577,9 +581,9 @@ longer the editor map.
 **P0 — reference (current).** Screen map, source captures, component map,
 divergence list, per-screen checklists. Exit: reference doc accepted.
 
-**P1 — shell.** Modes, title bar, menu bar, toolbar, three-region editor,
-status bar, theme applied. Exit: editor opens at 1080p with reference layout;
-no clipped control row; screenshot pair accepted.
+**P1 — shell.** Modes, title bar, toolbar, fixed three-region editor, status
+bar, theme applied. Exit: editor opens at 1080p with reference layout; no
+clipped control row; screenshot pair accepted.
 
 **P2 — panels.** Layers tree, inspector sections per kind, palette, assets,
 typography. Exit: each section's checklist passes; selection shows the right
@@ -638,8 +642,8 @@ No new parity-bug lanes start until P1 exits.
 - **Raw `div()` returning** — review rejects interactive non-kit controls
   except canvas geometry and drag surfaces.
 - **Theme drift** — literals fail review; only `ActiveTheme` tokens.
-- **Dock temptation** — fixed shell uses Resizable; Dock is a separate product
-  decision.
+- **Dock temptation** — fixed shell uses `h_flex`, matching the source grid;
+  Dock is a separate product decision.
 - **Canvas scope creep** — the stage is raster; overlays stay small and tested.
 - **Two UI stacks** — the mobile player is deliberately separate; share
   portable crates, not UI components.
@@ -650,7 +654,8 @@ No new parity-bug lanes start until P1 exits.
 
 - [ ] Desktop editor and desktop player stay on gpui-kit; NSH is mobile-player
       only.
-- [ ] Fixed three-region shell with `h_resizable`; no Dock for the editor.
+- [ ] Fixed three-region shell with `h_flex` (246 / 1fr / 276); no Dock for the
+      editor.
 - [ ] `gpui_kit::component` + `ActiveTheme` are the only widget and theme
       layers; `crates/ui` holds compositions only.
 - [ ] Left panes: Tree + virtual lists + Toolbar footers.

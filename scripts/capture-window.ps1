@@ -26,8 +26,14 @@ public static class WinCap {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 }
 "@
+
+# Without this the sizing calls below use virtualized coordinates and
+# PrintWindow returns a smaller bitmap than the app actually renders at 125%+
+# display scaling, clipping the right and bottom of the capture.
+[WinCap]::SetProcessDPIAware() | Out-Null
 
 $start = @{ FilePath = $Exe; PassThru = $true }
 # Start-Process refuses an empty -ArgumentList, so only add it when there is one.

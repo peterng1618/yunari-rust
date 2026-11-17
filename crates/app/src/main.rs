@@ -77,6 +77,51 @@ fn start_host() -> Option<Shared> {
     Some(shared)
 }
 
+/// The source shell's Graphite palette, role for role from
+/// `editor-shell.css` (`[data-shell-palette="graphite"]`). Graphite is the
+/// shell's prioritized theme; other palettes come later.
+fn apply_graphite(cx: &mut App) {
+    use gpui_kit::component::{Theme, ThemeMode};
+
+    Theme::change(ThemeMode::Dark, None, cx);
+    Theme::update(cx, |theme| {
+        let ink = |hex: u32| Hsla::from(rgba(hex));
+        theme.background = ink(0x0b0e12ff);
+        theme.foreground = ink(0xe8ecf3ff);
+        theme.border = ink(0x242b34ff);
+        theme.title_bar = ink(0x12161cff);
+        theme.title_bar_border = ink(0x242b34ff);
+        theme.status_bar = ink(0x12161cff);
+        theme.status_bar_border = ink(0x242b34ff);
+        theme.sidebar = ink(0x12161cff);
+        theme.sidebar_foreground = ink(0xe8ecf3ff);
+        theme.sidebar_border = ink(0x242b34ff);
+        theme.sidebar_accent = ink(0x171c23ff);
+        theme.sidebar_accent_foreground = ink(0xe8ecf3ff);
+        theme.muted = ink(0x171c23ff);
+        theme.muted_foreground = ink(0x8a97abff);
+        theme.accent = ink(0x171c23ff);
+        theme.accent_foreground = ink(0xe8ecf3ff);
+        theme.selection = ink(0x72e0c033);
+        theme.ring = ink(0x72e0c0ff);
+        theme.caret = ink(0x72e0c0ff);
+        theme.primary = ink(0x72e0c0ff);
+        theme.primary_foreground = ink(0x06131aff);
+        theme.primary_hover = ink(0x8ae8ceff);
+        theme.primary_active = ink(0x5ccbadff);
+        theme.secondary = ink(0x171c23ff);
+        theme.secondary_foreground = ink(0xe8ecf3ff);
+        theme.secondary_hover = ink(0x1c222aff);
+        theme.secondary_active = ink(0x1f2731ff);
+        theme.popover = ink(0x12161cff);
+        theme.popover_foreground = ink(0xe8ecf3ff);
+        theme.input = ink(0x171c23ff);
+        theme.danger = ink(0xff7e6eff);
+        theme.success = ink(0x6fdc9cff);
+        theme.warning = ink(0xf3aa64ff);
+    });
+}
+
 /// `yunari-app [theme.json]` plays a theme; with no theme it opens the editor.
 fn main() {
     let path: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
@@ -84,6 +129,7 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             init(cx);
+            apply_graphite(cx);
             let host = start_host();
             if let Some(app) = &host {
                 displays::supervise(app.clone(), cx);

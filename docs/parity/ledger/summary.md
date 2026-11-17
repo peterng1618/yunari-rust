@@ -37,3 +37,6 @@ its element map is `editor-ui-gpui.md`. The widget stack is gpui-kit; NSH is
 only the separate mobile player app. Editor rows E1-E11 enter the matrix at
 P5. In-flight renderer correctness fixes finish because they do not touch the
 shell.
+
+P1 (shell) passed its gate on 2026-11-17 with the Graphite theme; evidence and
+deferred divergences are in `editor.md`. P2 (panels) is next.

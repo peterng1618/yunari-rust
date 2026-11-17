@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the editor's wrapping command-row shell with the source's one-row header, a resizable three-region workspace and a kit status bar, themed by `ActiveTheme`.
+**Goal:** Replace the editor's wrapping command-row shell with the source's one-row header, a fixed three-region workspace and a kit status bar, themed by `ActiveTheme`.
 
 **Architecture:** `crates/editor/src/ui/shell.rs` owns the shell vocabulary and the `EditorWindow` chrome methods. `crates/editor/src/ui.rs` keeps `EditorWindow` state and the existing pane bodies. Every visible control is a kit component; the existing pane internals stay behaviour-identical until P2.
 
@@ -15,9 +15,11 @@
 - `gpui-kit = "0.9.1"`; add no dependency.
 - New shell code uses `ActiveTheme` tokens (`cx.theme()`), not `rgb(0x...)` literals. Pane internals keep their literals until P2.
 - The source has **no menu bar**. Do not add `AppMenuBar`; `shell-menu-bar.tsx` is the header toolbar.
-- Header is one row: brand, mode switch, editor toolbar, pane toggles.
+- Header is one row: brand, mode switch, editor toolbar, pane toggles. The
+  toolbar shows in Editor mode only, as in the source.
 - `Command::ALL` stays the single command registry. The toolbar is a subset; the command palette lands P3.
-- No `DockArea`. Use `h_resizable` and `resizable_panel`.
+- No `DockArea` and no `h_resizable`. Use `h_flex` with the source's fixed
+  46px rail + 246px / 1fr / 276px columns.
 - Window opens at 1440x900, minimum 1024x700; acceptance capture is 1920x1080.
 - Keep the open document across mode changes. The body is hidden, not unmounted.
 - Keep all existing editor behaviour and tests passing.
@@ -25,9 +27,9 @@
 ## Review Focus
 
 - **Custom title-bar interaction.** `TitleBar` owns a drag region; the brand, mode toggles and toolbar buttons must still receive clicks. Check one mode toggle and one toolbar button per capture pass.
-- **Resizable pane sizing.** The old left and right panes hard-code `w(px(220.0))` and `w(px(260.0))` and the canvas uses `flex_1()`. Inside `h_resizable`, those must become `size_full()` or the panes fight the split.
+- **Fixed pane sizing.** The old left and right panes hard-code `w(px(220.0))` and `w(px(260.0))` and the canvas uses `flex_1()`. The shell owns 246px / 1fr / 276px columns; the pane bodies fill their column and the stage keeps `min_w(px(0.0))` so it shrinks.
 - **Keyboard focus.** The root `focus` handle currently owns every shortcut. The header's buttons and toggles must not leave the root unfocused after a click; type an arrow key after clicking a mode toggle to confirm nudging still works.
-- **Mode persistence.** Switching Library/Editor/Settings must not clear `editor`, `selection`, `expanded` or `overlay`. The editor body is hidden with the state intact.
+- **Mode persistence.** Switching Themes/Editor/Settings must not clear `editor`, `selection`, `expanded` or `overlay`. The editor body is hidden with the state intact.
 - **Long status text.** A save error plus document name plus zoom plus selection must not clip or push the right region off at 1024px.
 
 ---
@@ -42,7 +44,8 @@
 **Interfaces:**
 - Consumes: `crate::ui::menus::Command`.
 - Produces:
-  - `pub enum ShellMode { Library, Editor, Settings }`
+  - `pub enum ShellMode { Themes, Editor, Settings }`
+  - `pub enum LeftPane { Layers, Add, Widgets, Assets, Tokens, Document }`
   - `impl ShellMode { pub const ALL: [Self; 3]; pub fn label(self) -> &'static str; pub fn index(self) -> usize; }`
   - `pub const TOOLBAR_GROUPS: [&'static [Command]; 3]`
 
@@ -66,10 +69,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_modes_are_library_editor_settings_in_order() {
+    fn shell_modes_are_themes_editor_settings_in_order() {
         assert_eq!(
             ShellMode::ALL.map(ShellMode::label),
-            ["Library", "Editor", "Settings"]
+            ["Themes", "Editor", "Settings"]
         );
         assert_eq!(
             ShellMode::ALL.map(ShellMode::index),
@@ -131,17 +134,17 @@ use crate::ui::menus::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellMode {
-    Library,
+    Themes,
     Editor,
     Settings,
 }
 
 impl ShellMode {
-    pub const ALL: [Self; 3] = [Self::Library, Self::Editor, Self::Settings];
+    pub const ALL: [Self; 3] = [Self::Themes, Self::Editor, Self::Settings];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Library => "Library",
+            Self::Themes => "Themes",
             Self::Editor => "Editor",
             Self::Settings => "Settings",
         }
@@ -149,7 +152,7 @@ impl ShellMode {
 
     pub fn index(self) -> usize {
         match self {
-            Self::Library => 0,
+            Self::Themes => 0,
             Self::Editor => 1,
             Self::Settings => 2,
         }
@@ -425,7 +428,7 @@ git commit -m "feat(editor): render source header with title bar, modes and tool
 
 ---
 
-### Task 4: Body — `h_resizable` three-region workspace
+### Task 4: Body — fixed three-region workspace
 
 **Files:**
 - Modify: `crates/editor/src/ui/shell.rs`
@@ -494,26 +497,42 @@ Add to `impl EditorWindow` in `shell.rs`:
 ```rust
     pub(super) fn body(&self, cx: &mut Context<Self>) -> impl IntoElement {
         use gpui_kit::component::{
-            ActiveTheme, Empty, EmptyDescription, EmptyHeader, EmptyTitle, h_resizable,
-            resizable_panel,
+            ActiveTheme,
+            empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
+            h_flex,
         };
 
-        let editor = h_resizable("editor-split")
-            .child(
-                resizable_panel()
-                    .size(px(260.0))
-                    .size_range(px(200.0)..px(380.0))
-                    .visible(!self.left_collapsed)
-                    .child(self.layers_view(cx)),
-            )
-            .child(resizable_panel().child(self.canvas_view(cx)))
-            .child(
-                resizable_panel()
-                    .size(px(300.0))
-                    .size_range(px(240.0)..px(460.0))
-                    .visible(!self.right_collapsed)
+        let mut editor = h_flex().size_full().min_h(px(0.0));
+        editor = editor.child(
+            div()
+                .w(px(46.0))
+                .flex_shrink_0()
+                .h_full()
+                .child(self.rail(cx)),
+        );
+        if !self.left_collapsed {
+            let pane = match self.left_pane {
+                LeftPane::Layers => self.layers_view(cx).into_any_element(),
+                other => pane_placeholder(other, cx).into_any_element(),
+            };
+            editor = editor.child(div().w(px(246.0)).flex_shrink_0().h_full().child(pane));
+        }
+        editor = editor.child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .h_full()
+                .child(self.canvas_view(cx)),
+        );
+        if !self.right_collapsed {
+            editor = editor.child(
+                div()
+                    .w(px(276.0))
+                    .flex_shrink_0()
+                    .h_full()
                     .child(self.inspector_view(cx)),
             );
+        }
 
         div()
             .flex_1()
@@ -561,7 +580,7 @@ Expected: PASS.
 
 ```bash
 git add crates/editor/src/ui.rs crates/editor/src/ui/shell.rs
-git commit -m "feat(editor): put the editor body in resizable panes"
+git commit -m "feat(editor): lay out the editor body in source columns"
 ```
 
 ---
@@ -771,8 +790,8 @@ Create `docs/parity/ledger/editor.md`:
 - Source capture: `test-results/parity-shots/editor-source-1080p.png`
 - Result: accepted / rejected (replace with the judged result)
 - Evidence: header one row; no clipped control row at 1920x1080 or 1024x700;
-  three resizable regions; status bar; mode switch keeps the document.
-- Deferred: Library and Settings surfaces (P4); command palette (P3); pane
+  three fixed source columns; status bar; mode switch keeps the document.
+- Deferred: Themes and Settings surfaces (P4); command palette (P3); pane
   internals still use P2-era controls.
 ```
 
@@ -787,7 +806,7 @@ git commit -m "docs: record P1 shell acceptance evidence"
 
 ## Self-Review
 
-- **Spec coverage:** P1 shell (header, modes, toolbar, resizable regions, status bar, theme, window options) is covered by Tasks 1–6. P1 screenshot gate is Task 7. P2–P5 are out of scope.
+- **Spec coverage:** P1 shell (header, modes, toolbar, fixed regions, status bar, theme, window options) is covered by Tasks 1–6. P1 screenshot gate is Task 7. P2–P5 are out of scope.
 - **Step scan:** Every code step names the exact file, signature and values. The only fallback is the documented `ToggleGroup` callback shape and icon-name fallback, both bounded.
 - **Type consistency:** `ShellMode`, `TOOLBAR_GROUPS`, `header`, `body`, `status_bar`, `set_mode`, `toggle_left_pane`, `toggle_right_pane` are named once and reused with the same signatures.
 - **Review Focus tests:** Mode vocabulary and toolbar order are unit-tested. Title-bar clicks, pane sizing, focus retention, mode persistence and long status text are screenshot/interaction checks in Task 7 because GPUI UI-test support is not a current dev dependency.
