@@ -56,3 +56,10 @@ yunari-panels = { path = "crates/panels" }
 yunari-nvml = { path = "crates/nvml" }
 yunari-rtss = { path = "crates/rtss" }
 yunari-tray = { path = "crates/tray" }
+
+# The shipped profile: optimized like release, but with debug assertions on so
+# GPUI compiles its HLSL at run time through d3dcompiler_47 instead of needing
+# the Windows SDK's fxc.exe at build time. Everything else is release codegen.
+[profile.ship]
+inherits = "release"
+debug-assertions = true

@@ -11,7 +11,9 @@ bridge and a README as one zip.
 pwsh -File scripts/package-windows.ps1
 ```
 
-It builds `Yunari.exe` and `yunari-mcp.exe`, stages them under
+It builds `Yunari.exe` and `yunari-mcp.exe` with the `ship` profile (release
+codegen with debug assertions on, so GPUI compiles its HLSL at run time and no
+Windows SDK is needed to package), stages them under
 `dist/yunari-<version>-windows-x64/`, writes the zip beside it and prints the
 archive's SHA-256. Copy that folder anywhere; nothing is installed system-wide
 and nothing is written outside `%USERPROFILE%\.yunari`.
@@ -21,17 +23,20 @@ and nothing is written outside `%USERPROFILE%\.yunari`.
 1. Build it:
 
    ```sh
-   cargo build -p yunari-app          # debug
-   cargo build --release -p yunari-app # optimized
+   cargo build -p yunari-app           # debug
+   cargo build --profile ship -p yunari-app # optimized, shippable
+   cargo build --release -p yunari-app # optimized, needs fxc.exe (see below)
    ```
 
-   The optimized build needs the Windows SDK's `fxc.exe` on `PATH` (or
-   `GPUI_FXC_PATH`), because GPUI compiles its HLSL shaders only in a release
-   build. Running the app does not need the SDK.
+   A plain `--release` build needs the Windows SDK's `fxc.exe` on `PATH` (or
+   `GPUI_FXC_PATH`), because GPUI compiles its HLSL shaders at build time only
+   in that profile. The `ship` profile keeps debug assertions on so GPUI
+   compiles at run time through `d3dcompiler_47`, which Windows ships; it needs
+   no SDK.
 
-2. Start `target/debug/yunari-app.exe` (or `target/release/…`). The editor
-   opens; the host starts in the same process on port 5227, trying 5227–5236
-   when a port is taken.
+2. Start `target/debug/yunari-app.exe` (or `target/ship/…`). The editor opens;
+   the host starts in the same process on port 5227, trying 5227–5236 when a
+   port is taken.
 
 3. Open a theme as a player window: `yunari-app.exe path\to\theme.json`.
 
@@ -74,6 +79,25 @@ and nothing is written outside `%USERPROFILE%\.yunari`.
 `yunari-mcp`, built beside the app, bridges JSON-RPC on stdin to the running
 host's `POST /api/mcp`: it finds the port in `%USERPROFILE%\.yunari\settings\host.lock`,
 so point an MCP client at that binary with no arguments while the app is running.
+
+## Checking a machine against hardware
+
+Everything that needs a physical device is a manual pass; the automated suite
+covers the protocol contracts and the seams, not the device.
+
+- **USB panels.** Plug one in, assign it a theme under Settings → Panels, and
+  confirm stills arrive at its cadence, brightness/restart/reset answer, and
+  unplugging then replugging brings the same theme back. TURZX and Kraken
+  (Z53/Z63/Z73) have their own rows.
+- **Panel video.** Give the theme a video background; the Lian Li family should
+  start one paced H.264 stream and the TURZX one cached MP4, with the UI sent
+  over it and no traffic while the UI is still.
+- **Phone pairing.** Open `http://<this-pc-ip>:5227/pair` on the phone, enter
+  the six characters, install `/yunari-ca.crt` as a trusted root on the phone
+  and reopen the secure origin; the display should paint live readings and
+  survive the screen locking (wake lock).
+- **Local monitors.** Settings → Monitors should list each display; turning one
+  into a display record should open a fullscreen window on that monitor.
 
 ## Not shipped yet
 

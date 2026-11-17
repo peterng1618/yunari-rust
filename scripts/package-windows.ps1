@@ -22,17 +22,14 @@ if ($Version -eq "") {
 }
 
 if (-not $SkipBuild) {
-    # GPUI compiles its shaders only when debug assertions are off, so a release
-    # build needs the Windows SDK's shader compiler before cargo starts.
-    $fxc = if ($env:GPUI_FXC_PATH) { $env:GPUI_FXC_PATH } else { (Get-Command fxc.exe -ErrorAction SilentlyContinue).Source }
-    if (-not $fxc -or -not (Test-Path $fxc)) {
-        throw "A release build needs the Windows SDK's fxc.exe on PATH or in GPUI_FXC_PATH. Debug builds show the same UI; only this packaging step needs the SDK."
-    }
-    & $cargo build --release --manifest-path (Join-Path $root "Cargo.toml") -p yunari-app -p yunari-host
-    if ($LASTEXITCODE -ne 0) { throw "The release build failed." }
+    # The `ship` profile is release codegen with debug assertions on: GPUI then
+    # compiles its HLSL at run time through d3dcompiler_47, so packaging needs
+    # no Windows SDK shader compiler. A plain `--release` build needs fxc.exe.
+    & $cargo build --profile ship --manifest-path (Join-Path $root "Cargo.toml") -p yunari-app -p yunari-host
+    if ($LASTEXITCODE -ne 0) { throw "The ship build failed." }
 }
 
-$release = Join-Path $root "target\release"
+$release = Join-Path $root "target\ship"
 $app = Join-Path $release "yunari-app.exe"
 $mcp = Join-Path $release "yunari-mcp.exe"
 foreach ($binary in @($app, $mcp)) {

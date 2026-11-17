@@ -750,7 +750,7 @@ recorded product decision.
 | 45 | MCP server over the host API | Met | `POST /api/mcp` answers `initialize`, `tools/list` and `tools/call`. Read tools use the skill's own names: `list_themes`, `get_theme`, `list_sensors` (a measured pass adds the `measured` flag per key and a `families` summary), `list_displays`, `list_asset_sources`, `search_assets`, `preview_asset` (MCP image content) and `monitors_list`/`path_presets_list`/`providers_list`. `search_assets` and `preview_asset` cover the local Pictures folder, the Wallpaper Engine library and every stock source this host serves in-process: Lucide and Lineicons from their built-in manifests, Font Awesome's free set from its pinned package, Unsplash's free photos through this host's own key, the WebGradients/UI Gradients/ColorSwoop/Color Hunt catalogues, Google Fonts through the Fontsource registry, and the curated trio/family catalogue built into the binary. A keyed source without its key is one reported page, not a failed search; each row carries an opaque base64 `assetRef` that `import_asset` accepts in place of a path, a forged reference cannot name a file outside its own source, and a font row's ref declares its face (family, weight, style, format, subset) so the import lands as a font asset. `remove_asset` refuses an asset an object, the background or a type face still names and otherwise drops its declaration and bytes. Composition tools edit an in-memory draft: `create_theme`/`open_theme` start one from the model's blank or starter document (or a stored theme), `import_asset` sniffs a local picture or fetches a finder row's own bytes and carries them, `add_card` places an installed card unit's scene at a corner (the same scene merge the editor's paste uses, so an inserted card and a pasted one mint ids, bindings and asset ids the same way), `add_icon` places a glyph from the shared Lucide set as scaled path data (the renderer now draws elliptical arcs as cubics, so every glyph in the set draws), `add_text`/`add_shape`/`add_image`/`add_chart`/`add_binding` place objects, `update_object`/`remove_object`/`reorder_object`/`group_objects`/`ungroup_objects` change them, `set_artboard`/`set_background`/`set_palette`/`set_type_tokens`/`set_theme_metadata` change the document, `validate_theme` reports issues, `save_theme` writes through the library's own validation and base check, `assign_theme` points a display at a stored theme, and `yunari_status` reports the host's version, port, library size and drafts. The `yunari-mcp` binary bridges stdio to it through the port in `host.lock`. `yunari_status` reports the port, theme and display counts, sensor count, asset sources and drafts. `yunari-mcp install` registers the bridge in `~/.claude.json`, adds the one `mcp__yunari` approval rule to `~/.claude/settings.json`, and copies the `yunari-theme-designer` skill to `~/.claude/skills` and `~/.agents/skills`; `status` reports both halves without writing and `uninstall` reverses them, with an unreadable JSON file refused rather than rewritten and the skill staged beside the binaries by the packaging script. An import carries its attribution: a finder row's licence, source URL and author (a local file's licence is the user's own statement) land on the asset declaration and in the draft's `credits.json` entry, `remove_asset` prunes that entry, `open_theme` keeps the stored credits and `save_theme` writes them, the editor writes them on save and export, and a package carries the member through its manifest |
 | 46 | SignalRGB bridge | Met | A loopback UDP receiver (`YRGB` frames, one pending frame per device, ~30 Hz flush) hands each colour frame to the running panel's own runner, so a lighting write serialises with the LCD's HID reports. The Kraken Z drives its 40 GRB LEDs (`22 10`/`22 11`/`22 A0`), pump and fan levels (`72 01`/`72 02`, the pump keeping its 25% firmware floor) and `75 01` telemetry (liquid temperature, pump and fan RPM and percent). The HTTP seam is `GET /api/devices` (descriptor, hub, per-device counters, available and assigned devices, bridge state), `POST /api/devices/{id}/controls`, `GET /api/devices/{id}/telemetry` (cached 1 s), `POST /api/devices/{id}/lighting-mode` (canvas, forced with `#rrggbb` repeated each second, off) and `PUT /api/signalrgb-bridge` for the stored port, all loopback-only. Settings shows the configured port and whether this host bound it, and changing it applies on the next host start |
 | 47 | Windows is the first-class platform | Met | Windows reads sit behind seams (PowerShell helpers, HID/serial, registry); the workspace still builds and tests off Windows |
-| 48 | npm, winget and packaged executable | Met | `scripts/package-windows.ps1` builds the release binaries, stages `Yunari.exe` and `yunari-mcp.exe` with a README, zips them and prints the SHA-256. The source's own README calls its npm install a release path that does not work today and says winget is not supported until a packaged Windows executable exists; the native app needs no Node package, and the packaged executable is this script's output |
+| 48 | npm, winget and packaged executable | Met | `scripts/package-windows.ps1` builds the `ship` profile (release codegen, debug assertions on, so GPUI compiles HLSL at run time and no Windows SDK is needed), stages `Yunari.exe` and `yunari-mcp.exe` with a README and the skill, zips them and prints the SHA-256. The 0.1.0 artifact was staged, and the staged `Yunari.exe` was started and answered `/api/health` with `{"ok":true}` (see "Release build"). The source's own README calls its npm install a release path that does not work today and says winget is not supported until a packaged Windows executable exists; the native app needs no Node package, and the packaged executable is this script's output |
 | 49 | Deployed store Worker, D1 and R2 | External | Unchanged; this host only proxies whatever origin is configured |
 
 What this sweep changes: nothing in the port's behaviour. It records the gaps
@@ -769,10 +769,9 @@ deviation, not a gap.
 ## Performance (2026-11-16)
 
 Measured on this development machine: Intel Core i9-10850K (10 cores, 20 logical
-processors), 32 GB RAM, Windows 11 Pro 22631. Binary: `cargo build --release
---config 'profile.release.debug-assertions=true' -p yunari-app` — the optimized
-profile, because the plain release build needs the Windows SDK's `fxc.exe` to
-compile GPUI's HLSL shaders and this machine does not have that SDK (see
+processors), 32 GB RAM, Windows 11 Pro 22631. Binary: the `ship` profile (the
+one the artifact ships) — release codegen with debug assertions on, because the
+plain release profile needs the Windows SDK's `fxc.exe` on this machine (see
 "Release build" below). Debug assertions do not change codegen or allocations
 in any material way.
 
@@ -799,9 +798,33 @@ in any material way.
 
 `cargo build --release` fails on `gpui-pre-windows`: its build script compiles
 the renderer's HLSL with `fxc.exe` only when `debug_assertions` is off, and
-`fxc.exe` ships in the Windows SDK. Running the app does not need it. Building
-the shipped artifact on a machine without that SDK needs either the SDK
-installed or a GPUI release that ships prebuilt shader bytes; until then the
-installable artifact stays deferred (open follow-up: installer format and
-update channel). The app runs today from a debug build or the optimized
-debug-assertions build above.
+`fxc.exe` ships in the Windows SDK, which this machine does not have. That is a
+toolchain fact about one profile, not about the product.
+
+The shipped profile is `ship`: `inherits = "release"` with `debug-assertions =
+true`, so codegen is the release profile and GPUI compiles its HLSL at run time
+through the `d3dcompiler_47` that Windows ships. Packaging therefore needs no
+SDK:
+
+```
+cargo build --profile ship -p yunari-app -p yunari-host
+pwsh -File scripts/package-windows.ps1 -SkipBuild
+```
+
+Artifact staged and verified on 2026-11-17:
+
+- `dist/yunari-0.1.0-windows-x64.zip`, 25,510,473 bytes, SHA-256
+  `4f972cf165c38ddb950a656de2ef9875145b4a3a5146b4313a0f7d20361e7103`.
+- `Yunari.exe` 66,557,440 bytes; `yunari-mcp.exe` 3,587,072 bytes; `README.txt`;
+  `skills/`.
+- Smoke test: the staged `Yunari.exe` started, stayed alive, and its host
+  answered `GET http://127.0.0.1:5227/api/health` with `{"ok":true}` before it
+  was stopped. The app runs from this artifact with no SDK, no Node and no
+  installer.
+
+Unsigned is deliberate and unchanged: there is no MSI/MSIX, winget manifest or
+code signing, and no update channel — the distribution is the built zip
+(`docs/install.md`). Hardware-dependent paths (USB panels, a real phone's
+certificate install, monitor placement) remain manual checks with the exact
+steps in `docs/install.md`; the automated suite covers their protocol contracts
+and seams, and no device was attached during this build.
