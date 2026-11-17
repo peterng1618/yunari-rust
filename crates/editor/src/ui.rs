@@ -125,6 +125,9 @@ enum Overlay {
     Store(StoreDialog),
     /// The `?` key reference: every command and its chord.
     Shortcuts,
+    /// The header's one accent button: assign this theme to a display,
+    /// then the publishing switch below the choice.
+    Publish,
     /// The canvas's menu, opened where the pointer pressed. Right-pressing an
     /// object selects it and offers its commands; a press on empty canvas
     /// offers what can be inserted.
@@ -833,6 +836,7 @@ impl EditorWindow {
                 }
             }
             Command::OpenDisplay => self.open_display(cx),
+            Command::Publish => self.open_publish(cx),
         }
         cx.notify();
     }
@@ -3272,7 +3276,8 @@ impl EditorWindow {
             | Overlay::Typography(_)
             | Overlay::Mcp(_)
             | Overlay::Settings(_)
-            | Overlay::Store(_) => {
+            | Overlay::Store(_)
+            | Overlay::Publish => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
                 }
@@ -4045,6 +4050,151 @@ impl EditorWindow {
         self.menu_layer(at, px(200.0), px(rows * 26.0 + 16.0), entries, cx)
     }
 
+    /// The header's chord opens the surface; pressing it moves nothing.
+    fn open_publish(&mut self, cx: &mut Context<Self>) {
+        self.overlay = Some(Overlay::Publish);
+        cx.notify();
+    }
+
+    /// Assigns the open theme to a display through the host's own store, so
+    /// the player reads the same file the dialog wrote.
+    fn assign_display(&mut self, id: &str, cx: &mut Context<Self>) {
+        let theme = self.editor.document().id.clone();
+        let mut assignment = yunari_host::assignment::Assignment::load(&self.settings_dir());
+        assignment.set(id, Some(&theme));
+        self.status = Some(Status::ok(format!("Assigned {theme} to {id}")));
+        cx.notify();
+    }
+
+    /// Flips the host's LAN switch. The warning stays on the surface beside it.
+    fn toggle_publish(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings_dir();
+        let mut hosting = yunari_host::hosting::Hosting::load(&settings);
+        hosting.lan = !hosting.lan;
+        hosting.save(&settings);
+        self.status = Some(Status::ok(if hosting.lan {
+            "Publishing on the local network"
+        } else {
+            "Publishing stopped"
+        }));
+        cx.notify();
+    }
+
+    fn publish_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let settings = self.settings_dir();
+        let hosting = yunari_host::hosting::Hosting::load(&settings);
+        let displays = yunari_host::displays::DisplayStore::load(&settings);
+        let assignment = yunari_host::assignment::Assignment::load(&settings);
+        let theme = self.editor.document().id.clone();
+        let (ink, muted, border, accent) = (
+            cx.theme().foreground,
+            cx.theme().muted_foreground,
+            rgb(MUTED),
+            rgb(ACCENT),
+        );
+        let mut children: Vec<AnyElement> = Vec::new();
+        children.push(
+            div()
+                .text_sm()
+                .text_color(ink)
+                .child("Assign to a display")
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child("Display")
+                .into_any_element(),
+        );
+        for record in displays.list() {
+            let id = record.id.clone();
+            let active = assignment.get(&id) == Some(theme.as_str());
+            children.push(
+                div()
+                    .id(format!("publish-display-{}", record.id))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if active { accent } else { border })
+                    .child(div().text_sm().child(record.label.clone()))
+                    .child(if active { "Assigned" } else { "Assign" })
+                    .on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.assign_display(&id, cx)
+                        }),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if displays.list().is_empty() {
+            children.push(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Pair a new remote display")
+                    .into_any_element(),
+            );
+        }
+        children.push(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child("Publishing")
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .id("publish-toggle")
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .bg(cx.theme().popover)
+                .child(if hosting.lan {
+                    "Stop publishing"
+                } else {
+                    "Publish to a phone"
+                })
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_publish(cx)))
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(
+                    "Phone access is HTTPS. Plain HTTP is the fallback on your own network — trusted networks only, never the internet.",
+                )
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .id("publish-close")
+                .mt_2()
+                .text_xs()
+                .text_color(muted)
+                .cursor_pointer()
+                .child("Close  ·  Esc")
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_overlay(cx)))
+                .into_any_element(),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .children(children)
+            .into_any_element()
+    }
+
     /// The `?` reference: the source's own rows, one column per group, in the
     /// order the source's table declares them.
     fn shortcuts_panel(cx: &mut Context<Self>) -> AnyElement {
@@ -4198,6 +4348,7 @@ impl EditorWindow {
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Shortcuts) => Self::shortcuts_panel(cx),
+            Some(Overlay::Publish) => self.publish_panel(cx),
             // A menu is anchored to the gesture, not to a dialog's centre.
             Some(Overlay::ContextMenu { at, object }) => {
                 return Some(self.context_menu_layer(*at, object.clone(), cx));

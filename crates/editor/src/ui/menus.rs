@@ -52,11 +52,13 @@ pub enum Command {
     Paste,
     Duplicate,
     OpenDisplay,
+    /// Opens the publish surface. Its own switch starts or stops publishing.
+    Publish,
     Store,
 }
 
 impl Command {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 50] = [
         Self::New,
         Self::NewFromTemplate,
         Self::Open,
@@ -105,6 +107,7 @@ impl Command {
         Self::Paste,
         Self::Duplicate,
         Self::OpenDisplay,
+        Self::Publish,
         Self::Store,
     ];
 
@@ -160,6 +163,7 @@ impl Command {
             Self::Paste => "Paste",
             Self::Duplicate => "Duplicate",
             Self::OpenDisplay => "Open display",
+            Self::Publish => "Open publishing",
             Self::Store => "Store…",
         }
     }
@@ -184,6 +188,7 @@ impl Command {
             Self::Group => "Ctrl+G",
             Self::Ungroup => "Ctrl+Shift+G",
             Self::DeleteSelected => "Delete · Backspace",
+            Self::Publish => "Ctrl+Shift+P",
             _ => "",
         }
     }
@@ -211,6 +216,7 @@ impl Command {
             (true, false, "d") => Some(Self::Duplicate),
             (true, false, "g") => Some(Self::Group),
             (true, true, "g") => Some(Self::Ungroup),
+            (true, true, "p") => Some(Self::Publish),
             (false, _, "delete" | "backspace") => Some(Self::DeleteSelected),
             _ => None,
         }
@@ -229,7 +235,7 @@ pub struct ShortcutRow {
 /// The source's rows in the source's order: file, edit, canvas, help. The
 /// publish row is the one absent — its surface lands in P4, and a sheet that
 /// printed a chord for nothing is the lie the table exists to prevent.
-pub const SHORTCUT_REFERENCE: [ShortcutRow; 21] = [
+pub const SHORTCUT_REFERENCE: [ShortcutRow; 22] = [
     ShortcutRow {
         group: "File",
         label: "New theme",
@@ -331,6 +337,11 @@ pub const SHORTCUT_REFERENCE: [ShortcutRow; 21] = [
         chord: "↓",
     },
     ShortcutRow {
+        group: "Publish",
+        label: "Open publishing",
+        chord: "Ctrl+Shift+P",
+    },
+    ShortcutRow {
         group: "Help",
         label: "Keyboard shortcuts",
         chord: "?",
@@ -387,6 +398,10 @@ mod tests {
             Command::from_key("o", true, false, false),
             Some(Command::Import)
         );
+        assert_eq!(
+            Command::from_key("p", true, true, false),
+            Some(Command::Publish)
+        );
         // The source binds eight chords and no more; the rest are reached from
         // a pane or the toolbar.
         assert_eq!(Command::from_key("e", true, true, false), None);
@@ -418,6 +433,7 @@ mod tests {
                 Command::Cut,
                 Command::Paste,
                 Command::Duplicate,
+                Command::Publish,
             ]
         );
     }
@@ -430,7 +446,7 @@ mod tests {
                 groups.push(row.group);
             }
         }
-        assert_eq!(groups, ["File", "Edit", "Canvas", "Help"]);
+        assert_eq!(groups, ["File", "Edit", "Canvas", "Publish", "Help"]);
         assert_eq!(
             SHORTCUT_REFERENCE
                 .iter()

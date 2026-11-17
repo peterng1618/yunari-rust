@@ -46,8 +46,11 @@ the rail's active-slot press closes it, matching the source's rail press.
 ### Divergences that are deferred, with the phase that owns them
 
 - **Publish control.** The source header's right end is the accent "Assign to a
-  display" chip plus its indicator. The port has no publish/assign command yet;
-  the header keeps the pane toggles there instead. P4 (dialogs/modes).
+  display" chip plus its indicator. The port has the accent button, opening a
+  surface that assigns the open theme to a stored display and flips the host's
+  LAN switch beside the source's warning. The pairing address/code and QR are
+  not printed: the source refuses to compose them locally, and the port has no
+  host answer to read yet. P4 (dialogs/modes).
 - **Toolbar coverage.** The rows now follow the source: New theme, New from
   template, Open library, Import theme / Save, Save as, Open display, Export
   theme, Export widget / Find assets. **Open recent** now sits after Open: the
@@ -55,7 +58,8 @@ the rail's active-slot press closes it, matching the source's rail press.
   persisted in `~/.yunari/recents.json` (capped at five, deduplicated, each by
   the name it had when opened), with the source's "No recent themes yet." empty
   copy. It is a menu, not a command: the library listing is a different thing.
-  **Activate** is still missing (P4, with the publish surface).
+  The source's **Activate** command is covered here by Assign to a display in
+  the publish surface.
 - **Rail pane bodies.** All six slots have bodies: Layers, Add, Widgets,
   Assets, Design tokens and Theme settings. Pane-level drag/drop, rename and
   keyboard tree navigation remain P2/P3.
@@ -128,9 +132,8 @@ The sheet also forced the chords into line with the source's `PRODUCT_SHORTCUTS`
   `Ctrl+Shift+W`, `Ctrl+Shift+A`, `Ctrl+,`, `Ctrl+Shift+M`, `Ctrl+Shift+S` and
   the single-letter add keys. The source reaches those commands from a pane or
   the toolbar, not from a chord.
-- Still absent: `Ctrl+Shift+P` (open publishing), because the publish surface is
-  P4 and a sheet row that opened nothing would be a promise the port cannot
-  keep.
+- `Ctrl+Shift+P` opens publishing; the sheet's Publish group names the act,
+  not the switch inside the surface.
 
 Evidence:
 
@@ -145,5 +148,11 @@ Evidence:
   boot, so the default shell is unchanged.
 - `test-results/parity-shots/editor-port-recent.png` — 1280x875, the recents
   menu sized to its rows. The seeded list was reverted after the shot.
+- `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
+  surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` —
+  1920x1080, the mode toggles with the kit's `spacing_tokens().sm` gap between
+  icon and label, a segmented container behind the mode group, a bolder brand,
+  small toolbar buttons and the primary accent publish button.
 
 

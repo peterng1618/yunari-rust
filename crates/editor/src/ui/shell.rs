@@ -211,9 +211,14 @@ impl EditorWindow {
         let modes = ShellMode::ALL
             .into_iter()
             .map(|candidate| {
+                let gap = cx.theme().spacing_tokens().sm;
                 Toggle::new(format!("shell-mode-{}", candidate.index()))
-                    .icon(candidate.icon())
-                    .label(candidate.label())
+                    .child(
+                        h_flex()
+                            .gap(gap)
+                            .child(candidate.icon())
+                            .child(candidate.label()),
+                    )
                     .checked(candidate == mode)
             })
             .collect::<Vec<_>>();
@@ -227,6 +232,8 @@ impl EditorWindow {
                 toolbar = toolbar.child(
                     Button::new(format!("toolbar-{:?}", command))
                         .ghost()
+                        .small()
+                        .px_1p5()
                         .icon(toolbar_icon(command))
                         .tooltip(command.label())
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -239,6 +246,8 @@ impl EditorWindow {
                     toolbar = toolbar.child(
                         Button::new("toolbar-recent")
                             .ghost()
+                            .small()
+                            .px_1p5()
                             .icon(gpui_kit::assets::IconName::RotateCcw)
                             .tooltip("Open recent")
                             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
@@ -263,15 +272,20 @@ impl EditorWindow {
                 .gap_2()
                 .child(
                     div()
-                        .text_sm()
+                        .text_base()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(cx.theme().foreground)
+                        .pr_2()
                         .child("Yunari"),
                 )
                 .child(
-                    ToggleGroup::new("shell-modes")
+                        ToggleGroup::new("shell-modes")
                         .small()
                         .single()
                         .segmented()
+                        .p_0p5()
+                        .rounded_md()
+                        .bg(cx.theme().muted)
                         .children(modes)
                         .on_click(cx.listener(|this, states: &Vec<bool>, _, cx| {
                             if let Some(index) = states.iter().position(|checked| *checked) {
@@ -281,6 +295,19 @@ impl EditorWindow {
                 )
                 .when(mode == ShellMode::Editor, |this| this.child(toolbar))
                 .child(div().flex_1())
+                // The source's one filled accent control. It opens the
+                // surface; the switch inside is what changes hosting.
+                .when(mode == ShellMode::Editor, |this| {
+                    this.child(
+                        gpui_kit::component::button::Button::new("publish-open")
+                            .primary()
+                            .small()
+                            .label(crate::ui::menus::Command::Publish.label())
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.apply(crate::ui::menus::Command::Publish, window, cx)
+                            })),
+                    )
+                })
                 .child(
                     Button::new("toggle-left-pane")
                         .ghost()
