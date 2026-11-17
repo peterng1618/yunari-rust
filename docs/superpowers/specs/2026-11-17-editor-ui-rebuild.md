@@ -3,6 +3,12 @@
 **Status:** approved 2026-11-17. This replaces the parity loop as the primary
 workstream until the editor shell exists.
 
+> **UI framework under review (2026-11-17).** The Android/iOS player roadmap
+> makes NSH the likely UI framework; see `2026-11-17-nsh-ui-migration.md` and
+> its spike gate. Everything here about the source reference, acceptance gate,
+> phases and screenshots still applies. Only the widget layer and renderer
+> backend are in question. No gpui UI code is retired until that spike passes.
+
 ## Why
 
 The port's behaviour layer is real and tested, but its editor surface was built
