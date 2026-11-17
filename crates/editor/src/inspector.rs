@@ -59,7 +59,7 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
     };
     let transform = node.transform;
     let mut sections = vec![Section {
-        title: "Transform",
+        title: "Position",
         rows: vec![
             number("transform.x", "X", transform.x, None),
             number("transform.y", "Y", transform.y, None),
@@ -91,20 +91,8 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
         ],
     }];
     sections.push(Section {
-        title: "Appearance",
+        title: "Layer",
         rows: vec![
-            colour("style.fill", "Fill", node.style.get("fill")),
-            colour("style.stroke", "Stroke", node.style.get("stroke")),
-            Field {
-                key: "style.strokeWidth".to_owned(),
-                label: "Stroke width",
-                kind: FieldKind::Number {
-                    min: 0.0,
-                    max: 999.0,
-                    step: 1.0,
-                },
-                value: format_number(style_number(node, "strokeWidth").unwrap_or(0.0)),
-            },
             Field {
                 key: "style.opacity".to_owned(),
                 label: "Opacity",
@@ -141,9 +129,26 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
             },
         ],
     });
+    sections.push(Section {
+        title: "Paint",
+        rows: vec![
+            colour("style.fill", "Fill", node.style.get("fill")),
+            colour("style.stroke", "Stroke", node.style.get("stroke")),
+            Field {
+                key: "style.strokeWidth".to_owned(),
+                label: "Stroke width",
+                kind: FieldKind::Number {
+                    min: 0.0,
+                    max: 999.0,
+                    step: 1.0,
+                },
+                value: format_number(style_number(node, "strokeWidth").unwrap_or(0.0)),
+            },
+        ],
+    });
     match &node.kind {
         NodeKind::Rectangle { corner_radius } => sections.push(Section {
-            title: "Rectangle",
+            title: "Content",
             rows: vec![Field {
                 key: "kind.cornerRadius".to_owned(),
                 label: "Corner radius",
@@ -156,7 +161,7 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
             }],
         }),
         NodeKind::Image { content } => sections.push(Section {
-            title: "Image",
+            title: "Content",
             rows: vec![
                 text_field(
                     "kind.content.assetId",
@@ -176,7 +181,7 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
             ],
         }),
         NodeKind::Video { content } => sections.push(Section {
-            title: "Video",
+            title: "Content",
             rows: vec![
                 text_field(
                     "kind.content.assetId",
@@ -200,12 +205,12 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
                 value: style_number(node, "lineHeight").map_or_else(String::new, format_number),
             });
             sections.push(Section {
-                title: "Text",
+                title: "Content",
                 rows,
             });
         }
         NodeKind::Chart { content } => sections.push(Section {
-            title: "Chart",
+            title: "Content",
             rows: chart_rows(content),
         }),
         _ => {}
@@ -260,6 +265,15 @@ pub fn sections(document: &ThemeDocument, id: &str) -> Vec<Section> {
             rows,
         });
     }
+    // The source's questions, in `SETTINGS_SECTIONS` order; anything the port
+    // adds (bindings) comes after them.
+    sections.sort_by_key(|section| match section.title {
+        "Content" => 0,
+        "Position" => 1,
+        "Layer" => 2,
+        "Paint" => 3,
+        _ => 4,
+    });
     sections
 }
 
@@ -1587,7 +1601,7 @@ mod tests {
         let document = document(vec![text_node()]);
         let section = sections(&document, "label")
             .into_iter()
-            .find(|section| section.title == "Text")
+            .find(|section| section.title == "Content")
             .expect("a text section");
         let keys: Vec<&str> = section.rows.iter().map(|row| row.key.as_str()).collect();
         assert_eq!(
@@ -1854,7 +1868,7 @@ mod tests {
         let sections = sections(&document, "chart");
         let chart = sections
             .iter()
-            .find(|section| section.title == "Chart")
+            .find(|section| section.title == "Content")
             .expect("a chart section");
         assert_eq!(chart.rows[0].key, "kind.content.family");
         assert_eq!(chart.rows[0].value, "gauge");
@@ -1910,7 +1924,7 @@ mod tests {
         let sections = sections(&document, "photo");
         let image = sections
             .iter()
-            .find(|section| section.title == "Image")
+            .find(|section| section.title == "Content")
             .expect("an image section");
         assert_eq!(image.rows[0].key, "kind.content.assetId");
         assert_eq!(image.rows[0].value, "pic");
@@ -1955,13 +1969,20 @@ mod tests {
     }
 
     #[test]
-    fn the_transform_section_leads_for_a_selected_node() {
+    fn sections_follow_the_source_question_order() {
         let document = document(vec![rect("a", 10.0, 20.0, 30.0, 40.0)]);
         let sections = sections(&document, "a");
-        assert_eq!(sections[0].title, "Transform");
-        assert_eq!(sections[0].rows[0].key, "transform.x");
-        assert_eq!(sections[0].rows[0].value, "10");
-        assert_eq!(sections[0].rows[2].value, "30");
+        assert_eq!(
+            sections
+                .iter()
+                .map(|section| section.title)
+                .collect::<Vec<_>>(),
+            ["Content", "Position", "Layer", "Paint"]
+        );
+        let position = &sections[1];
+        assert_eq!(position.rows[0].key, "transform.x");
+        assert_eq!(position.rows[0].value, "10");
+        assert_eq!(position.rows[2].value, "30");
     }
 
     #[test]
