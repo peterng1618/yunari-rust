@@ -256,9 +256,6 @@ pub struct EditorWindow {
     /// Space holds pan mode, as in the source.
     space_held: bool,
     polling: bool,
-    /// How far the inspector's rows are pushed up, since gpui-kit has no
-    /// scroll container of its own.
-    inspector_scroll: f32,
     /// The running host, when this editor is attached to one.
     host: Option<Shared>,
     /// Which top-level surface the header is showing. The editor body stays
@@ -409,7 +406,6 @@ impl EditorWindow {
             panning: None,
             space_held: false,
             polling: false,
-            inspector_scroll: 0.0,
             host,
             mode: ShellMode::Editor,
             left_collapsed: false,
@@ -2714,8 +2710,8 @@ impl EditorWindow {
         children
     }
 
-    /// A pane body: optional title strip and rows the wheel pushes up. Kit's
-    /// div has no scroll container, so the pane keeps its own offset.
+    /// A pane body: optional title strip and the rows below it, in the kit's
+    /// own scroll area so the wheel and the scrollbar agree on one offset.
     fn scrolling_pane(
         &self,
         id: &'static str,
@@ -2723,10 +2719,11 @@ impl EditorWindow {
         children: Vec<AnyElement>,
         cx: &mut Context<Self>,
     ) -> Div {
+        use gpui_kit::component::scroll::ScrollableElement;
+
         let theme = cx.theme();
         let (background, border, foreground) =
             (theme.background, theme.border, theme.foreground);
-        let max_scroll = (children.len() as f32 * 30.0 - 500.0).max(0.0);
         let mut root = div()
             .size_full()
             .flex()
@@ -2752,19 +2749,13 @@ impl EditorWindow {
                 .flex_1()
                 .w_full()
                 .min_h(px(0.0))
-                .overflow_hidden()
-                .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
-                    let (_, dy) = scroll_delta(event);
-                    this.inspector_scroll = (this.inspector_scroll - dy).clamp(0.0, max_scroll);
-                    cx.notify();
-                }))
+                .overflow_y_scrollbar()
                 .child(
                     div()
                         .w_full()
                         .flex()
                         .flex_col()
                         .pb_2()
-                        .mt(px(-self.inspector_scroll))
                         .children(children),
                 ),
         )

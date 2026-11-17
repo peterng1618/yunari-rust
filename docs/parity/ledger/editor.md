@@ -65,9 +65,9 @@ the rail's active-slot press closes it, matching the source's rail press.
   520px so a short window scrolls it instead of clipping it. Snap guides against
   the source and drag feedback remain P3.
 - **Layer rows** print raw ids instead of the source's kind column. P2.
-- **Inspector scrolling.** The panes keep a wheel offset but their rows have no
-  scrollbar and the estimate is row-count based. Replace with the kit scroll
-  container in P2.
+- **Pane scrolling.** Resolved: the pane bodies use the kit's
+  `ScrollableElement` scroll area, so the wheel and the scrollbar share one
+  offset instead of the old row-count estimate.
 - **Mode surfaces.** Themes and Settings render a named empty state, not their
   source surfaces. P4.
 
