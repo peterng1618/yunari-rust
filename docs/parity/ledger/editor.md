@@ -57,13 +57,19 @@ the rail's active-slot press closes it, matching the source's rail press.
   Assets, Design tokens and Theme settings. Pane-level drag/drop, rename and
   keyboard tree navigation remain P2/P3.
 - **Stage chrome.** Artboard label chip, zoom/fit cluster, the inspector toggle,
-  the bottom asset button and the canvas context menu are in place. A
-  right-press selects the object under the pointer and offers the source's
-  object commands; a press on empty canvas offers the Add pane's own insert
-  groups, from the one `INSERT_GROUPS` table the pane reads too. The panel
-  flips above the press when it would run off the foot, and bounds itself to
-  520px so a short window scrolls it instead of clipping it. Snap guides against
-  the source and drag feedback remain P3.
+  the bottom asset button, the canvas context menu and the selection's canvas
+  dock are in place. The dock floats the registry's object commands (without
+  the eight arrange actions, which stay in the inspector as in the source) and
+  only while something is selected. A right-press selects the object under the
+  pointer and offers the same commands; a press on empty canvas offers the Add
+  pane's own insert groups, from the one `INSERT_GROUPS` table the pane reads
+  too. The menu flips above the press when it would run off the foot, and
+  bounds itself to 520px so a short window scrolls it instead of clipping it.
+  Snap guides against the source and drag feedback remain P3.
+
+The app now embeds gpui-kit's full Lucide catalog (`AllAssets`) rather than the
+default bundle, because the source's dock marks (scissors, clipboard, group,
+arrow-to-line) are outside the default subset and drew empty.
 - **Layer rows** print raw ids instead of the source's kind column. P2.
 - **Pane scrolling.** Resolved: the pane bodies use the kit's
   `ScrollableElement` scroll area, so the wheel and the scrollbar share one

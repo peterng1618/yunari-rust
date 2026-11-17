@@ -330,6 +330,62 @@ impl CanvasMenuEntry {
     }
 }
 
+/// The canvas dock's rows: the registry's object commands, without the eight
+/// arrange actions, which the source keeps in the selection inspector.
+const DOCK_ACTIONS: [CanvasMenuEntry; 11] = [
+    CanvasMenuEntry::Command(Command::Duplicate),
+    CanvasMenuEntry::Command(Command::Copy),
+    CanvasMenuEntry::Command(Command::Cut),
+    CanvasMenuEntry::Command(Command::Paste),
+    CanvasMenuEntry::Command(Command::DeleteSelected),
+    CanvasMenuEntry::Command(Command::Group),
+    CanvasMenuEntry::Command(Command::Ungroup),
+    CanvasMenuEntry::Restack(LayerMove::Front),
+    CanvasMenuEntry::Restack(LayerMove::Forward),
+    CanvasMenuEntry::Restack(LayerMove::Backward),
+    CanvasMenuEntry::Restack(LayerMove::Back),
+];
+
+/// The dock's icon for a row. The full catalog is embedded, so the source's
+/// own marks are available rather than a nearest-available substitute.
+fn dock_icon(entry: CanvasMenuEntry) -> gpui_kit::assets::IconName {
+    use gpui_kit::assets::IconName as Glyph;
+    match entry {
+        CanvasMenuEntry::Command(Command::Duplicate) => Glyph::CopyPlus,
+        CanvasMenuEntry::Command(Command::Copy) => Glyph::Copy,
+        CanvasMenuEntry::Command(Command::Cut) => Glyph::Scissors,
+        CanvasMenuEntry::Command(Command::Paste) => Glyph::ClipboardPaste,
+        CanvasMenuEntry::Command(Command::DeleteSelected) => Glyph::Trash,
+        CanvasMenuEntry::Command(Command::Group) => Glyph::Group,
+        CanvasMenuEntry::Command(Command::Ungroup) => Glyph::Ungroup,
+        CanvasMenuEntry::Restack(LayerMove::Front) => Glyph::ArrowUpToLine,
+        CanvasMenuEntry::Restack(LayerMove::Forward) => Glyph::ArrowUp,
+        CanvasMenuEntry::Restack(LayerMove::Backward) => Glyph::ArrowDown,
+        CanvasMenuEntry::Restack(LayerMove::Back) => Glyph::ArrowDownToLine,
+        _ => Glyph::Ellipsis,
+    }
+}
+
+/// Runs a menu or dock row: a command through the registry, a restack on the
+/// selected node.
+fn run_canvas_entry(
+    this: &mut EditorWindow,
+    entry: CanvasMenuEntry,
+    window: &mut Window,
+    cx: &mut Context<EditorWindow>,
+) {
+    match entry {
+        CanvasMenuEntry::Command(command) => this.apply(command, window, cx),
+        CanvasMenuEntry::Restack(step) => {
+            if let Some(id) = this.selection.first().map(str::to_owned) {
+                this.editor.raise(&id, step);
+                this.refresh();
+                cx.notify();
+            }
+        }
+    }
+}
+
 /// The object menu's groups, in the source's registry order.
 const OBJECT_MENU: [&[CanvasMenuEntry]; 5] = [
     &[
@@ -3592,10 +3648,7 @@ impl EditorWindow {
                 div()
                     .absolute()
                     .bottom(px(14.0))
-                    .left(px(0.0))
-                    .right(px(0.0))
-                    .flex()
-                    .justify_center()
+                    .left(px(14.0))
                     .child(
                         Button::new("stage-assets")
                             .ghost()
@@ -3607,6 +3660,42 @@ impl EditorWindow {
                             })),
                     ),
             )
+            // The source's canvas dock: the object commands this selection can
+            // run, floating over the stage. The eight arrange actions stay in
+            // the inspector, as in the source.
+            .when(!self.selection.is_empty(), |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom(px(14.0))
+                        .left(px(0.0))
+                        .right(px(0.0))
+                        .flex()
+                        .justify_center()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .p_1()
+                                .rounded_md()
+                                .bg(panel)
+                                .border_1()
+                                .border_color(border)
+                                .children(DOCK_ACTIONS.map(|entry| {
+                                    Button::new(format!("dock-{}", entry.label()))
+                                        .ghost()
+                                        .small()
+                                        .icon(dock_icon(entry))
+                                        .tooltip(entry.label())
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, window, cx| {
+                                                run_canvas_entry(this, entry, window, cx)
+                                            },
+                                        ))
+                                        .into_any_element()
+                                })),
+                        ),
+                )
+            })
     }
 
     fn zoom_stage(&mut self, factor: f32, cx: &mut Context<Self>) {
@@ -3670,18 +3759,7 @@ impl EditorWindow {
                     .on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             this.overlay = None;
-                            match entry {
-                                CanvasMenuEntry::Command(command) => {
-                                    this.apply(command, window, cx)
-                                }
-                                CanvasMenuEntry::Restack(step) => {
-                                    if let Some(id) = this.selection.first().map(str::to_owned) {
-                                        this.editor.raise(&id, step);
-                                        this.refresh();
-                                        cx.notify();
-                                    }
-                                }
-                            }
+                            run_canvas_entry(this, entry, window, cx);
                         },
                     ))
                     .into_any_element(),
