@@ -4,3 +4,5 @@
 /.playwright-mcp/
 /.cargo/config.toml
 
+
+/.claude/source-evidence/

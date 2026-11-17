@@ -12,6 +12,7 @@ pub mod menus;
 pub mod path_preset_dialog;
 pub mod prompt;
 pub mod settings_dialog;
+pub mod settings_mode;
 pub mod shell;
 pub mod store_dialog;
 pub mod typography_dialog;
@@ -307,6 +308,7 @@ pub struct EditorWindow {
     /// The window's height, so a menu opened near the foot can be kept on
     /// screen. Refreshed every render.
     window_height: Pixels,
+    window_width: Pixels,
     /// The author's camera. Changes never enter history.
     viewport: Viewport,
     /// Whether the author has moved the camera; until they do the artboard is
@@ -552,6 +554,7 @@ impl EditorWindow {
             focus: cx.focus_handle(),
             canvas_bounds: Rc::new(Cell::new(None)),
             window_height: px(0.0),
+            window_width: px(0.0),
             viewport: Viewport {
                 scale: 1.0,
                 offset: (0.0, 0.0),
@@ -1682,6 +1685,14 @@ impl EditorWindow {
             Err(message) => self.status = Some(Status::error(message)),
         }
         cx.notify();
+    }
+
+    /// The settings dialog, when one is open; the mode's first page reuses it.
+    pub(super) fn settings_mode_dialog(&self) -> Option<&settings_dialog::SettingsDialog> {
+        match &self.overlay {
+            Some(Overlay::Settings(dialog)) => Some(dialog),
+            _ => None,
+        }
     }
 
     /// Opens the recent list at the control that asked for it.
@@ -4475,6 +4486,7 @@ impl Render for EditorWindow {
             close
         });
         self.window_height = window.bounds().size.height;
+        self.window_width = window.bounds().size.width;
         div()
             .size_full()
             .relative()

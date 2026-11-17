@@ -351,11 +351,7 @@ impl EditorWindow {
     }
 
     pub(super) fn body(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_kit::component::{
-            ActiveTheme,
-            empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
-            h_flex,
-        };
+        use gpui_kit::component::{ActiveTheme, h_flex};
 
         let mut editor = h_flex().size_full().min_h(px(0.0));
         editor = editor.child(
@@ -406,46 +402,21 @@ impl EditorWindow {
                     .child(editor),
             )
             .when(self.mode == ShellMode::Themes, |this| {
-                let dialog = self
-                    .themes
-                    .clone()
-                    .unwrap_or_else(|| crate::ui::library_dialog::LibraryDialog::new(&self.library));
-                this.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .bg(cx.theme().background)
-                        .child(crate::ui::library_dialog::page(&dialog, cx)),
-                )
+                let dialog = self.themes.clone().unwrap_or_else(|| {
+                    crate::ui::library_dialog::LibraryDialog::new(&self.library)
+                });
+                this.child(div().absolute().inset_0().bg(cx.theme().background).child(
+                    crate::ui::library_dialog::page(&dialog, cx, self.window_width),
+                ))
             })
             .when(self.mode == ShellMode::Settings, |this| {
+                let dialog = self.settings_mode_dialog();
                 this.child(
                     div()
                         .absolute()
                         .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
                         .bg(cx.theme().background)
-                        .child(
-                            Empty::new()
-                                .header(
-                                    EmptyHeader::new()
-                                        .title(EmptyTitle::new().child(self.mode.label()))
-                                        .description(EmptyDescription::new().child(
-                                            "Host, displays, weather and the bridge live in one dialog. A settings surface of their own lands in P4.",
-                                        )),
-                                )
-                                .child(
-                                    gpui_kit::component::button::Button::new("settings-open")
-                                        .label("Open settings…")
-                                        .on_click(cx.listener(
-                                            |this, _: &ClickEvent, window, cx| {
-                                                this.apply(Command::Settings, window, cx)
-                                            },
-                                        )),
-                                ),
-                        ),
+                        .child(crate::ui::settings_mode::page(dialog, cx)),
                 )
             })
     }

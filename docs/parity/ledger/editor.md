@@ -94,12 +94,15 @@ arrow-to-line) are outside the default subset and drew empty.
   as a card grid (open / duplicate / delete on each card), sorted by Name or
   Updated, with the author and node count on the tile. The page scrolls and
   reloads whenever the mode is entered or the library changes. The source's
-  real artboard previews are still absent; the cards carry a palette strip
-  sampled from each stored theme's own tokens, which is honest about what it
-  shows. Rastering each artboard is the next step. The `Open` dialog
-  keeps a compact list, as the source's chooser does. Settings names what it
-  holds and opens the one settings dialog; its own surface is P4, along with
-  the source's catalogue halves and facets.
+  real previews come from each theme folder's `thumbnail.png`, the same file
+  the source writes and reads. Rows are justified: cards keep the thumbnail's
+  aspect, a row is scaled flush to the scroller, and the last row stays short.
+  The packing is a port of `store-mode/justified-rows.ts`. The `Open` dialog
+  keeps a compact list, as the source's chooser does. Settings is a page with
+  the source's two navigation groups; Displays shows the existing settings
+  content when a host has opened it, and the other pages say they are not
+  ported rather than drawing pretend controls. The catalogue halves and facets
+  remain P4.
 
 ### Not yet judged (added after the interactive checks)
 
@@ -155,9 +158,11 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
-- `test-results/parity-shots/editor-port-themes-grid.png` — 1280x875, four
-  columns of stored-theme cards with Name/Updated sort; `-palette.png` shows
-  the palette strips. Seeded mode reverted after both shots.
+- `test-results/parity-shots/editor-port-themes-contain2.png` — 1920x1080, the
+  justified gallery reading the box's own `thumbnail.png` files; each picture
+  is shown whole, not cropped. Seeded mode reverted after the shot.
+- `test-results/parity-shots/editor-port-settings-mode.png` — 1920x1080, the
+  Settings nav with its two groups. Seeded mode reverted.
 - `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` —
   1920x1080, the mode toggles with the kit's `spacing_tokens().sm` gap between
   icon and label, a segmented container behind the mode group, a bolder brand,
@@ -189,3 +194,13 @@ pinned `1241866e5`) found:
 - Store is a half of Library, not its own mode.
 
 These are P4 gaps, not claims of parity.
+
+## Source-reading gate
+
+A `PreToolUse` hook runs `.claude/scripts/check_source_evidence.py` before
+Write/Edit/NotebookEdit on editor UI files. It denies the edit unless a record
+in `.claude/source-evidence/<file>.json` exists, is under 30 minutes old, names
+source files, and every quoted anchor is still present in the source checkout.
+The records are intentionally short-lived: a new surface needs a fresh read of
+the code it claims to port. The gate was pipe-tested with and without a
+record; the settings watcher may need `/hooks` or a restart to load it.

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/scripts/check_source_evidence.py\"",
+            "statusMessage": "Checking source evidence for editor UI edits"
+          }
+        ]
+      }
+    ]
+  }
+}

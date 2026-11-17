@@ -1,6 +1,6 @@
 //! The stored-theme list Open shows, with the actions that manage it.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use gpui_kit::*;
 use yunari_library::{Library, ThemeEntry};
@@ -17,39 +17,30 @@ pub enum ThemeSort {
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
     pub sort: ThemeSort,
-    /// A small palette sample per theme, read from its stored document. Full
-    /// artboard previews need a raster pass and are not faked here.
-    pub previews: BTreeMap<String, Vec<[u8; 4]>>,
+    /// Real artboard previews, rastered once when the list opens. Images the
+    /// document names are absent because reading them per card would stall the
+    /// mode switch; shapes and text still come from the authored frame.
+    pub frames: BTreeMap<String, Arc<gpui_kit::Image>>,
+    /// Each authored artboard's width/height, used to justify grid rows.
+    pub ratios: BTreeMap<String, f32>,
 }
 
 impl LibraryDialog {
     pub fn new(library: &Library) -> Self {
         let entries = library.list();
-        let mut previews = BTreeMap::new();
+        let mut frames = BTreeMap::new();
+        let mut ratios = BTreeMap::new();
         for entry in &entries {
-            let Ok(stored) = library.read(&entry.id) else {
-                continue;
-            };
-            let colors: Vec<[u8; 4]> = stored
-                .document
-                .palette
-                .values()
-                .filter_map(|token| match &token.value {
-                    yunari_model::document::Paint::Solid { color } => {
-                        yunari_render::parse_color(color).map(|parsed| parsed.channels())
-                    }
-                    yunari_model::document::Paint::Gradient { .. } => None,
-                })
-                .take(6)
-                .collect();
-            if !colors.is_empty() {
-                previews.insert(entry.id.clone(), colors);
+            if let Some((frame, ratio)) = frame_of(library, &entry.id) {
+                ratios.insert(entry.id.clone(), ratio);
+                frames.insert(entry.id.clone(), frame);
             }
         }
         Self {
             entries,
             sort: ThemeSort::Name,
-            previews,
+            frames,
+            ratios,
         }
     }
 
@@ -97,7 +88,11 @@ fn action(
 
 /// The Themes mode's surface: the stored themes under the mode's own heading,
 /// with no dismiss footer because nothing was opened over the editor.
-pub fn page(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
+pub fn page(
+    dialog: &LibraryDialog,
+    cx: &mut Context<EditorWindow>,
+    width: gpui_kit::Pixels,
+) -> impl IntoElement {
     use gpui_kit::component::{ActiveTheme, scroll::ScrollableElement};
 
     div()
@@ -117,7 +112,7 @@ pub fn page(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
                         .child("Stored themes"),
                 )
                 .child(sort_row(dialog, cx))
-                .child(grid(dialog, cx)),
+                .child(grid(dialog, cx, width)),
         )
 }
 
@@ -149,126 +144,171 @@ fn sort_row(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
     )
 }
 
-/// A palette strip: a small, truthful sample of the theme's own tokens. A
-/// stored theme with unreadable colours answers an empty box, not a fake.
-fn card_preview(dialog: &LibraryDialog, entry: &ThemeEntry) -> AnyElement {
-    let Some(colors) = dialog.previews.get(&entry.id) else {
-        return div()
-            .h(px(64.0))
-            .rounded_sm()
-            .bg(cx_fallback())
-            .into_any_element();
+/// A theme's own thumbnail, written by the source when the theme was saved.
+/// It is the same picture the original app's library draws, so the port reads
+/// it rather than inventing a preview from a partial render.
+fn frame_of(library: &Library, id: &str) -> Option<(Arc<gpui_kit::Image>, f32)> {
+    let bytes = std::fs::read(library.root().join(id).join("thumbnail.png")).ok()?;
+    // The PNG IHDR carries the pixel size; reading it avoids decoding twice.
+    let width = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?) as f32;
+    let height = u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?) as f32;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let image = Arc::new(gpui_kit::Image::from_bytes(
+        gpui_kit::ImageFormat::Png,
+        bytes,
+    ));
+    Some((image, width / height))
+}
+
+/// The source's justified rows: cards keep their artboard ratios, a row is
+/// scaled to the container, and the final row stays short at its target height.
+/// Ported from `store-mode/justified-rows.ts` at the pinned source.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RowItem {
+    index: usize,
+    width: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct GalleryRow {
+    items: Vec<RowItem>,
+    height: f32,
+    short: bool,
+}
+
+fn justify_rows(ratios: &[f32], width: f32, target: f32, gap: f32) -> Vec<GalleryRow> {
+    let total = ratios.len();
+    if total == 0 {
+        return Vec::new();
+    }
+    let target = target.max(1.0);
+    let gap = gap.max(0.0);
+    let ratio = |index: usize| {
+        let value = ratios[index];
+        if value.is_finite() && value > 0.0 {
+            value
+        } else {
+            1.0
+        }
     };
-    div()
-        .h(px(64.0))
-        .rounded_sm()
-        .flex()
-        .items_end()
-        .children(colors.iter().map(|channels| {
-            div()
-                .flex_1()
-                .h(px(16.0))
-                .bg(rgba(channels_to_hex(*channels)))
-        }))
-        .into_any_element()
+    if !(width > 0.0) {
+        return ratios
+            .iter()
+            .enumerate()
+            .map(|(index, _)| GalleryRow {
+                items: vec![RowItem {
+                    index,
+                    width: (target * ratio(index)).max(1.0),
+                }],
+                height: target,
+                short: true,
+            })
+            .collect();
+    }
+    let height_at = |natural: f32| {
+        if natural > 0.0 {
+            (target * width) / natural
+        } else {
+            target
+        }
+    };
+    let natural_width = |start: usize, count: usize| {
+        (start..start + count)
+            .enumerate()
+            .fold(0.0, |sum, (offset, index)| {
+                sum + target * ratio(index) + if offset > 0 { gap } else { 0.0 }
+            })
+    };
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < total {
+        let mut fitted = 0usize;
+        let mut natural = 0.0;
+        while index + fitted < total {
+            let next = target * ratio(index + fitted);
+            let with_gap = natural + if fitted > 0 { gap } else { 0.0 } + next;
+            if fitted > 0 && with_gap > width {
+                break;
+            }
+            natural = with_gap;
+            fitted += 1;
+        }
+        let fit_height = height_at(natural);
+        let overflow_height = (index + fitted < total)
+            .then(|| height_at(natural + gap + target * ratio(index + fitted)));
+        let last = index + fitted >= total;
+        let count = if last {
+            fitted
+        } else {
+            match overflow_height {
+                None => fitted,
+                Some(overflow) => {
+                    if (overflow - target).abs() <= (fit_height - target).abs() {
+                        fitted + 1
+                    } else {
+                        fitted
+                    }
+                }
+            }
+        };
+        let is_tail = index + count >= total;
+        let natural_width = natural_width(index, count);
+        let ragged = is_tail && natural_width <= width;
+        let raw_height = if is_tail {
+            target.min(height_at(natural_width))
+        } else {
+            height_at(natural_width)
+        };
+        let widths: Vec<f32> = (0..count)
+            .map(|offset| raw_height * ratio(index + offset))
+            .collect();
+        let fixed = width.round();
+        let mut widths = widths;
+        if !ragged && !widths.is_empty() {
+            let used: f32 = widths.iter().sum::<f32>() + gap * (count as f32 - 1.0);
+            let last_width = widths.last_mut().unwrap();
+            *last_width = (*last_width + fixed - used.round()).max(1.0);
+        }
+        rows.push(GalleryRow {
+            items: widths
+                .into_iter()
+                .enumerate()
+                .map(|(offset, card_width)| RowItem {
+                    index: index + offset,
+                    width: card_width,
+                })
+                .collect(),
+            height: raw_height,
+            short: ragged,
+        });
+        index += count;
+    }
+    rows
 }
 
-/// Packs a renderer colour into GPUI's RRGGBBAA form.
-fn channels_to_hex(channels: [u8; 4]) -> u32 {
-    (u32::from(channels[0]) << 24)
-        | (u32::from(channels[1]) << 16)
-        | (u32::from(channels[2]) << 8)
-        | u32::from(channels[3])
-}
-
-/// The neutral fill used when a theme has no readable palette. Kept local so
-/// no call site has to invent a colour.
-fn cx_fallback() -> gpui_kit::Rgba {
-    rgb(0x22222a)
-}
-
-/// Width of one library card. Three columns fit the 1024x700 logical minimum
-/// with the source's comfortable gutters.
-const CARD_WIDTH: Pixels = px(220.0);
-const CARD_HEIGHT: Pixels = px(180.0);
-
-/// The Themes mode's grid. Real theme previews need a raster pass per stored
-/// theme, which the port does not do yet; the card still keeps the source's
-/// shape — a tile per theme, name and author together, actions at the foot.
-fn grid(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> AnyElement {
+/// The Themes mode's justified gallery. The card keeps the theme's own shape;
+/// no uniform tile is imposed on a 4:1 wallpaper or a square clock.
+fn grid(
+    dialog: &LibraryDialog,
+    cx: &mut Context<EditorWindow>,
+    width: gpui_kit::Pixels,
+) -> AnyElement {
     use gpui_kit::component::ActiveTheme;
 
-    let (ink, muted, border, panel) = (
+    let (ink, muted, panel) = (
         cx.theme().foreground,
         cx.theme().muted_foreground,
-        cx.theme().border,
         cx.theme().popover,
     );
-    let cards: Vec<_> = dialog
-        .sorted()
-        .into_iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let open_id = entry.id.clone();
-            let duplicate_id = entry.id.clone();
-            let delete_id = entry.id.clone();
-            let author = entry
-                .author
-                .as_deref()
-                .filter(|author| !author.is_empty())
-                .unwrap_or("Unknown author");
-            div()
-                .id(("library-card", index))
-                .w(CARD_WIDTH)
-                .h(CARD_HEIGHT)
-                .flex()
-                .flex_col()
-                .justify_between()
-                .p_3()
-                .rounded_md()
-                .border_1()
-                .border_color(border)
-                .bg(panel)
-                .child(
-                    div()
-                        .id(("library-card-open", index))
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .cursor_pointer()
-                        .child(div().text_sm().text_color(ink).child(entry.name.clone()))
-                        .child(div().text_xs().text_color(muted).child(author.to_owned()))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(muted)
-                                .child(format!("{} nodes", entry.node_count)),
-                        )
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.open_entry(&open_id, cx)
-                        })),
-                )
-                .child(self::card_preview(dialog, entry))
-                .child(
-                    div()
-                        .flex()
-                        .gap_3()
-                        .child(action(
-                            ("library-card-duplicate", index),
-                            "Duplicate",
-                            move |this, _, _, cx| this.duplicate_theme(&duplicate_id, cx),
-                            cx,
-                        ))
-                        .child(action(
-                            ("library-card-delete", index),
-                            "Delete",
-                            move |this, _, _, cx| this.confirm_delete_theme(delete_id.clone(), cx),
-                            cx,
-                        )),
-                )
-        })
+    let entries = dialog.sorted();
+    let ratios: Vec<f32> = entries
+        .iter()
+        .map(|entry| dialog.ratios.get(&entry.id).copied().unwrap_or(2.0))
         .collect();
-    if cards.is_empty() {
+    let rows = justify_rows(&ratios, f32::from(width), 150.0, 12.0);
+    if rows.is_empty() {
         return div()
             .p_3()
             .text_sm()
@@ -276,11 +316,93 @@ fn grid(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> AnyElement {
             .child("No stored themes yet. Save one first.")
             .into_any_element();
     }
+    let mut columns: Vec<AnyElement> = Vec::new();
+    for row in rows {
+        let mut cards: Vec<AnyElement> = Vec::new();
+        for item in row.items {
+            let entry = entries[item.index];
+            let open_id = entry.id.clone();
+            let duplicate_id = entry.id.clone();
+            let delete_id = entry.id.clone();
+            let preview_height = (row.height - 26.0).max(24.0);
+            let picture = match dialog.frames.get(&entry.id) {
+                Some(frame) => div()
+                    .relative()
+                    .h(px(preview_height))
+                    .w_full()
+                    .overflow_hidden()
+                    .child(
+                        img(gpui_kit::ImageSource::Image(frame.clone()))
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .object_fit(gpui_kit::ObjectFit::Contain),
+                    )
+                    .into_any_element(),
+                None => div()
+                    .h(px(preview_height))
+                    .w_full()
+                    .bg(panel)
+                    .into_any_element(),
+            };
+            cards.push(
+                div()
+                    .id(("library-card", item.index))
+                    .w(px(item.width))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id(("library-card-open", item.index))
+                            .cursor_pointer()
+                            .child(picture)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.open_entry(&open_id, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(ink)
+                            .child(div().truncate().child(entry.name.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_color(muted)
+                                    .child(action(
+                                        ("library-card-duplicate", item.index),
+                                        "Duplicate",
+                                        move |this, _, _, cx| {
+                                            this.duplicate_theme(&duplicate_id, cx)
+                                        },
+                                        cx,
+                                    ))
+                                    .child(action(
+                                        ("library-card-delete", item.index),
+                                        "Delete",
+                                        move |this, _, _, cx| {
+                                            this.confirm_delete_theme(delete_id.clone(), cx)
+                                        },
+                                        cx,
+                                    )),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        columns.push(div().flex().gap_3().children(cards).into_any_element());
+    }
     div()
         .flex()
-        .flex_wrap()
+        .flex_col()
         .gap_3()
-        .children(cards)
+        .children(columns)
         .into_any_element()
 }
 
@@ -389,7 +511,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryDialog, ThemeSort, channels_to_hex};
+    use super::{LibraryDialog, ThemeSort};
     use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
 
@@ -405,11 +527,44 @@ mod tests {
     }
 
     #[test]
+    fn justified_rows_keep_artboard_ratios_and_fill_the_row() {
+        use super::justify_rows;
+
+        let rows = justify_rows(&[2.0, 1.0, 4.0, 1.0], 800.0, 150.0, 12.0);
+        assert!(!rows.is_empty());
+        for row in &rows {
+            let used: f32 = row.items.iter().map(|item| item.width).sum::<f32>()
+                + 12.0 * (row.items.len() as f32 - 1.0);
+            if row.short {
+                assert!(used <= 800.0 + 1.0, "short row overflows: {used}");
+            } else {
+                assert!((used - 800.0).abs() < 1.0, "full row not flush: {used}");
+            }
+        }
+        // A 4:1 wallpaper never becomes a uniform tile beside a square clock.
+        let widths: Vec<f32> = rows
+            .iter()
+            .flat_map(|row| row.items.iter().map(|item| item.width))
+            .collect();
+        assert!(widths.iter().any(|width| *width > 150.0));
+    }
+
+    #[test]
+    fn a_row_with_no_width_puts_one_card_per_row() {
+        use super::justify_rows;
+
+        let rows = justify_rows(&[2.0, 1.0], 0.0, 150.0, 12.0);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.short && row.items.len() == 1));
+    }
+
+    #[test]
     fn the_listing_sorts_by_name_or_by_the_latest_update() {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
             sort: ThemeSort::Name,
-            previews: BTreeMap::new(),
+            frames: BTreeMap::new(),
+            ratios: BTreeMap::new(),
         };
         assert_eq!(
             dialog
@@ -437,16 +592,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["z", "a"]
         );
-    }
-}
-
-#[cfg(test)]
-mod preview_tests {
-    use super::channels_to_hex;
-
-    #[test]
-    fn palette_channels_pack_as_rrggbbaa() {
-        assert_eq!(channels_to_hex([0x12, 0x34, 0x56, 0x78]), 0x12345678);
-        assert_eq!(channels_to_hex([255, 0, 0, 255]), 0xff0000ff);
     }
 }
