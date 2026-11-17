@@ -73,17 +73,36 @@ path; the P1 gate above is layout only.
 
 ## P3 — shortcut sheet
 
-The source has no command palette. `?` opens the shortcut reference sheet, and
-the port follows it: `Overlay::Shortcuts` lists every `Command::ALL` entry with
-its chord in a wrapped two-column grid inside the 460px dialog. The grid is
-capped at 420px and scrolls, so the sheet fits the 1024x700 logical minimum
-instead of running past the viewport. Escape closes it.
+The source has no command palette. `?` opens the shortcut reference, and the
+port follows it: `SHORTCUT_REFERENCE` carries the source's own rows, labels and
+group order (File, Edit, Canvas, Help), one column per group inside the 460px
+dialog. The grid is capped at 420px and scrolls, so the sheet fits the
+1024x700 logical minimum instead of running past the viewport. Escape closes it.
+
+The sheet also forced the chords into line with the source's `PRODUCT_SHORTCUTS`:
+
+- Bound: New `Ctrl+N`, Open `Ctrl+O`, Save `Ctrl+S`, Find assets
+  `Ctrl+Shift+F`, Undo `Ctrl+Z`, Redo `Ctrl+Shift+Z`/`Ctrl+Y`, Copy, Cut, Paste,
+  Duplicate, Group `Ctrl+G`, Ungroup `Ctrl+Shift+G`, Delete/Backspace, Select
+  all `Ctrl+A`, front `Ctrl+]`/`Ctrl+}`, back `Ctrl+[`/`Ctrl+{`, nudges with
+  the arrows, `?`.
+- Dropped as invented: `Ctrl+E`, `Ctrl+Shift+E`, `Ctrl+I`, `Ctrl+Shift+I`,
+  `Ctrl+Shift+W`, `Ctrl+Shift+A`, `Ctrl+,`, `Ctrl+Shift+M`, `Ctrl+Shift+S` and
+  the single-letter add keys. The source reaches those commands from a pane or
+  the toolbar, not from a chord.
+- Still absent: `Ctrl+Shift+P` (open publishing), because the publish surface is
+  P4 and a sheet row that opened nothing would be a promise the port cannot
+  keep.
 
 Evidence:
 
-- `cargo test -p yunari-editor` — 146 passed.
+- `cargo test -p yunari-editor` — 148 passed, including
+  `only_the_commands_the_source_binds_print_a_chord` and
+  `the_reference_lists_the_source_rows_in_the_source_group_order`.
+- `cargo test --workspace` — no failures.
 - `test-results/parity-shots/editor-port-shortcuts.png` — 1042x747 physical
-  (1024x700 logical at 125%), sheet inside the window, both columns visible.
+  (1024x700 logical at 125%), sheet inside the window, every group visible.
 - `test-results/parity-shots/editor-port-1080p-p1.png` — the sheet is closed on
   boot, so the default shell is unchanged.
+
 

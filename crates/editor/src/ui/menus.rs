@@ -158,56 +158,25 @@ impl Command {
         }
     }
 
+    /// The chords the product binds. `index.ts` in the source binds this same
+    /// short list; every other command is reached from a pane, the canvas or
+    /// the toolbar, so it prints no chord rather than an invented one.
     pub fn shortcut(self) -> &'static str {
         match self {
             Self::New => "Ctrl+N",
             Self::Open => "Ctrl+O",
             Self::Save => "Ctrl+S",
-            Self::SaveAs => "Ctrl+Shift+S",
-            Self::Export => "Ctrl+E",
-            Self::ExportWidget => "Ctrl+Shift+E",
-            Self::Import => "Ctrl+I",
-            Self::ImportAsset => "Ctrl+Shift+I",
-            Self::Widgets => "Ctrl+Shift+W",
-            Self::AssetFinder => "Ctrl+Shift+A",
-            Self::Settings => "Ctrl+,",
-            Self::Mcp => "",
+            Self::AssetFinder => "Ctrl+Shift+F",
             Self::Undo => "Ctrl+Z",
-            Self::Redo => "Ctrl+Shift+Z",
-            Self::AddRectangle => "R",
-            Self::AddEllipse => "E",
-            Self::AddPath => "",
-            Self::AddPathPreset => "",
-            Self::TypographyPreset => "",
-            Self::AddLine => "",
-            Self::AddArc => "",
-            Self::AddWedge => "",
-            Self::AddText => "T",
-            Self::AddImage => "I",
-            Self::AddVerticalText => "",
-            Self::AddGauge => "",
-            Self::AddLineChart => "",
-            Self::AddBarChart => "",
-            Self::AddPieChart => "",
-            Self::AddRadarChart => "",
-            Self::AddPolarBar => "",
-            Self::DeleteSelected => "Del",
-            Self::AlignLeft => "",
-            Self::AlignCenterX => "",
-            Self::AlignRight => "",
-            Self::AlignTop => "",
-            Self::AlignCenterY => "",
-            Self::AlignBottom => "",
-            Self::DistributeX => "",
-            Self::DistributeY => "",
-            Self::Group => "Ctrl+G",
-            Self::Ungroup => "Ctrl+Shift+G",
+            Self::Redo => "Ctrl+Shift+Z · Ctrl+Y",
             Self::Copy => "Ctrl+C",
             Self::Cut => "Ctrl+X",
             Self::Paste => "Ctrl+V",
             Self::Duplicate => "Ctrl+D",
-            Self::OpenDisplay => "Ctrl+Shift+F",
-            Self::Store => "Ctrl+Shift+M",
+            Self::Group => "Ctrl+G",
+            Self::Ungroup => "Ctrl+Shift+G",
+            Self::DeleteSelected => "Delete · Backspace",
+            _ => "",
         }
     }
 
@@ -218,38 +187,63 @@ impl Command {
         let named = control || platform;
         let key = key.to_ascii_lowercase();
         match (named, shift, key.as_str()) {
-            (true, false, "s") => Some(Self::Save),
-            (true, true, "s") => Some(Self::SaveAs),
-            (true, false, "o") => Some(Self::Open),
             (true, false, "n") => Some(Self::New),
-            (true, false, "e") => Some(Self::Export),
-            (true, true, "e") => Some(Self::ExportWidget),
-            (true, false, "i") => Some(Self::Import),
-            (true, true, "i") => Some(Self::ImportAsset),
-            (true, true, "w") => Some(Self::Widgets),
-            (true, true, "a") => Some(Self::AssetFinder),
-            (true, false, ",") => Some(Self::Settings),
-            (true, false, "z") => Some(Self::Undo),
+            (true, false, "o") => Some(Self::Open),
+            (true, false, "s") => Some(Self::Save),
+            // The source's comment: Chromium keeps Ctrl+Shift+A, so the finder
+            // answers the chord that reaches the page.
+            (true, true, "f") => Some(Self::AssetFinder),
             (true, true, "z") => Some(Self::Redo),
             // Windows' own redo chord, alongside the one every editor shares.
             (true, false, "y") => Some(Self::Redo),
-            (true, false, "g") => Some(Self::Group),
-            (true, true, "g") => Some(Self::Ungroup),
+            (true, false, "z") => Some(Self::Undo),
             (true, false, "c") => Some(Self::Copy),
             (true, false, "x") => Some(Self::Cut),
             (true, false, "v") => Some(Self::Paste),
             (true, false, "d") => Some(Self::Duplicate),
-            (true, true, "f") => Some(Self::OpenDisplay),
-            (true, true, "m") => Some(Self::Store),
+            (true, false, "g") => Some(Self::Group),
+            (true, true, "g") => Some(Self::Ungroup),
             (false, _, "delete" | "backspace") => Some(Self::DeleteSelected),
-            (false, false, "r") => Some(Self::AddRectangle),
-            (false, false, "e") => Some(Self::AddEllipse),
-            (false, false, "t") => Some(Self::AddText),
-            (false, false, "i") => Some(Self::AddImage),
             _ => None,
         }
     }
 }
+
+/// One row of the `?` sheet. The source builds it from `PRODUCT_SHORTCUTS`
+/// grouped by the action id's prefix; the port keeps the same projection as a
+/// table so a chord cannot be right in the sheet and wrong in the handler.
+pub struct ShortcutRow {
+    pub group: &'static str,
+    pub label: &'static str,
+    pub chord: &'static str,
+}
+
+/// The source's rows in the source's order: file, edit, canvas, help. The
+/// publish row is the one absent — its surface lands in P4, and a sheet that
+/// printed a chord for nothing is the lie the table exists to prevent.
+pub const SHORTCUT_REFERENCE: [ShortcutRow; 21] = [
+    ShortcutRow { group: "File", label: "New theme", chord: "Ctrl+N" },
+    ShortcutRow { group: "File", label: "Import theme", chord: "Ctrl+O" },
+    ShortcutRow { group: "File", label: "Save", chord: "Ctrl+S" },
+    ShortcutRow { group: "File", label: "Find assets…", chord: "Ctrl+Shift+F" },
+    ShortcutRow { group: "Edit", label: "Redo", chord: "Ctrl+Shift+Z · Ctrl+Y" },
+    ShortcutRow { group: "Edit", label: "Undo", chord: "Ctrl+Z" },
+    ShortcutRow { group: "Edit", label: "Copy", chord: "Ctrl+C" },
+    ShortcutRow { group: "Edit", label: "Cut", chord: "Ctrl+X" },
+    ShortcutRow { group: "Edit", label: "Paste", chord: "Ctrl+V" },
+    ShortcutRow { group: "Edit", label: "Duplicate", chord: "Ctrl+D" },
+    ShortcutRow { group: "Edit", label: "Ungroup", chord: "Ctrl+Shift+G" },
+    ShortcutRow { group: "Edit", label: "Group", chord: "Ctrl+G" },
+    ShortcutRow { group: "Edit", label: "Delete", chord: "Delete · Backspace" },
+    ShortcutRow { group: "Canvas", label: "Select all", chord: "Ctrl+A" },
+    ShortcutRow { group: "Canvas", label: "Bring to front", chord: "Ctrl+} · Ctrl+]" },
+    ShortcutRow { group: "Canvas", label: "Send to back", chord: "Ctrl+{ · Ctrl+[" },
+    ShortcutRow { group: "Canvas", label: "Nudge left", chord: "←" },
+    ShortcutRow { group: "Canvas", label: "Nudge right", chord: "→" },
+    ShortcutRow { group: "Canvas", label: "Nudge up", chord: "↑" },
+    ShortcutRow { group: "Canvas", label: "Nudge down", chord: "↓" },
+    ShortcutRow { group: "Help", label: "Keyboard shortcuts", chord: "?" },
+];
 
 #[cfg(test)]
 mod tests {
@@ -260,10 +254,6 @@ mod tests {
         assert_eq!(
             Command::from_key("s", true, false, false),
             Some(Command::Save)
-        );
-        assert_eq!(
-            Command::from_key("s", true, true, false),
-            Some(Command::SaveAs)
         );
         assert_eq!(
             Command::from_key("z", true, true, false),
@@ -282,6 +272,10 @@ mod tests {
             Some(Command::DeleteSelected)
         );
         assert_eq!(
+            Command::from_key("backspace", false, false, false),
+            Some(Command::DeleteSelected)
+        );
+        assert_eq!(
             Command::from_key("g", true, false, false),
             Some(Command::Group)
         );
@@ -295,17 +289,62 @@ mod tests {
         );
         assert_eq!(
             Command::from_key("f", true, true, false),
-            Some(Command::OpenDisplay)
+            Some(Command::AssetFinder)
         );
-        assert_eq!(
-            Command::from_key("e", true, true, false),
-            Some(Command::ExportWidget)
-        );
-        assert_eq!(
-            Command::from_key("m", true, true, false),
-            Some(Command::Store)
-        );
+        // The source binds eight chords and no more; the rest are reached from
+        // a pane or the toolbar.
+        assert_eq!(Command::from_key("e", true, true, false), None);
+        assert_eq!(Command::from_key("m", true, true, false), None);
+        assert_eq!(Command::from_key("r", false, false, false), None);
         assert_eq!(Command::from_key("s", false, false, false), None);
         assert_eq!(Command::from_key("q", true, false, false), None);
+    }
+
+    #[test]
+    fn only_the_commands_the_source_binds_print_a_chord() {
+        let bound: Vec<_> = Command::ALL
+            .into_iter()
+            .filter(|command| !command.shortcut().is_empty())
+            .collect();
+        assert_eq!(
+            bound,
+            [
+                Command::New,
+                Command::Open,
+                Command::Save,
+                Command::AssetFinder,
+                Command::Undo,
+                Command::Redo,
+                Command::DeleteSelected,
+                Command::Group,
+                Command::Ungroup,
+                Command::Copy,
+                Command::Cut,
+                Command::Paste,
+                Command::Duplicate,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_reference_lists_the_source_rows_in_the_source_group_order() {
+        let mut groups: Vec<_> = Vec::new();
+        for row in &SHORTCUT_REFERENCE {
+            if groups.last() != Some(&row.group) {
+                groups.push(row.group);
+            }
+        }
+        assert_eq!(groups, ["File", "Edit", "Canvas", "Help"]);
+        assert_eq!(
+            SHORTCUT_REFERENCE
+                .iter()
+                .filter(|row| row.group == "File")
+                .map(|row| row.label)
+                .collect::<Vec<_>>(),
+            ["New theme", "Import theme", "Save", "Find assets…"]
+        );
+        assert!(SHORTCUT_REFERENCE
+            .iter()
+            .any(|row| row.label == "Keyboard shortcuts" && row.chord == "?"));
     }
 }

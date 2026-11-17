@@ -46,7 +46,7 @@ use yunari_render_raster::Images;
 use self::asset_finder::AssetFinder;
 use self::library_dialog::LibraryDialog;
 use self::mcp_dialog::McpDialog;
-use self::menus::Command;
+use self::menus::{Command, SHORTCUT_REFERENCE};
 use self::path_preset_dialog::PathPresetDialog;
 use self::prompt::{Outcome, Prompt};
 use self::settings_dialog::SettingsDialog;
@@ -2872,7 +2872,9 @@ impl EditorWindow {
             if self.nudge(&keystroke.key, keystroke.modifiers.shift, window, cx) {
                 return;
             }
-            if keystroke.modifiers.control && keystroke.key == "]" {
+            // Shift makes the browser report the shifted character, so both
+            // spellings of the front/back chords land here.
+            if keystroke.modifiers.control && matches!(keystroke.key.as_str(), "]" | "}") {
                 if let Some(id) = self.selection.first().map(str::to_owned) {
                     self.editor.raise(&id, LayerMove::Front);
                     self.refresh();
@@ -2880,7 +2882,7 @@ impl EditorWindow {
                 }
                 return;
             }
-            if keystroke.modifiers.control && keystroke.key == "[" {
+            if keystroke.modifiers.control && matches!(keystroke.key.as_str(), "[" | "{") {
                 if let Some(id) = self.selection.first().map(str::to_owned) {
                     self.editor.raise(&id, LayerMove::Back);
                     self.refresh();
@@ -3497,26 +3499,40 @@ impl EditorWindow {
         }
     }
 
-    /// The `?` reference: every command beside its chord, in a wrapping grid.
+    /// The `?` reference: the source's own rows, one column per group, in the
+    /// order the source's table declares them.
     fn shortcuts_panel(cx: &mut Context<Self>) -> AnyElement {
         let (foreground, muted, border) = (
             cx.theme().foreground,
             cx.theme().muted_foreground,
             cx.theme().border,
         );
-        let rows = Command::ALL.iter().map(|command| {
-            let chord = command.shortcut();
-            div()
+        let mut columns: Vec<AnyElement> = Vec::new();
+        let mut index = 0;
+        while index < SHORTCUT_REFERENCE.len() {
+            let group = SHORTCUT_REFERENCE[index].group;
+            let mut column = div()
                 .w(px(200.0))
                 .flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .py_0p5()
-                .text_sm()
-                .child(div().text_color(foreground).child(command.label()))
-                .child(div().text_xs().text_color(muted).child(chord))
-        });
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(muted).child(group));
+            while index < SHORTCUT_REFERENCE.len() && SHORTCUT_REFERENCE[index].group == group {
+                let row = &SHORTCUT_REFERENCE[index];
+                column = column.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .text_sm()
+                        .child(div().text_color(foreground).child(row.label))
+                        .child(div().text_xs().text_color(muted).child(row.chord)),
+                );
+                index += 1;
+            }
+            columns.push(column.into_any_element());
+        }
         div()
             .flex()
             .flex_col()
@@ -3530,22 +3546,22 @@ impl EditorWindow {
                     .border_b_1()
                     .border_color(border)
                     .pb_2()
-                    .child(div().text_color(foreground).child("Shortcuts"))
+                    .child(div().text_color(foreground).child("Keyboard shortcuts"))
                     .child(div().text_xs().text_color(muted).child("Esc closes")),
             )
-            // 40-odd commands outrun a 700px window; the sheet scrolls rather
-            // than growing past the viewport.
+            // A short window scrolls the sheet rather than letting it run past
+            // the viewport.
             .child(
                 div()
                     .id("shortcuts-grid")
                     .flex()
                     .flex_wrap()
                     .gap_x_6()
-                    .gap_y_1()
+                    .gap_y_4()
                     .h(px(420.0))
                     .min_h(px(0.0))
                     .overflow_y_scroll()
-                    .children(rows),
+                    .children(columns),
             )
             .into_any_element()
     }
