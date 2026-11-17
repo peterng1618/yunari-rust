@@ -32,13 +32,22 @@ pub fn readings_for(cycle: &Cycle, keys: &[String]) -> Readings {
 }
 
 /// The geometry a phone draws, built by the same planner the window and the
-/// panels use.
-pub fn frame(document: &ThemeDocument, readings: &Readings, fonts: &mut Fonts) -> DisplayList {
-    let (list, _issues) = yunari_render::plan::build_with(
+/// panels use. `history` is what this host recorded for the phone's keys, so a
+/// line chart shows its window rather than a single instant.
+pub fn frame(
+    document: &ThemeDocument,
+    readings: &Readings,
+    fonts: &mut Fonts,
+    history: Option<&yunari_render::History>,
+    now_ms: u64,
+) -> DisplayList {
+    let (list, _issues) = yunari_render::plan::build_with_history(
         document,
         fonts,
         readings,
         &yunari_providers::units::UnitPreferences::default(),
+        history,
+        now_ms,
     );
     list
 }

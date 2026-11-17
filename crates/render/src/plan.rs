@@ -86,6 +86,19 @@ pub fn build_with(
     readings: &Readings,
     preferences: &UnitPreferences,
 ) -> (DisplayList, Vec<PlanIssue>) {
+    build_with_history(document, fonts, readings, preferences, None, 0)
+}
+
+/// Build with the samples each key recorded, so a line chart draws its window
+/// rather than the one instant this poll answered.
+pub fn build_with_history(
+    document: &ThemeDocument,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
+    history: Option<&crate::history::History>,
+    now_ms: u64,
+) -> (DisplayList, Vec<PlanIssue>) {
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
@@ -107,6 +120,8 @@ pub fn build_with(
             1.0,
             readings,
             preferences,
+            history,
+            now_ms,
             &mut list,
             &mut issues,
         );
@@ -180,6 +195,8 @@ fn walk(
     opacity: f32,
     readings: &Readings,
     preferences: &UnitPreferences,
+    history: Option<&crate::history::History>,
+    now_ms: u64,
     list: &mut DisplayList,
     issues: &mut Vec<PlanIssue>,
 ) {
@@ -248,12 +265,14 @@ fn walk(
         }
         NodeKind::Chart { content } => {
             let values = chart_values(document, &node.id, readings, issues);
+            let series = chart_series(document, &node.id, &content.settings.0, history, now_ms);
             let request = crate::chart::ChartRequest {
                 document,
                 node_id: &node.id,
                 width: box_width,
                 height: box_height,
                 readings: &values,
+                series: &series,
                 opacity,
                 settings: &content.settings.0,
             };
@@ -403,6 +422,8 @@ fn walk(
             opacity,
             readings,
             preferences,
+            history,
+            now_ms,
             list,
             issues,
         );
@@ -444,6 +465,50 @@ fn chart_values(
             }
         })
         .collect()
+}
+
+/// A chart's samples per binding, inside the window its settings name.
+///
+/// Each sample carries the binding's own scale and offset, exactly as the
+/// current reading does; the window is the same one the time axis labels, so a
+/// line begins where the axis says it does.
+fn chart_series(
+    document: &ThemeDocument,
+    node_id: &str,
+    settings: &serde_json::Map<String, serde_json::Value>,
+    history: Option<&crate::history::History>,
+    now_ms: u64,
+) -> Vec<Vec<(u64, f64)>> {
+    let Some(history) = history else {
+        return Vec::new();
+    };
+    let window = settings
+        .get("windowSeconds")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|window| window.is_finite())
+        .unwrap_or(60.0);
+    document
+        .bindings
+        .get(node_id)
+        .map(|bindings| {
+            bindings
+                .iter()
+                .map(|binding| {
+                    history
+                        .series(&binding.semantic_key, window, now_ms)
+                        .into_iter()
+                        .map(|(at, value)| {
+                            (
+                                at,
+                                value * binding.scale.unwrap_or(1.0)
+                                    + binding.offset.unwrap_or(0.0),
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A text node's paragraph, arranged for the box it declares.

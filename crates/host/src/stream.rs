@@ -169,6 +169,7 @@ pub fn spawn(app: Shared) {
         let mut interval =
             tokio::time::interval(std::time::Duration::from_millis(DEFAULT_SAMPLE_INTERVAL_MS));
         let mut fonts = yunari_render::Fonts::new();
+        let mut history = yunari_render::History::new();
         let mut documents: BTreeMap<String, yunari_model::document::ThemeDocument> =
             BTreeMap::new();
         loop {
@@ -197,6 +198,8 @@ pub fn spawn(app: Shared) {
                 let mut samples = crate::frame::readings(&cycle, &keys);
                 yunari_providers::weather::localize(&mut samples, language.as_deref());
                 let readings = yunari_render::Readings::new(samples);
+                let now_ms = u64::try_from(now).unwrap_or_default();
+                history.record(now_ms, &readings);
                 let theme = assignment.resolve(&app.library, &display, None);
                 let frame_json = theme.and_then(|id| {
                     if !documents.contains_key(&id)
@@ -214,7 +217,13 @@ pub fn spawn(app: Shared) {
                         documents.insert(id.clone(), stored.document);
                     }
                     let document = documents.get(&id)?;
-                    Some(crate::frame::frame(document, &readings, &mut fonts))
+                    Some(crate::frame::frame(
+                        document,
+                        &readings,
+                        &mut fonts,
+                        Some(&history),
+                        now_ms,
+                    ))
                 });
                 let samples: Vec<serde_json::Value> = keys
                     .iter()

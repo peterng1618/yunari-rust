@@ -30,6 +30,8 @@ const LABEL_GAP: f32 = 4.0;
 /// ECharts' default value-axis `splitNumber`.
 const Y_SPLITS: usize = 5;
 const X_SPLITS: usize = 4;
+/// ECharts' default line width.
+const LINE_WIDTH_DEFAULT: f32 = 2.0;
 
 /// The plot rectangle inside the node's own box.
 #[derive(Debug, Clone, Copy)]
@@ -49,12 +51,22 @@ pub fn build(
     let show_axes = boolean(settings, "showAxes", true);
     let window_seconds = finite(settings, "windowSeconds", 60.0).max(1.0);
 
-    // A reading that is not a finite number is an absence, never a zero.
+    // A reading that is not a finite number is an absence, never a zero. The
+    // scale spans every sample the window holds, so a line never leaves its
+    // own plot.
     let values: Vec<f32> = request
         .readings
         .iter()
         .filter_map(|value| value.filter(|value| value.is_finite()))
         .map(|value| value as f32)
+        .chain(
+            request
+                .series
+                .iter()
+                .flatten()
+                .map(|(_, value)| *value as f32)
+                .filter(|value| value.is_finite()),
+        )
         .collect();
     let range = value_range(settings, &values);
 
@@ -162,11 +174,46 @@ pub fn build(
     }
 
     if let Some((low, high)) = range {
-        for (index, value) in values.iter().enumerate() {
+        for (index, reading) in request.readings.iter().enumerate() {
+            let Some(value) = reading
+                .filter(|value| value.is_finite())
+                .map(|value| value as f32)
+            else {
+                continue;
+            };
             let Some(stroke) = series_fill(request, settings, index, issues) else {
                 continue;
             };
-            let at = position(f64::from(*value), low, high);
+            // A series with two or more samples is a line across the window; the
+            // newest sample sits at the right edge, and its age places the rest.
+            if let Some(samples) = request
+                .series
+                .get(index)
+                .filter(|samples| samples.len() > 1)
+            {
+                let newest = samples.iter().map(|(at, _)| *at).max().unwrap_or(0);
+                let width = plot.right - plot.left;
+                let mut commands = Vec::with_capacity(samples.len());
+                for (step, (at, value)) in samples.iter().enumerate() {
+                    let age = newest.saturating_sub(*at) as f64 / 1000.0;
+                    let fraction = (age / f64::from(window_seconds)).clamp(0.0, 1.0) as f32;
+                    let x = plot.right - fraction * width;
+                    let y = plot.bottom - position(*value, low, high) * (plot.bottom - plot.top);
+                    if step == 0 {
+                        commands.push(PathCommand::MoveTo(x, y));
+                    } else {
+                        commands.push(PathCommand::LineTo(x, y));
+                    }
+                }
+                let line_width = finite(settings, "lineWidth", LINE_WIDTH_DEFAULT).max(0.0);
+                push_stroke(
+                    &mut ops,
+                    commands,
+                    Paint::Solid(stroke.for_mark(1.0, true)),
+                    line_width,
+                );
+            }
+            let at = position(f64::from(value), low, high);
             let point = (plot.right, plot.bottom - at * (plot.bottom - plot.top));
             // A lone point would otherwise be invisible, so it is always marked.
             let size = clamp_length(finite(settings, "markerSize", 4.0), plot);
@@ -362,6 +409,7 @@ mod tests {
             width: 200.0,
             height: 200.0,
             readings: &readings,
+            series: &[],
             opacity: 1.0,
             settings: &content.settings.0,
         };
@@ -426,6 +474,7 @@ mod tests {
             width: 200.0,
             height: 200.0,
             readings: &readings,
+            series: &[],
             opacity: 1.0,
             settings: &content.settings.0,
         };
@@ -439,6 +488,46 @@ mod tests {
             .collect();
         assert!((centres[0] - 152.0).abs() < 0.01, "{centres:?}");
         assert!((centres[1] - 56.0).abs() < 0.01, "{centres:?}");
+    }
+
+    #[test]
+    fn a_series_draws_a_line_across_its_window() {
+        let document = document(r#"{"showAxes": false, "min": 0, "max": 100}"#);
+        let node = &document.nodes[0];
+        let yunari_model::document::NodeKind::Chart { content } = &node.kind else {
+            panic!("expected a chart");
+        };
+        let readings = [Some(75.0)];
+        let series = [vec![(0, 25.0), (30_000, 50.0), (60_000, 75.0)]];
+        let request = ChartRequest {
+            document: &document,
+            node_id: &node.id,
+            width: 200.0,
+            height: 200.0,
+            readings: &readings,
+            series: &series,
+            opacity: 1.0,
+            settings: &content.settings.0,
+        };
+        let mut issues = Vec::new();
+        let ops = super::build(&request, &mut crate::Fonts::new(), &mut issues);
+        assert!(issues.is_empty(), "{issues:?}");
+        // One stroke across the window and the newest sample's mark.
+        let stroke = ops
+            .iter()
+            .find(|op| op.stroke.is_some())
+            .expect("a series line");
+        let points = points(stroke);
+        assert_eq!(points.len(), 3, "one vertex per sample: {points:?}");
+        assert!((points[0].0 - 0.0).abs() < 0.01, "{points:?}");
+        assert!((points[2].0 - 200.0).abs() < 0.01, "{points:?}");
+        // Oldest at 25 on the scale, newest at 75.
+        assert!(points[0].1 > points[2].1, "{points:?}");
+        let ((x, y), _) = marker(&ops);
+        assert!(
+            (x - 200.0).abs() < 0.01 && (y - 56.0).abs() < 0.01,
+            "{x} {y}"
+        );
     }
 
     #[test]

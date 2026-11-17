@@ -326,6 +326,7 @@ mod tests {
             width: 200.0,
             height: 200.0,
             readings: &readings,
+            series: &[],
             opacity: 1.0,
             settings: &content.settings.0,
         };

@@ -15,7 +15,7 @@ use yunari_providers::sampler::Sampler;
 use yunari_providers::system::SystemProvider;
 use yunari_providers::units::UnitPreferences;
 use yunari_render::plan::PlanIssue;
-use yunari_render::{DisplayList, Fonts, Readings};
+use yunari_render::{DisplayList, Fonts, History, Readings};
 use yunari_render_raster::Images;
 
 /// How often the window looks at the sampler. The sampler itself decides when a
@@ -37,6 +37,8 @@ struct Stage {
     fonts: Fonts,
     sampler: Sampler,
     readings: Readings,
+    /// What each key measured in recent polls, so a line chart draws a window.
+    history: History,
     preferences: UnitPreferences,
     issues: Vec<PlanIssue>,
     polling: bool,
@@ -98,6 +100,7 @@ impl Stage {
             fonts,
             sampler,
             readings: Readings::default(),
+            history: History::new(),
             preferences,
             issues,
             polling: false,
@@ -111,11 +114,14 @@ impl Stage {
             return false;
         };
         self.readings = Readings::new(cycle.readings.into_values());
-        let (list, issues) = yunari_render::build_with(
+        self.history.record(now_ms, &self.readings);
+        let (list, issues) = yunari_render::build_with_history(
             &self.document,
             &mut self.fonts,
             &self.readings,
             &self.preferences,
+            Some(&self.history),
+            now_ms,
         );
         self.list = list;
         if issues != self.issues {

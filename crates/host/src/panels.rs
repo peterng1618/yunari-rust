@@ -31,6 +31,8 @@ pub struct PanelFrames {
     images: Mutex<Images>,
     /// One document per theme id, so a tick does not read the same file twice.
     documents: Mutex<BTreeMap<String, ThemeDocument>>,
+    /// What each key measured in recent ticks, so a line chart draws a window.
+    history: Mutex<yunari_render::History>,
 }
 
 impl PanelFrames {
@@ -42,6 +44,7 @@ impl PanelFrames {
             fonts: Mutex::new(Fonts::new()),
             images: Mutex::new(Images::empty()),
             documents: Mutex::new(BTreeMap::new()),
+            history: Mutex::new(yunari_render::History::new()),
         }
     }
 
@@ -207,22 +210,26 @@ impl PanelFrames {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        let now_ms = u64::try_from(jiff::Timestamp::now().as_millisecond()).unwrap_or_default();
         let readings = if keys.is_empty() {
             yunari_render::Readings::default()
         } else {
-            let now = jiff::Timestamp::now().as_millisecond();
-            let cycle = self.registry.sample(
-                &[Ask::new(record.id.clone(), keys.clone())],
-                u64::try_from(now).unwrap_or_default(),
-            );
+            let cycle = self
+                .registry
+                .sample(&[Ask::new(record.id.clone(), keys.clone())], now_ms);
             crate::frame::readings_for(&cycle, &keys)
         };
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "The reading history is poisoned.")?;
+        history.record(now_ms, &readings);
 
         let mut fonts = self
             .fonts
             .lock()
             .map_err(|_| "The font cache is poisoned.")?;
-        let mut list = crate::frame::frame(document, &readings, &mut fonts);
+        let mut list = crate::frame::frame(document, &readings, &mut fonts, Some(&history), now_ms);
         if !background {
             list.background = None;
             list.backdrop = None;

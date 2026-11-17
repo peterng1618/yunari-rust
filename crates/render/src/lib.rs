@@ -8,6 +8,7 @@ pub mod chart;
 mod color;
 mod display_list;
 mod format;
+pub mod history;
 pub mod icons;
 pub mod image;
 pub mod instant;
@@ -22,9 +23,10 @@ pub use display_list::{
     Backdrop, DisplayList, GradientStop, Op, Paint, PathCommand, Shape, Stroke,
 };
 pub use format::{format_number, format_unit};
+pub use history::History;
 pub use image::{Placement, placement};
 pub use path::{PathError, parse as parse_path};
-pub use plan::{IssueCode, PlanIssue, build, build_with};
+pub use plan::{IssueCode, PlanIssue, build, build_with, build_with_history};
 pub mod reading;
 pub use reading::Readings;
 pub use text::{Fonts, TextStyle};

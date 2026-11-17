@@ -622,7 +622,10 @@ mod tests {
         let stored = temp.library.read("stored").expect("a readable theme");
         assert_eq!(stored.document.nodes.len(), 1);
         assert_eq!(stored.document.palette["bg"].name, "Backdrop");
-        assert_eq!(yunari_model::validate::validate_document(&stored.document), Ok(()));
+        assert_eq!(
+            yunari_model::validate::validate_document(&stored.document),
+            Ok(())
+        );
     }
 
     #[test]

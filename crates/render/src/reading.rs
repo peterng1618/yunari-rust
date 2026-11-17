@@ -37,6 +37,14 @@ impl Readings {
         self.by_key.get(semantic_key)
     }
 
+    /// Every reading this frame holds, by key. Callers that keep a series need
+    /// all of them, not just the ones a node asked about.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Reading)> {
+        self.by_key
+            .iter()
+            .map(|(key, reading)| (key.as_str(), reading))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.by_key.is_empty()
     }

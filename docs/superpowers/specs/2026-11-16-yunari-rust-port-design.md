@@ -364,10 +364,14 @@ Recorded as each phase's exit is met, with the evidence that met it.
   what the source's `Intl` answers on the source's own tested locales
   (en/fr/vi/pt/de/zh-Hant/ja).
 - Chart bindings read live readings: every binding feeds the chart in binding
-  order with its own scale and offset — gauge takes the first, line draws one
-  series mark per binding, bar/pie/radar/polar bar give each binding its own
-  category, slice or spoke — and a binding whose key nothing maps is an
-  `UnmappedKey` issue rather than a zero.
+  order with its own scale and offset — gauge takes the first, bar/pie/radar/
+  polar bar give each binding its own category, slice or spoke, and a binding
+  whose key nothing maps is an `UnmappedKey` issue rather than a zero. A line
+  chart draws its window: the window and the editor, the phone stream and the
+  panels record every poll into `yunari_render::History`, and the line is drawn
+  from those samples (newest at the axis's right edge), falling back to a single
+  mark when a key has one sample. The source's `SampleSource::history` therefore
+  has its equivalent; samples are kept per key in memory (1024 each).
 
 **Phase 3A — met (2026-11-16).** Plan:
 `docs/superpowers/plans/2026-11-16-yunari-phase-3a-editor-shell.md`.
@@ -701,7 +705,7 @@ recorded product decision.
 |---|---|---|---|
 | 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes and video backgrounds play: the raster backend keeps a per-asset `ffmpeg` decoder and reads the frame the wall clock names, the GPUI shell repaints at 33 ms while a clip is on screen, and the phone player draws a `video` element |
 | 2 | Card widgets from installed widget packs | Met | `yunari-packs` reads the source `.yunari-widget-package` format; the host owns the installed folder and the editor inserts any unit (`Ctrl+Shift+W`) |
-| 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry; every node binding feeds the chart in binding order with its scale and offset (line one series mark per binding, bar/pie/radar/polar bar one category, slice or spoke per binding), and an unread binding is `UnmappedKey` rather than a zero |
+| 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry; every node binding feeds the chart in binding order with its scale and offset (bar/pie/radar/polar bar one category, slice or spoke per binding; gauge the first), a line chart draws the recorded window (`History`, newest at the right edge), and an unread binding is `UnmappedKey` rather than a zero |
 | 4 | Rich text and typography presets | Met | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored, and `Typography preset…` applies one of eight heading/body/mono pairings as a single undoable edit. The preset pairings name families Windows ships rather than the source's packaged Fontsource faces, so no face is downloaded; a theme that declares its own font asset registers it (`woff2`/`woff`/`ttf`/`otf`) from beside the theme, and month/weekday/day-period words and the decimal separator follow the theme's declared language through `yunari-locale` |
 | 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C (the one paint field parses `gradient(<angle>deg, <colour> <pct>%, …)`); glass is a display-list op resolved by the raster backend |
 | 6 | Rectangular or circular artboard, disc cropping | Met | Model validation refuses a non-square circle artboard; raster and GPUI crop to the disc |

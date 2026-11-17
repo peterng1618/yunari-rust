@@ -198,6 +198,10 @@ pub struct EditorWindow {
     editor: Editor,
     library: Library,
     fonts: Fonts,
+    /// What each key measured in recent polls, so a line chart draws a window.
+    history: yunari_render::History,
+    /// The moment of the last poll, which places the newest sample on a line.
+    now_ms: u64,
     images: Rc<RefCell<Images>>,
     readings: Readings,
     preferences: UnitPreferences,
@@ -258,6 +262,8 @@ impl EditorWindow {
             editor: Editor::new(document),
             library,
             fonts,
+            history: yunari_render::History::new(),
+            now_ms: 0,
             images: Rc::new(RefCell::new(Images::empty())),
             readings: Readings::default(),
             preferences: UnitPreferences::default(),
@@ -292,11 +298,13 @@ impl EditorWindow {
     /// Rebuilds the frame and asks for exactly the keys this document names.
     fn refresh(&mut self) {
         self.selection.retain_existing(self.editor.document());
-        let (list, issues) = yunari_render::build_with(
+        let (list, issues) = yunari_render::build_with_history(
             self.editor.document(),
             &mut self.fonts,
             &self.readings,
             &self.preferences,
+            Some(&self.history),
+            self.now_ms,
         );
         self.list = list;
         if issues != self.issues {
@@ -320,6 +328,8 @@ impl EditorWindow {
             return false;
         };
         self.readings = Readings::new(cycle.readings.into_values());
+        self.now_ms = now_ms;
+        self.history.record(now_ms, &self.readings);
         self.refresh();
         true
     }

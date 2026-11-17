@@ -34,6 +34,11 @@ pub struct ChartRequest<'a> {
     /// authored scale and offset applied. A binding nothing read is `None`, and
     /// every family treats that as an absence rather than a zero.
     pub readings: &'a [Option<f64>],
+    /// Each binding's samples inside the chart's window, oldest first, with the
+    /// binding's scale and offset already applied. Empty when no surface is
+    /// recording history; a family that draws a window uses what it has and
+    /// falls back to the one reading when a series is a single point.
+    pub series: &'a [Vec<(u64, f64)>],
     pub opacity: f32,
     pub settings: &'a serde_json::Map<String, serde_json::Value>,
 }
