@@ -2148,74 +2148,30 @@ impl EditorWindow {
         }
     }
 
+    /// The selection inspector: the selected subject's sections and the binding
+    /// affordance. With nothing selected it says so, as the source does.
     fn inspector_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let sections = match self.selection.first() {
-            Some(id) => inspector::sections(self.editor.document(), id),
-            None => inspector::document_sections(self.editor.document()),
+        let mut children = match self.selection.first() {
+            Some(id) => self.section_children(inspector::sections(self.editor.document(), id), cx),
+            None => vec![
+                div()
+                    .p_3()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Select an object on the canvas to inspect it.")
+                    .into_any_element(),
+            ],
         };
-        let mut children: Vec<AnyElement> = Vec::new();
-        if sections.is_empty() {
-            children.push(
-                div()
-                    .p_2()
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child("Select a node to edit it")
-                    .into_any_element(),
-            );
-        }
-        let palette = self.editor.document().palette.clone();
-        for (section_index, section) in sections.into_iter().enumerate() {
-            children.push(
-                div()
-                    .px_2()
-                    .pt_2()
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child(section.title)
-                    .into_any_element(),
-            );
-            for (row_index, field) in section.rows.into_iter().enumerate() {
-                let key = field.key.clone();
-                let label = field.label;
-                let value = field.value.clone();
-                children.push(
-                    div()
-                        .id(("field", section_index * 32 + row_index))
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .px_2()
-                        .py_1()
-                        .cursor_pointer()
-                        .text_sm()
-                        .child(div().text_color(rgb(MUTED)).child(label))
-                        .child(
-                            div()
-                                .px_2()
-                                .py_0p5()
-                                .rounded_sm()
-                                .bg(rgb(0x101014))
-                                .text_color(rgb(INK))
-                                .child(value.clone()),
-                        )
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.begin_field(&key, label, &value, cx)
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
         if self.selection.first().is_some() {
             children.push(
                 div()
                     .id("binding-add")
-                    .px_2()
+                    .px_3()
                     .py_1()
                     .text_sm()
-                    .text_color(rgb(MUTED))
+                    .text_color(cx.theme().muted_foreground)
                     .cursor_pointer()
+                    .hover(|this| this.text_color(cx.theme().foreground))
                     .child("+ Add binding")
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.begin_field("bindings.new", "semantic key", "", cx)
@@ -2223,15 +2179,34 @@ impl EditorWindow {
                     .into_any_element(),
             );
         }
-        children.push(
+        self.scrolling_pane("inspector-body", None, children, cx)
+    }
+
+    /// The left pane's Theme settings slot: metadata, artboard and background.
+    fn document_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut sections = inspector::document_sections(self.editor.document());
+        sections.retain(|section| section.title != "Palette");
+        let children = self.section_children(sections, cx);
+        self.scrolling_pane("document-body", Some("Theme settings"), children, cx)
+    }
+
+    /// The left pane's Design tokens slot: palette entries and type tokens.
+    fn tokens_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (foreground, muted, input) = (
+            cx.theme().foreground,
+            cx.theme().muted_foreground,
+            cx.theme().input,
+        );
+        let palette = self.editor.document().palette.clone();
+        let mut children = vec![
             div()
-                .px_2()
-                .pt_3()
+                .px_3()
+                .pt_2()
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(muted)
                 .child("Palette")
                 .into_any_element(),
-        );
+        ];
         for (index, (id, entry)) in palette.into_iter().enumerate() {
             let colour_key = format!("palette.{id}");
             let name_key = format!("palette.{id}.name");
@@ -2245,14 +2220,14 @@ impl EditorWindow {
                     .items_center()
                     .justify_between()
                     .gap_2()
-                    .px_2()
+                    .px_3()
                     .py_1()
                     .text_sm()
                     .child(
                         div()
                             .id(("palette-name", index))
                             .flex_1()
-                            .text_color(rgb(INK))
+                            .text_color(foreground)
                             .cursor_pointer()
                             .child(name)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -2265,8 +2240,8 @@ impl EditorWindow {
                             .px_2()
                             .py_0p5()
                             .rounded_sm()
-                            .bg(rgb(0x101014))
-                            .text_color(rgb(INK))
+                            .bg(input)
+                            .text_color(foreground)
                             .cursor_pointer()
                             .child(colour)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -2279,10 +2254,10 @@ impl EditorWindow {
         children.push(
             div()
                 .id("palette-add")
-                .px_2()
+                .px_3()
                 .py_1()
                 .text_sm()
-                .text_color(rgb(MUTED))
+                .text_color(muted)
                 .cursor_pointer()
                 .child("+ Add colour")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -2292,10 +2267,10 @@ impl EditorWindow {
         );
         children.push(
             div()
-                .px_2()
+                .px_3()
                 .pt_3()
                 .text_xs()
-                .text_color(rgb(MUTED))
+                .text_color(muted)
                 .child("Type")
                 .into_any_element(),
         );
@@ -2323,15 +2298,15 @@ impl EditorWindow {
                     .items_center()
                     .justify_between()
                     .gap_2()
-                    .px_2()
+                    .px_3()
                     .py_1()
                     .text_sm()
-                    .child(div().text_color(rgb(MUTED)).child(id_for_family))
+                    .child(div().text_color(muted).child(id_for_family))
                     .child(
                         div()
                             .id(("token-family", index))
                             .px_1()
-                            .text_color(rgb(INK))
+                            .text_color(foreground)
                             .cursor_pointer()
                             .child(family)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -2342,7 +2317,7 @@ impl EditorWindow {
                         div()
                             .id(("token-weight", index))
                             .px_1()
-                            .text_color(rgb(INK))
+                            .text_color(foreground)
                             .cursor_pointer()
                             .child(weight)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -2355,10 +2330,10 @@ impl EditorWindow {
         children.push(
             div()
                 .id("token-add")
-                .px_2()
+                .px_3()
                 .py_1()
                 .text_sm()
-                .text_color(rgb(MUTED))
+                .text_color(muted)
                 .cursor_pointer()
                 .child("+ Add type token")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -2366,44 +2341,120 @@ impl EditorWindow {
                 }))
                 .into_any_element(),
         );
-        // The rows are one column pushed up by the wheel: kit's div has no
-        // scroll container, so the panel keeps the offset and clips.
+        self.scrolling_pane("tokens-body", Some("Design tokens"), children, cx)
+    }
+
+    /// One section's title and its property rows, as click-to-edit fields.
+    fn section_children(
+        &self,
+        sections: Vec<inspector::Section>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let (foreground, muted, input) = (
+            cx.theme().foreground,
+            cx.theme().muted_foreground,
+            cx.theme().input,
+        );
+        let mut children = Vec::new();
+        for (section_index, section) in sections.into_iter().enumerate() {
+            children.push(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(section.title)
+                    .into_any_element(),
+            );
+            for (row_index, field) in section.rows.into_iter().enumerate() {
+                let key = field.key.clone();
+                let label = field.label;
+                let value = field.value.clone();
+                children.push(
+                    div()
+                        .id(("field", section_index * 32 + row_index))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .px_3()
+                        .py_1()
+                        .cursor_pointer()
+                        .text_sm()
+                        .child(div().text_color(muted).child(label))
+                        .child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(input)
+                                .text_color(foreground)
+                                .child(value.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.begin_field(&key, label, &value, cx)
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        children
+    }
+
+    /// A pane body: optional title strip and rows the wheel pushes up. Kit's
+    /// div has no scroll container, so the pane keeps its own offset.
+    fn scrolling_pane(
+        &self,
+        id: &'static str,
+        title: Option<&'static str>,
+        children: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme();
+        let (background, border, foreground) =
+            (theme.background, theme.border, theme.foreground);
         let max_scroll = (children.len() as f32 * 30.0 - 500.0).max(0.0);
-        div()
+        let mut root = div()
             .size_full()
             .flex()
             .flex_col()
             .border_l_1()
-            .border_color(rgb(0x2e2e38))
-            .bg(rgb(PANEL))
-            .child(
+            .border_color(border)
+            .bg(background);
+        if let Some(title) = title {
+            root = root.child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child("Inspector"),
-            )
-            .child(
-                div()
-                    .id("inspector-body")
-                    .flex_1()
-                    .w_full()
-                    .overflow_hidden()
-                    .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
-                        let (_, dy) = scroll_delta(event);
-                        this.inspector_scroll = (this.inspector_scroll - dy).clamp(0.0, max_scroll);
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .mt(px(-self.inspector_scroll))
-                            .children(children),
-                    ),
-            )
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(border)
+                    .text_sm()
+                    .text_color(foreground)
+                    .child(title),
+            );
+        }
+        root.child(
+            div()
+                .id(id)
+                .flex_1()
+                .w_full()
+                .min_h(px(0.0))
+                .overflow_hidden()
+                .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                    let (_, dy) = scroll_delta(event);
+                    this.inspector_scroll = (this.inspector_scroll - dy).clamp(0.0, max_scroll);
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .pb_2()
+                        .mt(px(-self.inspector_scroll))
+                        .children(children),
+                ),
+        )
     }
 
     fn toggle_expanded(&mut self, id: &str, cx: &mut Context<Self>) {

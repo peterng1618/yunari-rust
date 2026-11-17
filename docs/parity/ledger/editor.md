@@ -52,13 +52,14 @@ the rail's active-slot press closes it, matching the source's rail press.
   template, open recent (menu), activate theme, preview/live source toggle.
   The port toolbar carries New, Open, Import / Save, Save as, Export, Export
   widget, Open display / Find assets. P3 (commands).
-- **Rail pane bodies.** Choosing Add, Widgets, Assets, Design tokens or Theme
-  settings shows a named placeholder; only Layers has a body. P2 (panels).
+- **Rail pane bodies.** Layers, Design tokens and Theme settings have bodies;
+  Add, Widgets and Assets still show a named placeholder. P2 (panels).
 - **Stage chrome.** Artboard label chip, zoom/fit cluster and the bottom asset
   button are absent. P3 (canvas).
 - **Layer rows** print raw ids instead of the source's kind column. P2.
-- **Inspector scrolling.** At 1024x700 the last inspector rows are below the
-  fold because the inspector has no scroll container. P2.
+- **Inspector scrolling.** The panes keep a wheel offset but their rows have no
+  scrollbar and the estimate is row-count based. Replace with the kit scroll
+  container in P2.
 - **Mode surfaces.** Themes and Settings render a named empty state, not their
   source surfaces. P4.
 
