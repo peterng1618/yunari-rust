@@ -112,7 +112,7 @@ crates/model, render, raster, library, store, theme, locale, player-core
 2. **Theme tokens only.** Colours, radii, spacing, text sizes and states come
    from `ActiveTheme`/`Theme`, never literals such as `0x1d1d24`.
 3. **One action source.** `Command::ALL` remains the registry; menus, toolbar,
-   context menus, the command palette and keybindings all render from it.
+   context menus, the `?` shortcut sheet and keybindings all render from it.
 4. **Source IA unless marked "change".** The reference map and acceptance
    checklist decide placement.
 5. **The stage is raster + custom paint.** `DisplayList` renders through the
@@ -221,7 +221,7 @@ columns when the window changes size. Revisit only for a multi-panel workspace.
 | Header toolbar (`shell-menu-bar.tsx`) | open/save/export/find | `Toolbar` + `Button` from `Command::ALL` | [Toolbar](https://gpui-kit.com/component/toolbar) | no menu bar in source |
 | Toolbar open actions | New, template, library, recent, import | `Toolbar` + `Button`; recent = `PopupMenu`/`Menu` | [Toolbar](https://gpui-kit.com/component/toolbar) | `Kbd` in tooltip |
 | Toolbar document actions | Save, Save as, Activate, Export | `Toolbar`; Save primary; Export `Button` | [Toolbar](https://gpui-kit.com/component/toolbar) | disabled from session |
-| Find assets | open finder | `Button` + `Kbd` tooltip; action binding | [Button](https://gpui-kit.com/component/button) | also command palette |
+| Find assets | open finder | `Button` + `Kbd` tooltip; action binding | [Button](https://gpui-kit.com/component/button) | also `?` shortcut sheet |
 | Publish control + indicator | publish live / assign | `Button` primary + `Dialog`; status `Badge` | [Dialog](https://gpui-kit.com/component/dialog) | dialog hosts assign + QR |
 | Pane switch (`rail.tsx`) | choose left pane | 46px rail of ghost `Button`s, icon + tooltip, `toggled` for the active slot | [Button](https://gpui-kit.com/component/button) | six panes; settings gear at the rail's foot |
 | Pane chrome (`pane.tsx`) | icon, title, count, body, footer | `v_flex`; tab label; footer `Toolbar` | [Toolbar](https://gpui-kit.com/component/toolbar) | counts from same store |

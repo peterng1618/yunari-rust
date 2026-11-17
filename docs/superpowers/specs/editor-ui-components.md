@@ -25,7 +25,7 @@ installed (`gpui-component-0.9.1/src/...`); `gpui-kit` re-exports it as
    behaves; the reference screen map decides where it lives and what it is next
    to.
 5. **One action source.** `Command::ALL` remains the single registry; menus,
-   toolbar and the command palette all render from it.
+   toolbar and the `?` shortcut sheet all render from it.
 
 ## App shell: Resizable, not Dock
 

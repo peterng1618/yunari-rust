@@ -17,7 +17,7 @@
 - The source has **no menu bar**. Do not add `AppMenuBar`; `shell-menu-bar.tsx` is the header toolbar.
 - Header is one row: brand, mode switch, editor toolbar, pane toggles. The
   toolbar shows in Editor mode only, as in the source.
-- `Command::ALL` stays the single command registry. The toolbar is a subset; the command palette lands P3.
+- `Command::ALL` stays the single command registry. The toolbar is a subset; the `?` shortcut sheet lists the rest (P3).
 - No `DockArea` and no `h_resizable`. Use `h_flex` with the source's fixed
   46px rail + 246px / 1fr / 276px columns.
 - Window opens at 1440x900, minimum 1024x700; acceptance capture is 1920x1080.
@@ -791,7 +791,7 @@ Create `docs/parity/ledger/editor.md`:
 - Result: accepted / rejected (replace with the judged result)
 - Evidence: header one row; no clipped control row at 1920x1080 or 1024x700;
   three fixed source columns; status bar; mode switch keeps the document.
-- Deferred: Themes and Settings surfaces (P4); command palette (P3); pane
+- Deferred: Themes and Settings surfaces (P4); `?` shortcut sheet (P3); pane
   internals still use P2-era controls.
 ```
 

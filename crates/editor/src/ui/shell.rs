@@ -43,9 +43,8 @@ impl ShellMode {
     }
 }
 
-/// The source rail's slots, in order. P2 fills the five panes that are not the
-/// layer tree; until then choosing one shows that it is not built rather than
-/// leaving a dead control.
+/// The source rail's slots, in order. Each one has a pane body; `?` opens the
+/// shortcut sheet listing the rest of `Command::ALL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeftPane {
     Layers,
@@ -90,8 +89,8 @@ impl LeftPane {
 }
 
 /// The source header's toolbar, in source order: open actions, document
-/// actions, then the asset finder. The rest of `Command::ALL` lands in the
-/// command palette in P3.
+/// actions, then the asset finder. The rest of `Command::ALL` is reachable
+/// from the `?` shortcut sheet.
 pub const TOOLBAR_GROUPS: [&[Command]; 3] = [
     &[Command::New, Command::Open, Command::Import],
     &[

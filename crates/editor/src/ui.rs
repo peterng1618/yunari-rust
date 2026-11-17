@@ -123,6 +123,8 @@ enum Overlay {
     Mcp(McpDialog),
     Settings(Box<SettingsDialog>),
     Store(StoreDialog),
+    /// The `?` key reference: every command and its chord.
+    Shortcuts,
     Rename(Prompt),
     Field(Prompt),
     /// A binding's key chosen from the host's measured catalogue.
@@ -2896,6 +2898,11 @@ impl EditorWindow {
                 cx.notify();
                 return;
             }
+            if keystroke.key == "?" {
+                self.overlay = Some(Overlay::Shortcuts);
+                cx.notify();
+                return;
+            }
             if self.zoom_key(&keystroke.key, keystroke.modifiers.shift) {
                 cx.notify();
                 return;
@@ -2963,6 +2970,11 @@ impl EditorWindow {
                     self.discard(resume, window, cx);
                 } else {
                     self.overlay = Some(Overlay::Confirm { message, resume });
+                }
+            }
+            Overlay::Shortcuts => {
+                if keystroke.key != "escape" {
+                    self.overlay = Some(Overlay::Shortcuts);
                 }
             }
             Overlay::BridgePort { dialog, mut prompt } => {
@@ -3485,6 +3497,59 @@ impl EditorWindow {
         }
     }
 
+    /// The `?` reference: every command beside its chord, in a wrapping grid.
+    fn shortcuts_panel(cx: &mut Context<Self>) -> AnyElement {
+        let (foreground, muted, border) = (
+            cx.theme().foreground,
+            cx.theme().muted_foreground,
+            cx.theme().border,
+        );
+        let rows = Command::ALL.iter().map(|command| {
+            let chord = command.shortcut();
+            div()
+                .w(px(200.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .py_0p5()
+                .text_sm()
+                .child(div().text_color(foreground).child(command.label()))
+                .child(div().text_xs().text_color(muted).child(chord))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(border)
+                    .pb_2()
+                    .child(div().text_color(foreground).child("Shortcuts"))
+                    .child(div().text_xs().text_color(muted).child("Esc closes")),
+            )
+            // 40-odd commands outrun a 700px window; the sheet scrolls rather
+            // than growing past the viewport.
+            .child(
+                div()
+                    .id("shortcuts-grid")
+                    .flex()
+                    .flex_wrap()
+                    .gap_x_6()
+                    .gap_y_1()
+                    .h(px(420.0))
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+            .into_any_element()
+    }
+
     fn prompt_panel(prompt: &Prompt, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
@@ -3570,6 +3635,7 @@ impl EditorWindow {
             Some(Overlay::Mcp(dialog)) => mcp_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Store(dialog)) => store_dialog::view(dialog, cx).into_any_element(),
+            Some(Overlay::Shortcuts) => Self::shortcuts_panel(cx),
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
                 div()

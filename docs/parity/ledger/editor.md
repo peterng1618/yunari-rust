@@ -70,3 +70,20 @@ the rail's active-slot press closes it, matching the source's rail press.
 Keyboard walkthrough of the header controls, focus visibility after a toggle
 press, and hover/pressed states on the rail and toolbar. P3 owns the keyboard
 path; the P1 gate above is layout only.
+
+## P3 — shortcut sheet
+
+The source has no command palette. `?` opens the shortcut reference sheet, and
+the port follows it: `Overlay::Shortcuts` lists every `Command::ALL` entry with
+its chord in a wrapped two-column grid inside the 460px dialog. The grid is
+capped at 420px and scrolls, so the sheet fits the 1024x700 logical minimum
+instead of running past the viewport. Escape closes it.
+
+Evidence:
+
+- `cargo test -p yunari-editor` — 146 passed.
+- `test-results/parity-shots/editor-port-shortcuts.png` — 1042x747 physical
+  (1024x700 logical at 125%), sheet inside the window, both columns visible.
+- `test-results/parity-shots/editor-port-1080p-p1.png` — the sheet is closed on
+  boot, so the default shell is unchanged.
+
