@@ -3,11 +3,10 @@
 **Status:** approved 2026-11-17. This replaces the parity loop as the primary
 workstream until the editor shell exists.
 
-> **UI framework under review (2026-11-17).** The Android/iOS player roadmap
-> makes NSH the likely UI framework; see `2026-11-17-nsh-ui-migration.md` and
-> its spike gate. Everything here about the source reference, acceptance gate,
-> phases and screenshots still applies. Only the widget layer and renderer
-> backend are in question. No gpui UI code is retired until that spike passes.
+> **UI framework decision (2026-11-17).** The desktop editor stays on
+> gpui-kit; NSH is only for the separate mobile player app. See
+> `editor-ui-gpui.md` for the element map. The reference map, acceptance gate,
+> phases and screenshots here still apply.
 
 ## Why
 
@@ -43,7 +42,7 @@ Keep, do not rewrite:
 Rebuild:
 
 - `crates/editor/src/ui.rs` and `crates/editor/src/ui/*`: shell, navigation,
-  editor frame, panel docking, inspector rendering, command surface, dialogs,
+  editor frame, panel layout, inspector rendering, command surface, dialogs,
   status bar, canvas chrome;
 - the theme layer the editor uses for colours, spacing, type and control
   states — from `gpui-component`'s theme, not ad-hoc constants.
@@ -69,7 +68,8 @@ vite-preview page is not evidence.
   surfaces with persistent navigation, as in the source — not rows of buttons.
 - Editor mode: persistent left pane (layers/assets), canvas centre, right
   inspector, top command bar, status bar. Panes are resizable and collapsible
-  through the kit's dock/sidebar, not manual pixel layout.
+  through the kit's `h_resizable` panels and `TabBar`/`Sidebar` navigation,
+  not manual pixel layout.
 - Every command in the current `Command::ALL` maps to a labelled control in the
   same group the source uses (menu, toolbar, context menu, shortcut), and the
   keyboard path exists for each.
@@ -102,7 +102,7 @@ both; the fixer's screenshots are not enough.
 divergence list, acceptance checklists. Exit: reference doc PR merged.
 
 **P1 — shell.** Navigation between library/editor/settings/store, editor frame
-with docked left canvas right panes, top bar, status bar, theme applied. Exit:
+with resizable left/canvas/right panes, top bar, status bar, theme applied. Exit:
 editor opens with the reference layout at 1080p; no command row overflows;
 screenshot pair accepted.
 

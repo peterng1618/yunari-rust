@@ -1,9 +1,14 @@
 # NSH UI migration
 
-**Status:** proposed 2026-11-17. Requires a passing spike before any gpui UI
-code is retired. Supersedes the UI framework choice in
-`2026-11-17-editor-ui-rebuild.md`; its reference map, acceptance gate and
-phases still apply.
+**Status:** withdrawn for the desktop editor 2026-11-17. The mobile roadmap
+narrowed to a separate player app; the editor and desktop player stay on
+gpui-kit. See `editor-ui-gpui.md`. This file remains the mobile-player
+migration record; its spike gate applies to that app, not the editor.
+
+> **Scope change (2026-11-17).** NSH was chosen when the mobile roadmap looked
+> like it required one UI stack for the whole product. The mobile deliverable
+> is a player that displays a theme, not the editor. A second UI stack for that
+> small surface is cheaper than moving the desktop editor off gpui-kit.
 
 ## Why
 
@@ -16,6 +21,9 @@ Native Shell (NSH) runs the same Rust UI on Windows, macOS, Linux, iOS,
 Android and the web. One framework, one component library, one headless test
 driver, one packaging path. That roadmap fit outweighs the desktop-only
 convenience of `gpui-component`.
+
+With the scope now player-only, that argument applies to the mobile app alone.
+The desktop editor and desktop player stay on gpui-kit; see `editor-ui-gpui.md`.
 
 The element map is `editor-ui-nsh.md`, written for approval before the spike.
 
@@ -68,6 +76,9 @@ as a separate NSH app later, sharing the portable crates.
 
 ## Phases
 
+The phases below described the editor migration and are retained as history.
+The mobile player's lane is M0 in `editor-ui-gpui.md`.
+
 - **S0 — spike.** Above gate; record the evidence in
   `docs/parity/ledger/editor.md`.
 - **S1 — shell.** Modes, editor frame, panes, top bar, status bar, theme.
@@ -105,6 +116,6 @@ platform crate, not `crates/providers` as it stands.
 
 ## Decision
 
-Approve the switch if the spike passes. The reference map, component mapping
-and per-screen acceptance checklists carry over; only the widget layer and
-renderer backend change.
+Approve NSH for the separate mobile player if its spike passes. The desktop
+editor and desktop player stay on gpui-kit; `editor-ui-gpui.md` is their map.
+Only the mobile player's renderer and packaging change.

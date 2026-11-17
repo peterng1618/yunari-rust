@@ -1,9 +1,10 @@
 # Editor UI in NSH — element map and design
 
-**Status:** proposed 2026-11-17, for approval. Supersedes the widget layer of
-`editor-ui-components.md` (gpui-component). Source of truth for Yunari UI is
-the pinned tree `1241866e53df252307e22ff3c51c842f89e458c8` in
-`D:\git-repos\yunari`, `src/web/packages/editor/src`.
+**Status:** superseded for the desktop editor 2026-11-17. The editor and
+desktop player stay on gpui-kit — see `editor-ui-gpui.md`. This file is
+retained as the NSH mapping for the separate mobile player app; the shell,
+panes, inspector, store, settings and asset-finder sections below are
+historical. The player and mobile-boundary sections remain current.
 
 This is not a line-by-line React translation. Where the source has a bespoke
 control, the table names the NSH base component that owns the same behaviour,
