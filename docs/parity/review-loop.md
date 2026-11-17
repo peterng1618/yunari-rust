@@ -103,8 +103,10 @@ Classes of regression the audit must look for explicitly:
 - **Missing controls** — a source control that has no port equivalent, or a
   port control wired to nothing.
 - **Copy drift** — product vocabulary, refusal sentences, labels.
-- **Layout drift** — hierarchy, spacing, clipping, hit targets, small-window
-  behaviour; compare tokens and geometry, not pixels alone.
+- **Aesthetic/functional UI drift** — a control gone, unreachable, mis-wired,
+  unlabelled, clipped, too small, or a state that cannot be told apart. The
+  gpui-kit adaptation may differ in chrome, spacing and platform font; it may
+  not lose a function or read worse than the source.
 - **Silent fallbacks** — a missing reading, asset or face drawn as something
   plausible instead of an absence with a reason.
 
@@ -128,10 +130,29 @@ says so.
 - Same theme document, same artboard, same zoom/fit, same language, same
   scroll position on both sides.
 
-Evaluate, in this order: visible regions and their hierarchy; spacing and
-alignment; clipping and overflow; hit-target size and position; copy; state
-(selected, disabled, focus, empty, error). A pixel diff is supporting evidence,
-not the verdict. Name the region and the measured difference, not "looks off".
+The port is not a pixel copy: its UI is adapted to gpui-kit. Pixel positions,
+widget chrome, platform fonts and exact spacing are allowed to differ. What must
+survive is **function and aesthetic intent**.
+
+Judge, in this order:
+
+1. **Function**: every source control and state exists and does what it did;
+   validation, refusals, defaults and persistence behave the same.
+2. **Information architecture**: the same things are grouped, discoverable and
+   reachable; no action moves behind a path a user would not find.
+3. **State communication**: selected, hover, focus, disabled, empty, loading,
+   error are all visible and distinguishable.
+4. **Aesthetic craft**: alignment, rhythm, spacing scale, contrast, hierarchy,
+   truncation, hit targets, small-window behaviour. An adapted layout passes if
+   it reads at least as clearly as the source; it fails if it looks unfinished,
+   crowds controls, clips labels or buries the primary action.
+
+A valid UI finding names the observable loss: a control that is gone,
+unreachable, mis-wired, unlabelled, clipped, too small to hit, or a state that
+cannot be told apart — with a 2560x1440 shot of both sides and the concrete
+region. "Spacing differs", "control looks different", "font is system" are not
+findings by themselves; a deliberate, coherent adaptation is the point of the
+port. A pixel diff is supporting evidence, not the verdict.
 
 Shots live under `test-results/parity-shots/` (not committed); the issue names
 the exact file paths and what to look at, and the verifier regenerates them.
@@ -232,7 +253,10 @@ These are reported per pass in `docs/parity/ledger/summary.md`.
 > 4. Fill every ledger row, including matches. Write
 >    `docs/parity/ledger/<surface>.md`.
 > 5. UI/layout findings need 2560x1440 fullscreen shots for both sides
->    (source through its own host, port through `scripts/capture-window.ps1`).
+>    (source through its own host, port through `scripts/capture-window.ps1`),
+>    and judge function and aesthetic intent, not pixel identity: gpui-kit
+>    adaptation is expected; a lost function, hidden action, unreadable state or
+>    cramped/clipped control is the finding.
 > You may not edit port code. If you cannot reproduce, file it as `suspect`
 > with the missing evidence named.
 
