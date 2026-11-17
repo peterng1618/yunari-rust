@@ -29,6 +29,10 @@ pub struct Row {
     pub name: String,
     pub depth: usize,
     pub kind: &'static str,
+    /// The row's role in the source's words: every primitive is a `Shape`, a
+    /// chart names itself as a chart whatever its family.
+    pub role: &'static str,
+    pub has_children: bool,
     pub visible: bool,
     pub locked: bool,
     pub selected: bool,
@@ -72,6 +76,8 @@ fn collect(
                 .unwrap_or_else(|| kind_name(node).to_owned()),
             depth,
             kind: kind_name(node),
+            role: role_name(node),
+            has_children: !node.children.is_empty(),
             visible,
             locked,
             selected: selection.contains(&node.id),
@@ -101,6 +107,28 @@ pub fn kind_name(node: &Node) -> &'static str {
         NodeKind::Chart { .. } => "Chart",
         NodeKind::Image { .. } => "Image",
         NodeKind::Video { .. } => "Video",
+    }
+}
+
+/// Every node in the tree, collapsed ones included. The pane header's count.
+pub fn count(document: &ThemeDocument) -> usize {
+    fn walk(nodes: &[Node]) -> usize {
+        nodes.iter().map(|node| 1 + walk(&node.children)).sum()
+    }
+    walk(&document.nodes)
+}
+
+/// The row's role in the source's vocabulary (`ui-copy.ts` `layerKindLabels`).
+pub fn role_name(node: &Node) -> &'static str {
+    match node.kind {
+        NodeKind::Group => "Group",
+        NodeKind::Rectangle { .. }
+        | NodeKind::Ellipse
+        | NodeKind::Line
+        | NodeKind::Path { .. } => "Shape",
+        NodeKind::Text { .. } => "Text",
+        NodeKind::Chart { .. } => "Chart",
+        NodeKind::Image { .. } | NodeKind::Video { .. } => "Image",
     }
 }
 
@@ -243,6 +271,30 @@ mod tests {
             ["holder", "child", "under"]
         );
         assert_eq!(open[1].depth, 1);
+    }
+
+    #[test]
+    fn rows_carry_the_source_role_words() {
+        let document = document(vec![group(
+            "holder",
+            vec![rect("child", 0.0, 0.0, 5.0, 5.0)],
+        )]);
+        let mut expanded = BTreeSet::new();
+        expanded.insert("holder".to_owned());
+        let rows = rows(&document, &Selection::new(), &expanded);
+        assert_eq!(rows[0].role, "Group");
+        assert_eq!(rows[1].role, "Shape");
+        assert!(rows[0].has_children);
+        assert!(!rows[1].has_children);
+    }
+
+    #[test]
+    fn count_includes_collapsed_children() {
+        let document = document(vec![
+            rect("under", 0.0, 0.0, 10.0, 10.0),
+            group("holder", vec![rect("child", 0.0, 0.0, 5.0, 5.0)]),
+        ]);
+        assert_eq!(count(&document), 3);
     }
 
     #[test]

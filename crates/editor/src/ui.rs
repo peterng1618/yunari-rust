@@ -25,6 +25,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme, TitleBar};
+use gpui_kit::prelude::FluentBuilder;
 use yunari_host::http::Shared;
 use yunari_library::{Library, LibraryError, default_root};
 use yunari_model::document::{
@@ -2800,6 +2801,17 @@ impl EditorWindow {
     }
 
     fn layers_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::{ActiveTheme, IconName};
+
+        let theme = cx.theme();
+        let (background, foreground, muted, border, selection) = (
+            theme.background,
+            theme.foreground,
+            theme.muted_foreground,
+            theme.border,
+            theme.selection,
+        );
+        let count = layers::count(self.editor.document());
         let rows = layers::rows(self.editor.document(), &self.selection, &self.expanded);
         let items: Vec<AnyElement> = rows
             .into_iter()
@@ -2809,55 +2821,69 @@ impl EditorWindow {
                 let caret_id = id.clone();
                 let eye_id = id.clone();
                 let lock_id = id.clone();
-                let group = row.kind == "Group";
-                let caret = if !group {
-                    " "
-                } else if self.expanded.contains(&id) {
-                    "v"
-                } else {
-                    ">"
-                };
-                let eye = if row.visible { "V" } else { "-" };
-                let lock = if row.locked { "L" } else { "." };
+                let open = self.expanded.contains(&id);
+                let ink = if row.visible { foreground } else { muted };
                 div()
                     .id(("layer", index))
                     .flex()
                     .items_center()
-                    .gap_1()
-                    .pl(px(6.0 + row.depth as f32 * 12.0))
+                    .gap_2()
+                    .pl(px(8.0 + row.depth as f32 * 12.0))
                     .pr_2()
                     .py_1()
-                    .bg(if row.selected {
-                        rgb(0x2b2b36)
-                    } else {
-                        rgb(PANEL)
-                    })
+                    .bg(if row.selected { selection } else { background })
                     .cursor_pointer()
                     .child(
                         div()
                             .id(("caret", index))
-                            .w(px(12.0))
+                            .w(px(14.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(caret)
+                            .text_color(muted)
+                            .child(if !row.has_children {
+                                IconName::Minus
+                            } else if open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .when(!row.has_children, |this| this.opacity(0.0))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.toggle_expanded(&caret_id, cx)
                             })),
                     )
                     .child(
                         div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(layer_icon(row.kind)),
+                    )
+                    .child(
+                        div()
                             .flex_1()
                             .text_sm()
-                            .text_color(if row.visible { rgb(INK) } else { rgb(MUTED) })
+                            .text_color(ink)
                             .child(row.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(row.role),
                     )
                     .child(
                         div()
                             .id(("eye", index))
                             .px_1()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(eye)
+                            .text_color(muted)
+                            .hover(|this| this.text_color(foreground))
+                            .child(if row.visible {
+                                IconName::Eye
+                            } else {
+                                IconName::EyeOff
+                            })
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 let shown = selection::find(this.editor.document(), &eye_id)
                                     .is_some_and(|node| node.visible);
@@ -2871,9 +2897,9 @@ impl EditorWindow {
                         div()
                             .id(("lock", index))
                             .px_1()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child(lock)
+                            .text_color(if row.locked { foreground } else { muted })
+                            .hover(|this| this.text_color(foreground))
+                            .child(IconName::Ban)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 let locked = selection::find(this.editor.document(), &lock_id)
                                     .is_some_and(|node| node.locked);
@@ -2894,15 +2920,24 @@ impl EditorWindow {
             .flex()
             .flex_col()
             .border_l_1()
-            .border_color(rgb(0x2e2e38))
-            .bg(rgb(PANEL))
+            .border_color(border)
+            .bg(background)
             .child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(rgb(MUTED))
-                    .child("Layers"),
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(div().text_sm().text_color(foreground).child("Layers"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("{count} objects")),
+                    ),
             )
             .children(items)
     }
@@ -3645,6 +3680,18 @@ fn images_for(source: &Source, root: &Path, assets: &BTreeMap<String, Vec<u8>>) 
         images.put(path, bytes);
     }
     images
+}
+
+/// The layer row's kind mark, from the kit's icon set.
+fn layer_icon(kind: &str) -> gpui_kit::component::IconName {
+    use gpui_kit::component::IconName;
+    match kind {
+        "Group" => IconName::Frame,
+        "Text" => IconName::ALargeSmall,
+        "Chart" => IconName::ChartPie,
+        "Image" | "Video" => IconName::GalleryVerticalEnd,
+        _ => IconName::Square,
+    }
 }
 
 /// The id Save As offers: the theme's name as a stable id.
