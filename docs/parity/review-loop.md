@@ -49,6 +49,13 @@ orca agent launch --agent claude --worktree <id-from-create> --prompt "<role bri
   orchestrator's context. An audit run as a subagent is the worst case: it files
   issues from the orchestrator's context and leaves no workspace the next pass
   can inspect.
+- **A finished Orca agent does not message the orchestrator.** Completion is
+  workspace state, not an inbox event: after launching, and at every step of the
+  pass, the orchestrator polls `orca worktree ps --json` and reads
+  `agents[].state` / `lastAssistantMessage`, then checks `gh pr list` and the
+  issue labels. `orca worktree ps --agent-wait --json` blocks until activity
+  instead of polling on a timer. Treat a `done` agent with no PR, no label
+  change and no terminal report as stalled, not finished.
   Address the returned `launch.outcome.handle` with `terminal read`/`wait`, and
   treat the terminal output as the worker's report.
 - The worktree id printed by `create` (`<repoId>::<path>`) is the handle for
