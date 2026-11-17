@@ -152,26 +152,30 @@ pub fn chart_fill(
             .map(ChartFill::Solid),
         Some("gradient") => Some(ChartFill::Gradient(stops_of(value))),
         Some("thresholds") => {
+            // One band with no colour would be a threshold the author never
+            // wrote, so the whole fill goes rather than renumbering the bands
+            // around it.
             let bands = value
                 .get("bands")
                 .and_then(|bands| bands.as_array())
-                .map(|bands| {
+                .and_then(|bands| {
                     bands
                         .iter()
-                        .filter_map(|band| {
+                        .map(|band| {
                             let offset = band.get("offset")?.as_f64()? as f32;
                             let reference = band.get("ref")?.as_str()?;
                             let color = palette_color(document, reference)?;
                             Some((offset, color))
                         })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            if bands.is_empty() {
-                issues.push(unreadable(node_id, path));
-                return None;
+                        .collect::<Option<Vec<_>>>()
+                });
+            match bands {
+                Some(bands) if !bands.is_empty() => Some(ChartFill::Thresholds(normalize(bands))),
+                _ => {
+                    issues.push(unreadable(node_id, path));
+                    None
+                }
             }
-            Some(ChartFill::Thresholds(normalize(bands)))
         }
         _ => {
             let reference = value.get("ref")?.as_str()?;
@@ -520,4 +524,31 @@ pub fn gap_of(request: &ChartRequest<'_>, sweep: f32, count: u32) -> f32 {
         count,
         Some(request.width.min(request.height)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yunari_model::document::parse_document;
+
+    fn document() -> ThemeDocument {
+        parse_document(
+            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+                "palette":{"good":{"name":"Good","value":{"kind":"solid","color":"#36b37e"}}}}"##,
+        )
+        .expect("fixture parses")
+    }
+
+    #[test]
+    fn a_threshold_band_with_an_undeclared_colour_refuses_the_whole_fill() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{"kind":"thresholds","bands":[
+                {"offset":0.5,"ref":"palette.good"},
+                {"offset":1,"ref":"palette.missing"}]}"#,
+        )
+        .expect("bands parse");
+        let mut issues = Vec::new();
+        let fill = chart_fill(&document(), Some(&value), "c", "progress", &mut issues);
+        assert_eq!(fill, None, "an unresolved band refuses the fill");
+    }
 }
