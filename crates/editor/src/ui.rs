@@ -2344,6 +2344,87 @@ impl EditorWindow {
         self.scrolling_pane("tokens-body", Some("Design tokens"), children, cx)
     }
 
+    /// The left pane's Add slot: everything the document can take, in the
+    /// source's three families plus media.
+    fn add_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::{
+            Sizable, button::{Button, ButtonVariants}, h_flex,
+        };
+
+        const GROUPS: [(&str, &[Command]); 4] = [
+            (
+                "Text",
+                &[
+                    Command::AddText,
+                    Command::AddVerticalText,
+                    Command::TypographyPreset,
+                ],
+            ),
+            (
+                "Shapes",
+                &[
+                    Command::AddRectangle,
+                    Command::AddEllipse,
+                    Command::AddLine,
+                    Command::AddPath,
+                    Command::AddPathPreset,
+                    Command::AddArc,
+                    Command::AddWedge,
+                ],
+            ),
+            (
+                "Charts",
+                &[
+                    Command::AddGauge,
+                    Command::AddLineChart,
+                    Command::AddBarChart,
+                    Command::AddPieChart,
+                    Command::AddRadarChart,
+                    Command::AddPolarBar,
+                ],
+            ),
+            ("Media", &[Command::AddImage]),
+        ];
+
+        let (foreground, muted) = (cx.theme().foreground, cx.theme().muted_foreground);
+        let mut children: Vec<AnyElement> = Vec::new();
+        for (title, commands) in GROUPS {
+            children.push(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(title)
+                    .into_any_element(),
+            );
+            let mut rows: Vec<AnyElement> = Vec::new();
+            for command in commands.iter().copied() {
+                rows.push(
+                    Button::new(format!("add-{command:?}"))
+                        .ghost()
+                        .small()
+                        .label(command.label())
+                        .text_color(foreground)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.apply(command, window, cx)
+                        }))
+                        .into_any_element(),
+                );
+            }
+            children.push(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .px_3()
+                    .py_1()
+                    .children(rows)
+                    .into_any_element(),
+            );
+        }
+        self.scrolling_pane("add-body", Some("Add"), children, cx)
+    }
+
     /// The left pane's Assets slot: every declared file, with the two ways to
     /// add more.
     fn assets_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
