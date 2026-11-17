@@ -26,3 +26,12 @@ only after an independent verifier confirmed it.
 - Differential fixtures (`scripts/parity-fixtures.mjs`) make the source an
   executable oracle. Their first run found two real rounding divergences,
   both fixed before this pass closed.
+
+## Paused: editor UI rebuild (2026-11-17)
+
+The first real launch showed the editor surface was never built to the source's
+information architecture: hand-rolled command rows, no reachable inspector in
+the default layout, controls clipped, no gpui-component chrome. Parity bug lanes
+are paused. Primary work is `docs/superpowers/specs/2026-11-17-editor-ui-rebuild.md`;
+editor rows E1-E11 enter the matrix at its P5. In-flight renderer correctness
+fixes finish because they do not touch the shell.
