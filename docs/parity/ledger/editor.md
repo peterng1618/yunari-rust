@@ -70,9 +70,20 @@ the rail's active-slot press closes it, matching the source's rail press.
   offset instead of the old row-count estimate.
 - **Mode surfaces.** Themes is live: the header segment shows the stored-theme
   list (open / duplicate / delete) in a scrolling page, reloaded whenever the
-  mode is entered or the library changes. Settings still renders a named empty
-  state; its surface is P4. P4 owns the source's library grid, halves and
-  facets.
+  mode is entered or the library changes. Settings names what it holds and
+  opens the one settings dialog; its own surface is P4. P4 also owns the
+  source's library grid, halves and facets.
+
+### Not yet judged (added after the interactive checks)
+
+- **Pointer-only canvas menu.** A right-press needs the real mouse, which the
+  capture tooling will not take over, so the menu was photographed from a
+  seeded overlay rather than from a live right-click. `Shift+F10` and the
+  context-menu key open the same menu for the selection; that path needs a
+  focused window, which the same tooling will not take.
+- **Mode switching** was exercised live: Themes and Settings both render, and
+  the editor body stays mounted behind them (status bar still reads the open
+  theme).
 
 ### Not yet judged
 

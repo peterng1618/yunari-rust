@@ -367,13 +367,23 @@ impl EditorWindow {
                         .justify_center()
                         .bg(cx.theme().background)
                         .child(
-                            Empty::new().header(
-                                EmptyHeader::new()
-                                    .title(EmptyTitle::new().child(self.mode.label()))
-                                    .description(EmptyDescription::new().child(
-                                        "Settings as a surface lands in P4; the open theme is kept.",
-                                    )),
-                            ),
+                            Empty::new()
+                                .header(
+                                    EmptyHeader::new()
+                                        .title(EmptyTitle::new().child(self.mode.label()))
+                                        .description(EmptyDescription::new().child(
+                                            "Host, displays, weather and the bridge live in one dialog. A settings surface of their own lands in P4.",
+                                        )),
+                                )
+                                .child(
+                                    gpui_kit::component::button::Button::new("settings-open")
+                                        .label("Open settings…")
+                                        .on_click(cx.listener(
+                                            |this, _: &ClickEvent, window, cx| {
+                                                this.apply(Command::Settings, window, cx)
+                                            },
+                                        )),
+                                ),
                         ),
                 )
             })
