@@ -41,9 +41,13 @@ orca agent launch --agent claude --worktree <id-from-create> --prompt "<role bri
 - `--no-parent`: workers are independent checkouts based on `origin/main`, not
   children of the orchestrator's tree.
 - Start each worker with `orca agent launch`, so it is an Orca session owned by
-  that workspace and visible in its window. Do not run worker work as an
-  in-session subagent of the orchestrator: it leaves the workspace with no
-  agent, no window to watch, and its output only in the orchestrator's context.
+  that workspace and visible in its window. This applies to every role —
+  auditors, triagers, fixers and verifiers — not only to fixes. Do not run
+  worker work as an in-session subagent of the orchestrator: it leaves the
+  workspace with no agent, no window to watch, and its output only in the
+  orchestrator's context. An audit run as a subagent is the worst case: it files
+  issues from the orchestrator's context and leaves no workspace the next pass
+  can inspect.
   Address the returned `launch.outcome.handle` with `terminal read`/`wait`, and
   treat the terminal output as the worker's report.
 - The worktree id printed by `create` (`<repoId>::<path>`) is the handle for
