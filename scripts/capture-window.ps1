@@ -29,9 +29,10 @@ public static class WinCap {
 }
 "@
 
-$arguments = @()
-if ($Theme -ne "") { $arguments += $Theme }
-$process = Start-Process -FilePath $Exe -ArgumentList $arguments -PassThru
+$start = @{ FilePath = $Exe; PassThru = $true }
+# Start-Process refuses an empty -ArgumentList, so only add it when there is one.
+if ($Theme -ne "") { $start.ArgumentList = @($Theme) }
+$process = Start-Process @start
 
 try {
     $handle = [IntPtr]::Zero

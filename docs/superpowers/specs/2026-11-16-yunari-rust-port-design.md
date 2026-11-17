@@ -696,6 +696,17 @@ enumeration lives in the editor shell, where GPUI owns it).
 
 ## Parity sweep against `product.md` (2026-11-16)
 
+> **Correction (2026-11-17): these statuses are behavioural claims, not visual
+> acceptance.** They were written from tests and code reading. No editor
+> screenshot was ever compared against a valid source screenshot before the
+> first launch: the only source shot on disk was the vite-preview read-failure
+> page. gpui-kit is a dependency with a few components in use, but the editor
+> shell was hand-rolled from `div()` and text labels, not a kit-based surface.
+> A "Met" below therefore means "the behaviour has a test", not "a user can find
+> and use it". The editor is under audit (`docs/parity/ledger/editor.md`); until
+> a row has a ledger entry with both-side evidence, this table is not the
+> source of truth — the ledger and the probes are.
+
 Every capability `docs/product.md` names, with what this port does today. "Met"
 means the behaviour exists and is covered by tests or a driven check; "partial"
 names the missing part; "deferred" names the phase or reason; "dropped" is a
