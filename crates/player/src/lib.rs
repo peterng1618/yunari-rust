@@ -87,7 +87,7 @@ impl Stage {
             }
         }
         let mut sampler = Sampler::new(registry);
-        // Ask once for exactly the keys this theme's value runs name.
+        // Ask once for exactly the keys this theme's bindings name.
         sampler.request("window", yunari_render::reading::wanted_keys(&document));
         let preferences = UnitPreferences::default();
         let (list, issues) =

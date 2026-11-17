@@ -5,10 +5,10 @@
 //! the author's precision and unit display decide how it is written. A gap is
 //! the product's em dash with a reason, never a zero.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use yunari_locale::Locale;
-use yunari_model::document::{Binding, Node, NodeKind, TextRun, ThemeDocument, UnitDisplay};
+use yunari_model::document::{Binding, Node, TextRun, ThemeDocument, UnitDisplay};
 use yunari_providers::sample::{Reading, Status};
 use yunari_providers::units::{self, Overrides, UnitPreferences};
 use yunari_providers::vocabulary;
@@ -192,26 +192,36 @@ fn format_text(
     .unwrap_or_else(|| value.to_owned())
 }
 
-/// The keys a document's value runs need, so a caller can ask for exactly them.
+/// The keys a document's bindings name, so a caller can ask for exactly them.
 pub fn wanted_keys(document: &ThemeDocument) -> Vec<String> {
-    let mut keys = Vec::new();
-    for node in &document.nodes {
-        let NodeKind::Text { content } = &node.kind else {
-            continue;
-        };
-        let Some(bindings) = document.bindings.get(&node.id) else {
-            continue;
-        };
-        for run in &content.runs {
-            let TextRun::Value { binding_id, .. } = run else {
-                continue;
-            };
-            if let Some(binding) = bindings.iter().find(|binding| &binding.id == binding_id)
-                && !keys.contains(&binding.semantic_key)
-            {
-                keys.push(binding.semantic_key.clone());
-            }
-        }
+    document
+        .bindings
+        .values()
+        .flatten()
+        .map(|binding| binding.semantic_key.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yunari_model::document::parse_document;
+
+    fn document(json: &str) -> ThemeDocument {
+        parse_document(json).expect("fixture document parses")
     }
-    keys
+
+    #[test]
+    fn a_chart_only_binding_is_wanted() {
+        let document = document(
+            r##"{"schemaVersion":"1.0.0","id":"chartonly","artboard":{"width":1920,"height":1080},
+                "bindings":{"line":[{"id":"a","semanticKey":"cpu.clock"}]},
+                "nodes":[{"id":"line","transform":{"x":80,"y":80,"width":1600,"height":600},
+                "kind":{"type":"chart","content":{"family":"line","settings":{}}}}]}"##,
+        );
+
+        assert_eq!(wanted_keys(&document), ["cpu.clock"]);
+    }
 }
