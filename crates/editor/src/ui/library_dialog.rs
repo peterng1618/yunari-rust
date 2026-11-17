@@ -1,5 +1,7 @@
 //! The stored-theme list Open shows, with the actions that manage it.
 
+use std::collections::BTreeMap;
+
 use gpui_kit::*;
 use yunari_library::{Library, ThemeEntry};
 
@@ -15,13 +17,39 @@ pub enum ThemeSort {
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
     pub sort: ThemeSort,
+    /// A small palette sample per theme, read from its stored document. Full
+    /// artboard previews need a raster pass and are not faked here.
+    pub previews: BTreeMap<String, Vec<[u8; 4]>>,
 }
 
 impl LibraryDialog {
     pub fn new(library: &Library) -> Self {
+        let entries = library.list();
+        let mut previews = BTreeMap::new();
+        for entry in &entries {
+            let Ok(stored) = library.read(&entry.id) else {
+                continue;
+            };
+            let colors: Vec<[u8; 4]> = stored
+                .document
+                .palette
+                .values()
+                .filter_map(|token| match &token.value {
+                    yunari_model::document::Paint::Solid { color } => {
+                        yunari_render::parse_color(color).map(|parsed| parsed.channels())
+                    }
+                    yunari_model::document::Paint::Gradient { .. } => None,
+                })
+                .take(6)
+                .collect();
+            if !colors.is_empty() {
+                previews.insert(entry.id.clone(), colors);
+            }
+        }
         Self {
-            entries: library.list(),
+            entries,
             sort: ThemeSort::Name,
+            previews,
         }
     }
 
@@ -121,10 +149,48 @@ fn sort_row(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
     )
 }
 
+/// A palette strip: a small, truthful sample of the theme's own tokens. A
+/// stored theme with unreadable colours answers an empty box, not a fake.
+fn card_preview(dialog: &LibraryDialog, entry: &ThemeEntry) -> AnyElement {
+    let Some(colors) = dialog.previews.get(&entry.id) else {
+        return div()
+            .h(px(64.0))
+            .rounded_sm()
+            .bg(cx_fallback())
+            .into_any_element();
+    };
+    div()
+        .h(px(64.0))
+        .rounded_sm()
+        .flex()
+        .items_end()
+        .children(colors.iter().map(|channels| {
+            div()
+                .flex_1()
+                .h(px(16.0))
+                .bg(rgba(channels_to_hex(*channels)))
+        }))
+        .into_any_element()
+}
+
+/// Packs a renderer colour into GPUI's RRGGBBAA form.
+fn channels_to_hex(channels: [u8; 4]) -> u32 {
+    (u32::from(channels[0]) << 24)
+        | (u32::from(channels[1]) << 16)
+        | (u32::from(channels[2]) << 8)
+        | u32::from(channels[3])
+}
+
+/// The neutral fill used when a theme has no readable palette. Kept local so
+/// no call site has to invent a colour.
+fn cx_fallback() -> gpui_kit::Rgba {
+    rgb(0x22222a)
+}
+
 /// Width of one library card. Three columns fit the 1024x700 logical minimum
 /// with the source's comfortable gutters.
 const CARD_WIDTH: Pixels = px(220.0);
-const CARD_HEIGHT: Pixels = px(132.0);
+const CARD_HEIGHT: Pixels = px(180.0);
 
 /// The Themes mode's grid. Real theme previews need a raster pass per stored
 /// theme, which the port does not do yet; the card still keeps the source's
@@ -182,6 +248,7 @@ fn grid(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> AnyElement {
                             this.open_entry(&open_id, cx)
                         })),
                 )
+                .child(self::card_preview(dialog, entry))
                 .child(
                     div()
                         .flex()
@@ -322,7 +389,8 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryDialog, ThemeSort};
+    use super::{LibraryDialog, ThemeSort, channels_to_hex};
+    use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
 
     fn entry(name: &str, id: &str, seconds: u64) -> ThemeEntry {
@@ -341,6 +409,7 @@ mod tests {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
             sort: ThemeSort::Name,
+            previews: BTreeMap::new(),
         };
         assert_eq!(
             dialog
@@ -368,5 +437,16 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["z", "a"]
         );
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::channels_to_hex;
+
+    #[test]
+    fn palette_channels_pack_as_rrggbbaa() {
+        assert_eq!(channels_to_hex([0x12, 0x34, 0x56, 0x78]), 0x12345678);
+        assert_eq!(channels_to_hex([255, 0, 0, 255]), 0xff0000ff);
     }
 }

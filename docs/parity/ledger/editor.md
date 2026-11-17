@@ -94,8 +94,9 @@ arrow-to-line) are outside the default subset and drew empty.
   as a card grid (open / duplicate / delete on each card), sorted by Name or
   Updated, with the author and node count on the tile. The page scrolls and
   reloads whenever the mode is entered or the library changes. The source's
-  real previews are still absent: rastering each stored theme's artboard is
-  the next step, and the cards do not pretend to have one. The `Open` dialog
+  real artboard previews are still absent; the cards carry a palette strip
+  sampled from each stored theme's own tokens, which is honest about what it
+  shows. Rastering each artboard is the next step. The `Open` dialog
   keeps a compact list, as the source's chooser does. Settings names what it
   holds and opens the one settings dialog; its own surface is P4, along with
   the source's catalogue halves and facets.
@@ -155,7 +156,8 @@ Evidence:
 - `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
 - `test-results/parity-shots/editor-port-themes-grid.png` — 1280x875, four
-  columns of stored-theme cards with Name/Updated sort. Seeded mode reverted.
+  columns of stored-theme cards with Name/Updated sort; `-palette.png` shows
+  the palette strips. Seeded mode reverted after both shots.
 - `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` —
   1920x1080, the mode toggles with the kit's `spacing_tokens().sm` gap between
   icon and label, a segmented container behind the mode group, a bolder brand,
