@@ -132,6 +132,11 @@ enum Overlay {
         at: Point<Pixels>,
         object: Option<String>,
     },
+    /// The editor's own list of opens, newest first, under the toolbar button
+    /// that asked for it.
+    Recent {
+        at: Point<Pixels>,
+    },
     Rename(Prompt),
     Field(Prompt),
     /// A binding's key chosen from the host's measured catalogue.
@@ -168,6 +173,59 @@ enum Overlay {
         message: String,
         resume: Resume,
     },
+}
+
+/// One of the editor's opens, by the id and the name it had when it opened.
+#[derive(Clone)]
+struct RecentTheme {
+    id: String,
+    name: String,
+}
+
+/// Reads opens from `~/.yunari/recents.json`. A missing or broken file is an
+/// empty list: recents are a convenience, never a reason to fail a launch.
+fn load_recents(library: &Library) -> Vec<RecentTheme> {
+    let Some(parent) = library.root().parent() else {
+        return Vec::new();
+    };
+    let bytes = match std::fs::read(parent.join("recents.json")) {
+        Ok(bytes) => bytes,
+        Err(_) => return Vec::new(),
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let mut recents = Vec::new();
+    if let Some(rows) = value.as_array() {
+        for row in rows {
+            let (Some(id), Some(name)) = (row["id"].as_str(), row["name"].as_str()) else {
+                continue;
+            };
+            recents.push(RecentTheme {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            });
+        }
+    }
+    recents.truncate(RECENT_LIMIT);
+    recents
+}
+
+/// Writes opens back. A failed write leaves the in-memory list intact and is
+/// not reported: losing a convenience list must not interrupt editing.
+fn save_recents(library: &Library, recents: &[RecentTheme]) {
+    let Some(parent) = library.root().parent() else {
+        return;
+    };
+    let rows: Vec<_> = recents
+        .iter()
+        .map(|recent| serde_json::json!({ "id": recent.id, "name": recent.name }))
+        .collect();
+    if let Ok(bytes) = serde_json::to_vec_pretty(&serde_json::json!(rows)) {
+        let _ = std::fs::create_dir_all(parent);
+        let _ = std::fs::write(parent.join("recents.json"), bytes);
+    }
 }
 
 /// The action a guard is holding.
@@ -261,6 +319,8 @@ pub struct EditorWindow {
     /// The Themes mode's listing, reloaded when the mode is entered so a save
     /// or a delete made elsewhere is not shown stale.
     themes: Option<library_dialog::LibraryDialog>,
+    /// The themes this editor has opened, newest first. The source keeps five.
+    recents: Vec<RecentTheme>,
     /// Which top-level surface the header is showing. The editor body stays
     /// mounted while another mode shows, so the open document survives.
     mode: ShellMode,
@@ -386,6 +446,22 @@ fn run_canvas_entry(
     }
 }
 
+/// How many opens the recent list keeps, as the source's store does.
+const RECENT_LIMIT: usize = 5;
+
+/// Records an open: newest first, once each, capped as the source's store does.
+fn note_recent(recents: &mut Vec<RecentTheme>, id: &str, name: String) {
+    recents.retain(|recent| recent.id != id);
+    recents.insert(
+        0,
+        RecentTheme {
+            id: id.to_owned(),
+            name,
+        },
+    );
+    recents.truncate(RECENT_LIMIT);
+}
+
 /// The arrange actions, in the source's order. The source puts them in the
 /// selection inspector, one row of six alignments and one of two distributions.
 pub(super) const ARRANGE_ACTIONS: [Command; 8] = [
@@ -445,6 +521,7 @@ impl EditorWindow {
         for issue in &issues {
             eprintln!("{:?} {:?}: {}", issue.code, issue.node_id, issue.detail);
         }
+        let recents = load_recents(&library);
         Self {
             editor: Editor::new(document),
             library,
@@ -467,6 +544,7 @@ impl EditorWindow {
             editing: None,
             overlay: None,
             themes: None,
+            recents,
             status: None,
             focus: cx.focus_handle(),
             canvas_bounds: Rc::new(Cell::new(None)),
@@ -1602,6 +1680,12 @@ impl EditorWindow {
         cx.notify();
     }
 
+    /// Opens the recent list at the control that asked for it.
+    fn show_recent(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.overlay = Some(Overlay::Recent { at });
+        cx.notify();
+    }
+
     /// Opens a stored theme, its pictures and all, replacing the open one.
     fn open_entry(&mut self, id: &str, cx: &mut Context<Self>) {
         match self.editor.open_stored(&self.library, id) {
@@ -1610,6 +1694,15 @@ impl EditorWindow {
                 self.overlay = None;
                 self.camera_touched = false;
                 self.status = Some(Status::ok(format!("Opened {id}")));
+                let name = self
+                    .editor
+                    .document()
+                    .metadata
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| id.to_owned());
+                note_recent(&mut self.recents, id, name);
+                save_recents(&self.library, &self.recents);
                 self.point_images();
                 self.refresh();
             }
@@ -3207,7 +3300,7 @@ impl EditorWindow {
             }
             // Any key but Escape leaves the canvas menu where it is; Escape is
             // its only keyboard exit until the rows take focus.
-            menu @ Overlay::ContextMenu { .. } => {
+            menu @ (Overlay::ContextMenu { .. } | Overlay::Recent { .. }) => {
                 if keystroke.key != "escape" {
                     self.overlay = Some(menu);
                 }
@@ -3767,13 +3860,11 @@ impl EditorWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         use gpui_kit::component::ActiveTheme;
-        use gpui_kit::component::scroll::ScrollableElement;
 
-        let (foreground, hover, border, panel, muted) = (
+        let (foreground, hover, border, muted) = (
             cx.theme().foreground,
             cx.theme().muted,
             cx.theme().border,
-            cx.theme().popover,
             cx.theme().muted_foreground,
         );
         let mut entries: Vec<AnyElement> = Vec::new();
@@ -3828,6 +3919,25 @@ impl EditorWindow {
                 }
             }
         }
+        let height = self.window_height.min(px(520.0));
+        self.menu_layer(at, px(200.0), height, entries, cx)
+    }
+
+    /// A menu: a transparent layer that dismisses it, then the panel anchored
+    /// at the gesture. `height` bounds the panel so a short window scrolls it.
+    fn menu_layer(
+        &self,
+        at: Point<Pixels>,
+        width: Pixels,
+        height: Pixels,
+        entries: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use gpui_kit::component::ActiveTheme;
+        use gpui_kit::component::scroll::ScrollableElement;
+
+        let (border, panel) = (cx.theme().border, cx.theme().popover);
+        let cap = height;
         div()
             .absolute()
             .top_0()
@@ -3862,8 +3972,8 @@ impl EditorWindow {
                         at.x,
                         // Flip the panel above the press when it would run off
                         // the foot; `anchored` alone does not shrink it.
-                        if at.y + px(520.0) > self.window_height - px(8.0) {
-                            (at.y - px(520.0)).max(px(8.0))
+                        if at.y + cap > self.window_height - px(8.0) {
+                            (at.y - height).max(px(8.0))
                         } else {
                             at.y
                         },
@@ -3871,14 +3981,14 @@ impl EditorWindow {
                     .anchor(Anchor::TopLeft)
                     .child(
                         div()
-                            .w(px(200.0))
+                            .w(width)
                             .rounded_md()
                             .border_1()
                             .border_color(border)
                             .bg(panel)
                             .child(
                                 div()
-                                    .h(self.window_height.min(px(520.0)))
+                                    .h(height)
                                     .min_h(px(0.0))
                                     .overflow_y_scrollbar()
                                     .child(div().flex().flex_col().py_1().children(entries)),
@@ -3886,6 +3996,53 @@ impl EditorWindow {
                     ),
             )
             .into_any_element()
+    }
+
+    /// **Open recent**: the themes this editor has opened, newest first, each
+    /// by the name it had when it opened. Said rather than drawn empty when
+    /// there are none, as the source does.
+    fn recent_menu_layer(&self, at: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::ActiveTheme;
+
+        let (foreground, hover, muted) = (
+            cx.theme().foreground,
+            cx.theme().muted,
+            cx.theme().muted_foreground,
+        );
+        let mut entries: Vec<AnyElement> = Vec::new();
+        if self.recents.is_empty() {
+            entries.push(
+                div()
+                    .px_3()
+                    .py_0p5()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("No recent themes yet.")
+                    .into_any_element(),
+            );
+        }
+        for recent in self.recents.iter().cloned() {
+            let id = recent.id.clone();
+            entries.push(
+                div()
+                    .id(format!("recent-{}", recent.id))
+                    .px_3()
+                    .py_0p5()
+                    .text_sm()
+                    .text_color(foreground)
+                    .cursor_pointer()
+                    .hover(|this| this.bg(hover))
+                    .child(recent.name)
+                    .on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| this.open_entry(&id, cx)),
+                    )
+                    .into_any_element(),
+            );
+        }
+        // Sized to its rows rather than a fixed box: three opens are three
+        // lines, and an empty menu is one.
+        let rows = self.recents.len().max(1) as f32;
+        self.menu_layer(at, px(200.0), px(rows * 26.0 + 16.0), entries, cx)
     }
 
     /// The `?` reference: the source's own rows, one column per group, in the
@@ -4044,6 +4201,9 @@ impl EditorWindow {
             // A menu is anchored to the gesture, not to a dialog's centre.
             Some(Overlay::ContextMenu { at, object }) => {
                 return Some(self.context_menu_layer(*at, object.clone(), cx));
+            }
+            Some(Overlay::Recent { at }) => {
+                return Some(self.recent_menu_layer(*at, cx));
             }
             Some(Overlay::Confirm { message, resume }) => {
                 let discard = resume.clone();
@@ -4747,6 +4907,88 @@ mod tests {
             ]
         );
         assert!(matches!(OBJECT_MENU[2][0], CanvasMenuEntry::Restack(_)));
+    }
+
+    #[test]
+    fn recents_survive_a_round_trip_through_the_library_parent() {
+        use super::{load_recents, note_recent, save_recents};
+
+        let root = std::env::temp_dir().join(format!(
+            "yunari-recents-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let library = yunari_library::Library::new(root.join("themes"));
+        let mut recents = Vec::new();
+        note_recent(&mut recents, "one", "One".to_owned());
+        note_recent(&mut recents, "two", "Two".to_owned());
+        save_recents(&library, &recents);
+
+        let loaded = load_recents(&library);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "two");
+        assert_eq!(loaded[0].name, "Two");
+        assert_eq!(loaded[1].id, "one");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn a_broken_recents_file_reads_as_empty() {
+        use super::load_recents;
+
+        let root = std::env::temp_dir().join(format!(
+            "yunari-recents-broken-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let library = yunari_library::Library::new(root.join("themes"));
+        std::fs::create_dir_all(library.root().parent().unwrap()).unwrap();
+        std::fs::write(
+            library.root().parent().unwrap().join("recents.json"),
+            b"not json",
+        )
+        .unwrap();
+        assert!(load_recents(&library).is_empty());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn the_recent_list_keeps_the_last_five_opens_newest_first() {
+        use super::{RecentTheme, note_recent};
+
+        let mut recents: Vec<RecentTheme> = Vec::new();
+        for index in 0..7 {
+            note_recent(
+                &mut recents,
+                &format!("theme-{index}"),
+                format!("Theme {index}"),
+            );
+        }
+        assert_eq!(
+            recents
+                .iter()
+                .map(|recent| recent.id.as_str())
+                .collect::<Vec<_>>(),
+            ["theme-6", "theme-5", "theme-4", "theme-3", "theme-2"]
+        );
+        // Reopening an old theme moves it to the front rather than repeating it.
+        note_recent(&mut recents, "theme-4", "Theme 4 renamed".to_owned());
+        assert_eq!(recents.len(), 5);
+        assert_eq!(recents[0].id, "theme-4");
+        assert_eq!(recents[0].name, "Theme 4 renamed");
+        assert_eq!(
+            recents
+                .iter()
+                .filter(|recent| recent.id == "theme-4")
+                .count(),
+            1
+        );
     }
 
     #[test]

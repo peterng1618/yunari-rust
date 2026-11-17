@@ -233,6 +233,25 @@ impl EditorWindow {
                             this.apply(command, window, cx)
                         })),
                 );
+                // The source puts **Open recent** right after Open. It is a
+                // menu rather than a command: it lists the editor's own opens.
+                if command == Command::Open {
+                    toolbar = toolbar.child(
+                        Button::new("toolbar-recent")
+                            .ghost()
+                            .icon(gpui_kit::assets::IconName::RotateCcw)
+                            .tooltip("Open recent")
+                            .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                                let at = match event {
+                                    ClickEvent::Mouse(mouse) => mouse.down.position,
+                                    // A keyboard press has no pointer; the menu
+                                    // opens under the toolbar instead.
+                                    _ => gpui_kit::point(px(240.0), px(56.0)),
+                                };
+                                this.show_recent(at, cx)
+                            })),
+                    );
+                }
             }
         }
 

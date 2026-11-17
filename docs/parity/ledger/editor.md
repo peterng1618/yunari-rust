@@ -50,9 +50,12 @@ the rail's active-slot press closes it, matching the source's rail press.
   the header keeps the pane toggles there instead. P4 (dialogs/modes).
 - **Toolbar coverage.** The rows now follow the source: New theme, New from
   template, Open library, Import theme / Save, Save as, Open display, Export
-  theme, Export widget / Find assets. Still missing: **Open recent** (needs the
-  editor's own recents store; the library listing is not the same thing) and
-  **Activate** (P4, with the publish surface). P3/P4.
+  theme, Export widget / Find assets. **Open recent** now sits after Open: the
+  toolbar's history button opens the editor's own list of opens, newest first,
+  persisted in `~/.yunari/recents.json` (capped at five, deduplicated, each by
+  the name it had when opened), with the source's "No recent themes yet." empty
+  copy. It is a menu, not a command: the library listing is a different thing.
+  **Activate** is still missing (P4, with the publish surface).
 - **Rail pane bodies.** All six slots have bodies: Layers, Add, Widgets,
   Assets, Design tokens and Theme settings. Pane-level drag/drop, rename and
   keyboard tree navigation remain P2/P3.
@@ -131,13 +134,16 @@ The sheet also forced the chords into line with the source's `PRODUCT_SHORTCUTS`
 
 Evidence:
 
-- `cargo test -p yunari-editor` — 148 passed, including
-  `only_the_commands_the_source_binds_print_a_chord` and
+- `cargo test -p yunari-editor` — 153 passed, including
+  `only_the_commands_the_source_binds_print_a_chord`,
+  `the_recent_list_keeps_the_last_five_opens_newest_first` and
   `the_reference_lists_the_source_rows_in_the_source_group_order`.
 - `cargo test --workspace` — no failures.
 - `test-results/parity-shots/editor-port-shortcuts.png` — 1042x747 physical
   (1024x700 logical at 125%), sheet inside the window, every group visible.
 - `test-results/parity-shots/editor-port-1080p-p1.png` — the sheet is closed on
   boot, so the default shell is unchanged.
+- `test-results/parity-shots/editor-port-recent.png` — 1280x875, the recents
+  menu sized to its rows. The seeded list was reverted after the shot.
 
 
