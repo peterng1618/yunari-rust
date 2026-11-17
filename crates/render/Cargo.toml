@@ -12,4 +12,5 @@ serde.workspace = true
 serde_json.workspace = true
 svgtypes = "0.16"
 yunari-model.workspace = true
+yunari-locale.workspace = true
 yunari-providers.workspace = true

@@ -4,12 +4,14 @@
 //! *is* is a machine fact, so the components render as written — a display never
 //! re-converts, and every screen shows the host's time.
 //!
-//! ponytail: names and number separators are English. When a theme's language
-//! must read in its own words, swap the tables here for an ICU-backed crate.
+//! Only the tokens that spell a word — `MMMM`, `MMM`, `dddd`, `ddd`, `A`, `a` —
+//! consult the theme's language. Every numeric token is ASCII in every language.
 
 use jiff::Timestamp;
 use jiff::civil::Weekday;
 use jiff::tz::TimeZone;
+
+use yunari_locale::Locale;
 
 /// The instant's own components, as its offset holder reads them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,12 +110,17 @@ fn sunday_zero(weekday: Weekday) -> u32 {
 /// Bracketed text is the author's literal: `[Today is ]dddd`. A token this
 /// format does not know renders literally rather than blanking the value, so a
 /// typo is visible.
-pub fn format_instant(value: &str, format: &str, time_zone: Option<&str>) -> Option<String> {
+pub fn format_instant(
+    value: &str,
+    format: &str,
+    time_zone: Option<&str>,
+    language: Option<&str>,
+) -> Option<String> {
     let parts = match time_zone {
         Some(zone) => parts_in_zone(value, zone)?,
         None => parse_instant(value)?,
     };
-    let tokens = tokens();
+    let locale = Locale::of(language);
     let mut out = String::with_capacity(format.len() + 8);
     let mut rest = format;
     while !rest.is_empty() {
@@ -130,9 +137,9 @@ pub fn format_instant(value: &str, format: &str, time_zone: Option<&str>) -> Opt
             }
             continue;
         }
-        match tokens.iter().find(|(name, _)| rest.starts_with(name)) {
-            Some((name, render)) => {
-                out.push_str(&render(parts));
+        match TOKENS.iter().find(|name| rest.starts_with(**name)) {
+            Some(name) => {
+                out.push_str(&render(name, parts, &locale));
                 rest = &rest[name.len()..];
             }
             None => {
@@ -145,88 +152,40 @@ pub fn format_instant(value: &str, format: &str, time_zone: Option<&str>) -> Opt
     Some(out)
 }
 
-type Token = (&'static str, fn(Parts) -> String);
+/// Longest first so `HH` is read before `H` and `MMMM` before `MMM`.
+const TOKENS: [&str; 18] = [
+    "YYYY", "YY", "MMMM", "MMM", "MM", "M", "dddd", "ddd", "DD", "D", "HH", "H", "hh", "h", "mm",
+    "ss", "A", "a",
+];
 
-fn tokens() -> [Token; 18] {
-    [
-        ("YYYY", |p| format!("{:04}", p.year)),
-        ("YY", |p| format!("{:02}", p.year.rem_euclid(100))),
-        ("MMMM", |p| month_name(p.month, true).to_owned()),
-        ("MMM", |p| month_name(p.month, false).to_owned()),
-        ("MM", |p| format!("{:02}", p.month)),
-        ("M", |p| p.month.to_string()),
-        ("dddd", |p| weekday_name(p.weekday, true).to_owned()),
-        ("ddd", |p| weekday_name(p.weekday, false).to_owned()),
-        ("DD", |p| format!("{:02}", p.day)),
-        ("D", |p| p.day.to_string()),
-        ("HH", |p| format!("{:02}", p.hour)),
-        ("H", |p| p.hour.to_string()),
-        ("hh", |p| format!("{:02}", hour12(p.hour))),
-        ("h", |p| hour12(p.hour).to_string()),
-        ("mm", |p| format!("{:02}", p.minute)),
-        ("ss", |p| format!("{:02}", p.second)),
-        ("A", |p| day_period(p.hour).to_owned()),
-        ("a", |p| day_period(p.hour).to_lowercase()),
-    ]
+fn render(token: &str, parts: Parts, locale: &Locale) -> String {
+    match token {
+        "YYYY" => format!("{:04}", parts.year),
+        "YY" => format!("{:02}", parts.year.rem_euclid(100)),
+        "MMMM" => locale.month(parts.year, parts.month, parts.day, true),
+        "MMM" => locale.month(parts.year, parts.month, parts.day, false),
+        "MM" => format!("{:02}", parts.month),
+        "M" => parts.month.to_string(),
+        "dddd" => locale.weekday(parts.year, parts.month, parts.day, true),
+        "ddd" => locale.weekday(parts.year, parts.month, parts.day, false),
+        "DD" => format!("{:02}", parts.day),
+        "D" => parts.day.to_string(),
+        "HH" => format!("{:02}", parts.hour),
+        "H" => parts.hour.to_string(),
+        "hh" => format!("{:02}", hour12(parts.hour)),
+        "h" => hour12(parts.hour).to_string(),
+        "mm" => format!("{:02}", parts.minute),
+        "ss" => format!("{:02}", parts.second),
+        "A" => locale.day_period(parts.hour),
+        "a" => locale.day_period(parts.hour).to_lowercase(),
+        _ => token.to_owned(),
+    }
 }
 
 fn hour12(hour: u32) -> u32 {
     match hour % 12 {
         0 => 12,
         hour => hour,
-    }
-}
-
-fn day_period(hour: u32) -> &'static str {
-    if hour < 12 { "AM" } else { "PM" }
-}
-
-const MONTHS_LONG: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
-const MONTHS_SHORT: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-const WEEKDAYS_LONG: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-
-const WEEKDAYS_SHORT: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-fn month_name(month: u32, long: bool) -> &'static str {
-    let index = month.saturating_sub(1).min(11) as usize;
-    if long {
-        MONTHS_LONG[index]
-    } else {
-        MONTHS_SHORT[index]
-    }
-}
-
-fn weekday_name(weekday: u32, long: bool) -> &'static str {
-    let index = (weekday as usize).min(6);
-    if long {
-        WEEKDAYS_LONG[index]
-    } else {
-        WEEKDAYS_SHORT[index]
     }
 }
 
@@ -258,24 +217,53 @@ mod tests {
     fn the_author_tokens_spell_what_they_say() {
         let value = "2026-09-24T14:07:09+07:00";
         assert_eq!(
-            format_instant(value, "HH:mm", None).as_deref(),
+            format_instant(value, "HH:mm", None, None).as_deref(),
             Some("14:07")
         );
         assert_eq!(
-            format_instant(value, "DD MMM YYYY", None).as_deref(),
+            format_instant(value, "DD MMM YYYY", None, None).as_deref(),
             Some("24 Sep 2026")
         );
         assert_eq!(
-            format_instant(value, "dddd", None).as_deref(),
+            format_instant(value, "dddd", None, None).as_deref(),
             Some("Thursday")
         );
         assert_eq!(
-            format_instant(value, "[Today is ]dddd", None).as_deref(),
+            format_instant(value, "[Today is ]dddd", None, None).as_deref(),
             Some("Today is Thursday")
         );
         assert_eq!(
-            format_instant(value, "h:mm A", None).as_deref(),
+            format_instant(value, "h:mm A", None, None).as_deref(),
             Some("2:07 PM")
+        );
+        assert_eq!(
+            format_instant(value, "h:mm a", None, None).as_deref(),
+            Some("2:07 pm")
+        );
+    }
+
+    #[test]
+    fn the_themes_language_spells_its_own_words() {
+        let value = "2026-09-24T14:07:09+07:00";
+        assert_eq!(
+            format_instant(value, "dddd D MMMM", None, Some("fr")).as_deref(),
+            Some("jeudi 24 septembre")
+        );
+        assert_eq!(
+            format_instant(value, "D MMMM", None, Some("vi")).as_deref(),
+            Some("24 Tháng 9")
+        );
+        assert_eq!(
+            format_instant(value, "DD MMM", None, Some("pt")).as_deref(),
+            Some("24 set.")
+        );
+        assert_eq!(
+            format_instant(value, "ddd", None, Some("de")).as_deref(),
+            Some("Do")
+        );
+        assert_eq!(
+            format_instant(value, "h A", None, Some("ja")).as_deref(),
+            Some("2 午後")
         );
     }
 
@@ -283,7 +271,7 @@ mod tests {
     fn a_named_zone_reads_that_zones_wall_clock() {
         let value = "2026-09-24T14:07:09Z";
         assert_eq!(
-            format_instant(value, "HH:mm ddd", Some("Asia/Tokyo")).as_deref(),
+            format_instant(value, "HH:mm ddd", Some("Asia/Tokyo"), None).as_deref(),
             Some("23:07 Thu")
         );
     }
@@ -291,7 +279,7 @@ mod tests {
     #[test]
     fn an_unknown_zone_has_no_answer_rather_than_a_guess() {
         assert_eq!(
-            format_instant("2026-09-24T14:07:09Z", "HH:mm", Some("Mars/Base")),
+            format_instant("2026-09-24T14:07:09Z", "HH:mm", Some("Mars/Base"), None),
             None
         );
     }

@@ -1217,6 +1217,28 @@ mod tests {
     }
 
     #[test]
+    fn a_theme_language_writes_its_own_decimal_separator() {
+        let mut document =
+            value_run_document(r#"{"id":"b","semanticKey":"custom.probe.value","precision":1}"#);
+        document.metadata.theme_language = Some("de".to_owned());
+        let readings = Readings::new([reading("custom.probe.value", 3.5, "MB")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "3,5 MB");
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_theme_language_spells_the_instants_weekday() {
+        let mut document =
+            value_run_document(r#"{"id":"b","semanticKey":"time.now","format":"dddd"}"#);
+        document.metadata.theme_language = Some("de".to_owned());
+        let readings = Readings::new([Reading::instant("time.now", "2026-09-24T23:07:09+09:00")]);
+        let (text, issues) = value_run_text(&document, &readings);
+        assert_eq!(text, "Donnerstag");
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
     fn a_missing_reading_reports_why_it_is_missing() {
         let document = value_run_document(r#"{"id":"b","semanticKey":"cpu.load"}"#);
         let readings = Readings::new([Reading::missing("cpu.load", "the sensor is asleep")]);

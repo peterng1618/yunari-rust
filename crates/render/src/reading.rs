@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use yunari_locale::Locale;
 use yunari_model::document::{Binding, Node, NodeKind, TextRun, ThemeDocument, UnitDisplay};
 use yunari_providers::sample::{Reading, Status};
 use yunari_providers::units::{self, Overrides, UnitPreferences};
@@ -123,14 +124,17 @@ pub fn value_text(
             });
         }
         let precision = authored_precision.or(converted.precision);
-        let text = format_number(converted.value, precision, '.');
+        // The rounding is the source's; the digits and separator are the
+        // theme's language, as `Intl.NumberFormat` writes them there.
+        let locale = Locale::of(document.metadata.theme_language.as_deref());
+        let text = locale.number(&format_number(converted.value, precision, '.'));
         return text + &format_unit(converted.unit, display, None);
     }
 
     let text = if let Some(instant_value) = reading.instant.as_deref() {
-        format_text(&binding.semantic_key, binding, instant_value)
+        format_text(document, &binding.semantic_key, binding, instant_value)
     } else if let Some(text) = reading.text.as_deref() {
-        format_text(&binding.semantic_key, binding, text)
+        format_text(document, &binding.semantic_key, binding, text)
     } else {
         issues.push(PlanIssue {
             code: IssueCode::MissingReading,
@@ -160,14 +164,24 @@ fn binding_of<'a>(
 /// An instant is written with the author's format; any other text is shown
 /// exactly as the provider sent it. A reading no formatter can read is shown
 /// raw rather than blanked.
-fn format_text(semantic_key: &str, binding: &Binding, value: &str) -> String {
+fn format_text(
+    document: &ThemeDocument,
+    semantic_key: &str,
+    binding: &Binding,
+    value: &str,
+) -> String {
     let declared = vocabulary::describe(semantic_key).and_then(|key| key.instant);
     let Some(declared) = declared else {
         return value.to_owned();
     };
     let format = binding.format.as_deref().unwrap_or(declared.default_format);
-    instant::format_instant(value, format, binding.time_zone.as_deref())
-        .unwrap_or_else(|| value.to_owned())
+    instant::format_instant(
+        value,
+        format,
+        binding.time_zone.as_deref(),
+        document.metadata.theme_language.as_deref(),
+    )
+    .unwrap_or_else(|| value.to_owned())
 }
 
 /// The keys a document's value runs need, so a caller can ask for exactly them.

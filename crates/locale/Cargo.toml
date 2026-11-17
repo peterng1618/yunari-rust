@@ -1,0 +1,13 @@
+[package]
+name = "yunari-locale"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+icu_calendar = { version = "2.4", default-features = false, features = ["compiled_data", "alloc"] }
+icu_datetime = { version = "2.4", default-features = false, features = ["compiled_data"] }
+icu_decimal = { version = "2.4", default-features = false, features = ["compiled_data", "alloc"] }
+icu_locale_core = "2.4"
+writeable = "0.6"

@@ -4,6 +4,7 @@ members = [
     "crates/model",
     "crates/packs",
     "crates/store",
+    "crates/locale",
     "crates/theme",
     "crates/golden",
     "crates/providers",
@@ -44,6 +45,7 @@ yunari-store = { path = "crates/store" }
 yunari-player = { path = "crates/player" }
 yunari-editor = { path = "crates/editor" }
 yunari-library = { path = "crates/library" }
+yunari-locale = { path = "crates/locale" }
 yunari-providers = { path = "crates/providers" }
 yunari-render = { path = "crates/render" }
 yunari-golden = { path = "crates/golden" }
