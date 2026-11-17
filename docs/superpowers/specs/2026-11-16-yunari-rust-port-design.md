@@ -324,8 +324,12 @@ Recorded as each phase's exit is met, with the evidence that met it.
   the frame the wall clock names, so the editor window, the GPUI player and the
   raster panel stills all animate; the phone player draws a `video` element
   instead. Panel baking (phase 5) uses the same sidecar.
-- Deferred: packed font faces (woff2) — system faces and TTF/OTF registration
-  cover the fixture and the editor; woff2 needs a decompressor dependency.
+- Packed font faces landed with theme language: `Fonts::load_faces` reads every
+  font asset the document declares from beside the theme (window, editor, phone
+  stream, panel frames, thumbnails), decompressing woff2 and woff with `wuff`
+  (pure Rust) and passing ttf/otf through, then registering the bytes in the
+  shaping database. A face that cannot be read, decoded or parsed is one refusal
+  sentence and falls back to the shaper's own family.
 
 **Phase 2 — met (2026-11-16).** Plan:
 `docs/superpowers/plans/2026-11-16-yunari-phase-2-providers.md`.
@@ -349,11 +353,21 @@ Recorded as each phase's exit is met, with the evidence that met it.
   the other readings intact and its message is redacted to one bounded line.
 - Sampler paces polls by cadence, polls early when a key changes, and never
   re-enters a provider because sampling is synchronous.
-- Deferred: theme language for month/weekday names and the decimal separator —
-  English until an editor language choice exists (`unicode`-free tables in
-  `crates/render/src/instant.rs`, comment marks the upgrade path).
-- Deferred: chart bindings still draw from authored data; charts read readings
-  when the chart plan takes a series source (phase 3 editor work).
+- Theme language: `Metadata.themeLanguage` is validated against the CLDR data
+  (`yunari_locale::is_language`, the source's `isLocaleName`), so a tag this
+  build cannot render is refused rather than silently read as English. A theme
+  must declare one before it is stored or packed (`validate_for_save`), and the
+  model's own documents start with `en`; a theme written before the field
+  existed still opens and paints in English.
+- Month, weekday and day-period names and the decimal separator come from
+  `yunari-locale` (ICU4X compiled CLDR data) for the theme's language, matching
+  what the source's `Intl` answers on the source's own tested locales
+  (en/fr/vi/pt/de/zh-Hant/ja).
+- Chart bindings read live readings: every binding feeds the chart in binding
+  order with its own scale and offset — gauge takes the first, line draws one
+  series mark per binding, bar/pie/radar/polar bar give each binding its own
+  category, slice or spoke — and a binding whose key nothing maps is an
+  `UnmappedKey` issue rather than a zero.
 
 **Phase 3A — met (2026-11-16).** Plan:
 `docs/superpowers/plans/2026-11-16-yunari-phase-3a-editor-shell.md`.
@@ -496,11 +510,16 @@ has a row unless listed below.
   pointer input unless the window is foreground, which would take over the
   user's screen. All 108 editor tests and the workspace suite pass, clippy is
   clean with `-D warnings`, and every write path above has a unit test.
-- Deferred: gradient token editing and delete-with-reassign; font faces and
-  family/weight pickers; asset import (limits, image downscale, video trim, font
-  metadata, SVG sanitising); the eight-card bundled widget pack (needs its
-  packaged icons); shadow, border-width and frosted-glass shape fields; polygon
-  and triangle kinds, which the Rust model does not carry yet.
+- Deferred after 3C, none of them a capability `product.md` names: deleting a
+  palette token that something still references reassigns nothing (the removal
+  is refused with the referencing field named, so no save is blanked); type
+  tokens are picked, not created with family/weight fields; asset import has no
+  image downscale or video trim; shadow and border-width are not shape fields;
+  polygon and triangle kinds are not node kinds (path nodes and the shape
+  presets cover the named shapes); the bundled widget pack ships its committed
+  cards through the pack installer rather than an editor-side eight-card menu.
+  A theme's own face now registers under the family its type token names (phase
+  1 note above); the token itself is picked, not edited field by field.
 
 ## Phase 4 — host, pairing and the browser display — met (2026-11-16)
 
@@ -588,9 +607,11 @@ Plan: `docs/superpowers/plans/2026-11-16-yunari-phase-5-panels.md`.
   into the family's clip form (`ffmpeg` sidecar), the runner plays it once and
   captures the UI over it without the background, Lian Li takes paced H.264
   blocks and TURZX a cached uploaded MP4 with its diffed overlay. Kraken
-  paletted mode B, the Chromium page rasteriser and SignalRGB were the remaining
-  deferrals and have since landed (SignalRGB in phase 6, mode B below); the
-  page rasteriser stays deferred.
+  paletted mode B and SignalRGB have since landed (SignalRGB in phase 6, mode B
+  below). No Chromium page rasteriser is owed: `product.md` names no
+  web-wallpaper render — the source lists the Wallpaper Engine library, serves
+  its previews and video assets, and hides a web wallpaper, which is what this
+  port does (row 24).
 - Not exercised: real hardware. Driver contracts are covered by protocol tests
   and the serial/sink seams; plugging each family in is a manual check.
 
@@ -680,9 +701,9 @@ recorded product decision.
 |---|---|---|---|
 | 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes and video backgrounds play: the raster backend keeps a per-asset `ffmpeg` decoder and reads the frame the wall clock names, the GPUI shell repaints at 33 ms while a clip is on screen, and the phone player draws a `video` element |
 | 2 | Card widgets from installed widget packs | Met | `yunari-packs` reads the source `.yunari-widget-package` format; the host owns the installed folder and the editor inserts any unit (`Ctrl+Shift+W`) |
-| 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry |
-| 4 | Rich text and typography presets | Met | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored, and `Typography preset…` applies one of eight heading/body/mono pairings as a single undoable edit. The pairings name families Windows ships rather than the source's packaged Fontsource faces, so no face is downloaded |
-| 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C; glass is a display-list op resolved by the raster backend |
+| 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry; every node binding feeds the chart in binding order with its scale and offset (line one series mark per binding, bar/pie/radar/polar bar one category, slice or spoke per binding), and an unread binding is `UnmappedKey` rather than a zero |
+| 4 | Rich text and typography presets | Met | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored, and `Typography preset…` applies one of eight heading/body/mono pairings as a single undoable edit. The preset pairings name families Windows ships rather than the source's packaged Fontsource faces, so no face is downloaded; a theme that declares its own font asset registers it (`woff2`/`woff`/`ttf`/`otf`) from beside the theme, and month/weekday/day-period words and the decimal separator follow the theme's declared language through `yunari-locale` |
+| 5 | Paints, type tokens, frosted glass | Met | Gradient tokens editable after 3C (the one paint field parses `gradient(<angle>deg, <colour> <pct>%, …)`); glass is a display-list op resolved by the raster backend |
 | 6 | Rectangular or circular artboard, disc cropping | Met | Model validation refuses a non-square circle artboard; raster and GPUI crop to the disc |
 | 7 | New theme blank or from a bundled starter template | Met | A new document starts from the built-in starter: the blank theme's tokens, a title and a clock bound to `time.now` |
 | 8 | Export a selection as `yunari-widget-package` | Met | `Ctrl+Shift+E` writes the selected top-level nodes as a package beside the library: one unit, assets with their digests, and the writer runs its own reader before handing the bytes on. The document inside is this build's native shape, so another editor reads it only once it reads that shape; a source-editor package still imports here |
@@ -732,6 +753,14 @@ What this sweep changes: nothing in the port's behaviour. It records the gaps
 most likely to surprise a user coming from the source — none remaining that the
 port refuses — and the deliberate deviations (native schema 1.0.0 in 33, the
 WASM player not needed in 40, and the `ffmpeg` sidecar in 22 and 24).
+
+Sweep complete (2026-11-17): all 49 rows are Met, External or Dropped. The four
+items the sweep once carried forward have since landed — a theme's own font
+faces (row 4), the theme language for words and the decimal separator (row 4,
+validated on read and required before a save or a package), live readings for
+every chart binding (row 3), and `product.md` coverage complete with no
+web-wallpaper rasteriser owed (row 24, phase 5 note). Row 33 stays a recorded
+deviation, not a gap.
 
 ## Performance (2026-11-16)
 
