@@ -473,6 +473,43 @@ Connection: close
         server.stop().await;
     }
 
+    /// Reads until the needle arrives or the deadline passes, so a stream that
+    /// never publishes is a failing assertion rather than a hung test.
+    async fn read_until(stream: &mut TcpStream, needle: &str) -> String {
+        let mut response = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let mut chunk = [0u8; 4096];
+        loop {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(left, stream.read(&mut chunk)).await {
+                Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                Ok(Ok(count)) => {
+                    response.extend_from_slice(&chunk[..count]);
+                    if String::from_utf8_lossy(&response).contains(needle) {
+                        break;
+                    }
+                }
+            }
+        }
+        String::from_utf8_lossy(&response).into_owned()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stream_registered_over_http_receives_samples() {
+        let server = start_host("http-stream").await;
+        let mut stream = TcpStream::connect(server.addr).await.unwrap();
+        stream
+            .write_all(b"GET /ws?keys=cpu.load HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .await
+            .unwrap();
+        let response = read_until(&mut stream, "event: samples").await;
+        server.stop().await;
+        assert!(response.contains("event: samples"), "{response}");
+    }
+
     #[tokio::test]
     async fn a_foreign_origin_is_refused_on_the_loopback_admin() {
         let server = start_host("origin").await;
