@@ -17,6 +17,8 @@ Android and the web. One framework, one component library, one headless test
 driver, one packaging path. That roadmap fit outweighs the desktop-only
 convenience of `gpui-component`.
 
+The element map is `editor-ui-nsh.md`, written for approval before the spike.
+
 The editor UI failure was not caused by GPUI. It was never built to the
 source reference. NSH does not fix that by itself: `nsh/base` is unstyled, so
 the reference map and the screenshot gate remain the work.

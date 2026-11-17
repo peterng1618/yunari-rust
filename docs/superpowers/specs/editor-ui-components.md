@@ -1,5 +1,10 @@
 # Editor UI components — gpui-kit mapping
 
+> **Superseded 2026-11-17 for the widget layer.** The Android/iOS player
+> roadmap moved the UI stack to NSH. See `editor-ui-nsh.md` for the current
+> element map. This file remains the record of the gpui-component evaluation
+> and the analysis behind rejecting Dock for the fixed editor shell.
+
 Decision record for the editor UI rebuild. Every Yunari surface element is
 mapped to a `gpui-component` 0.9.1 component, or to a composition of kit
 primitives when the kit has no exact widget. Evidence paths are in the crate as
