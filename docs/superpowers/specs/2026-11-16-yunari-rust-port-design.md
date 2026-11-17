@@ -284,8 +284,8 @@ integrations and store after the core product works.
    tolerance, shared glyph atlas if needed.
 3. USB protocol quirks, especially Kraken storage writes and TURZX serial —
    earliest hardware probe, one family at a time.
-4. Video decode parity and codec coverage — Media Foundation first, ffmpeg
-   fallback if measurements demand it.
+4. Video decode parity and codec coverage — resolved with the `ffmpeg` sidecar
+   rather than Media Foundation; a host without ffmpeg shows no video.
 5. gpui-kit gaps for gradient/colour editing, scene tree and docking — custom
    elements inside the kit, not a fork.
 6. WASM phone player size and runtime cost — measured at phase 4; fallback is a
@@ -319,10 +319,11 @@ Recorded as each phase's exit is met, with the evidence that met it.
   composition (anchor, extent, fade, pan, zoom, flip).
 - Deviation: phase 1 has no separate implementation plan document. The spec's
   phase table was used as the plan; tasks were scoped per render concern.
-- Deferred: video decode. The node and background report
-  `UnsupportedContent` rather than drawing a still without saying so. Panel
-  baking (phase 5) took the `ffmpeg` sidecar route instead; in-window video
-  still wants the frame-at-time reader the `media` crate's seam describes.
+- Video decode landed after phase 1's renderer: `yunari-render-raster` runs one
+  `ffmpeg` sidecar per video asset, reads raw RGBA frames on demand and returns
+  the frame the wall clock names, so the editor window, the GPUI player and the
+  raster panel stills all animate; the phone player draws a `video` element
+  instead. Panel baking (phase 5) uses the same sidecar.
 - Deferred: packed font faces (woff2) — system faces and TTF/OTF registration
   cover the fixture and the editor; woff2 needs a decompressor dependency.
 
@@ -677,7 +678,7 @@ recorded product decision.
 
 | # | `product.md` capability | Status | Where / why |
 |---|---|---|---|
-| 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes are carried but report `UnsupportedContent` until a decoder lands |
+| 1 | Authoring: shapes, text, images/SVG, groups, layers, undo, snapping | Met | `crates/editor` (3A–3C); video nodes and video backgrounds play: the raster backend keeps a per-asset `ffmpeg` decoder and reads the frame the wall clock names, the GPUI shell repaints at 33 ms while a clip is on screen, and the phone player draws a `video` element |
 | 2 | Card widgets from installed widget packs | Met | `yunari-packs` reads the source `.yunari-widget-package` format; the host owns the installed folder and the editor inserts any unit (`Ctrl+Shift+W`) |
 | 3 | Six chart families | Met | `yunari-render` plans gauge, line, bar, pie, radar and polar bar as native geometry |
 | 4 | Rich text and typography presets | Met | Runs, tokens, size/colour, alignment, overflow, vertical and line height are authored, and `Typography preset…` applies one of eight heading/body/mono pairings as a single undoable edit. The pairings name families Windows ships rather than the source's packaged Fontsource faces, so no face is downloaded |

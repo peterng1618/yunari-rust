@@ -136,6 +136,7 @@ fn resolve_backdrop(
     Some(crate::Backdrop {
         asset_id: media.asset_id.clone(),
         path: asset.path.clone(),
+        video: asset.kind == yunari_model::document::AssetKind::Video,
         composition: crate::background::active(&document.background).cloned(),
         geometry: crate::background::Geometry::of(Some(media)),
         flip_x: media.flip_x,
@@ -304,6 +305,8 @@ fn walk(
                     height: box_height,
                     fit: content.fit,
                     monochrome,
+                    video: false,
+                    video_loop: false,
                 }),
                 None => {
                     issues.push(PlanIssue {
@@ -315,13 +318,33 @@ fn walk(
                 }
             }
         }
-        NodeKind::Video { .. } => {
-            issues.push(PlanIssue {
-                code: IssueCode::UnsupportedContent,
-                node_id: Some(node.id.clone()),
-                detail: "Video needs a media player, which this frame does not open.".into(),
-            });
-            None
+        NodeKind::Video { content } => {
+            carries_own_paint = true;
+            match document
+                .assets
+                .iter()
+                .find(|asset| asset.id == content.asset_id)
+            {
+                Some(asset) => Some(Shape::Image {
+                    asset_id: content.asset_id.clone(),
+                    path: asset.path.clone(),
+                    width: box_width,
+                    height: box_height,
+                    // A clip fills its node the way a picture's cover does.
+                    fit: yunari_model::document::ImageFit::Cover,
+                    monochrome: None,
+                    video: true,
+                    video_loop: content.loop_,
+                }),
+                None => {
+                    issues.push(PlanIssue {
+                        code: IssueCode::UnresolvedGlobal,
+                        node_id: Some(node.id.clone()),
+                        detail: format!("asset {} is not declared.", content.asset_id),
+                    });
+                    None
+                }
+            }
         }
     };
 
@@ -960,7 +983,7 @@ mod tests {
     }
 
     #[test]
-    fn a_video_node_says_it_needs_a_player() {
+    fn a_video_node_places_its_clip_in_the_geometry() {
         let (list, issues) = build(
             &document(
                 r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
@@ -970,8 +993,12 @@ mod tests {
             ),
             &mut Fonts::new(),
         );
-        assert!(list.ops.is_empty());
-        assert_eq!(issues[0].code, IssueCode::UnsupportedContent);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(list.has_video());
+        assert!(matches!(
+            &list.ops[0].shape,
+            Shape::Image { video: true, path, .. } if path == "assets/clip.mp4"
+        ));
     }
 
     #[test]
@@ -1035,6 +1062,7 @@ mod tests {
             height,
             fit,
             monochrome,
+            ..
         }) = list.ops.first().map(|op| &op.shape)
         else {
             panic!("expected an image op");

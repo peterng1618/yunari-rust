@@ -21,6 +21,8 @@ use yunari_render_raster::Images;
 /// How often the window looks at the sampler. The sampler itself decides when a
 /// poll is actually due, so this only bounds how late a new reading can be.
 const TICK: Duration = Duration::from_millis(250);
+/// A playing clip repaints at its own cadence between sampler polls.
+const FRAME: Duration = Duration::from_millis(33);
 
 /// The theme a window shows until the library exists: the same fixture the
 /// golden tests hold, so what a window paints and what a golden compares are
@@ -142,9 +144,14 @@ impl Render for Stage {
             self.polling = true;
             cx.spawn_in(window, async move |stage, cx| {
                 loop {
-                    cx.background_executor().timer(TICK).await;
+                    let playing = stage
+                        .update(cx, |stage, _| stage.list.has_video())
+                        .unwrap_or(false);
+                    cx.background_executor()
+                        .timer(if playing { FRAME } else { TICK })
+                        .await;
                     let changed = stage.update(cx, |stage, cx| {
-                        if stage.poll(now_ms()) {
+                        if stage.poll(now_ms()) || stage.list.has_video() {
                             cx.notify();
                         }
                     });

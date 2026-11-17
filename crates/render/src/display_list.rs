@@ -22,11 +22,27 @@ pub struct DisplayList {
     pub ops: Vec<Op>,
 }
 
+impl DisplayList {
+    /// True when a backend has to repaint at frame rate: a clip is playing in
+    /// the page backdrop or in one of its own nodes.
+    pub fn has_video(&self) -> bool {
+        self.backdrop
+            .as_ref()
+            .is_some_and(|backdrop| backdrop.video)
+            || self
+                .ops
+                .iter()
+                .any(|op| matches!(&op.shape, Shape::Image { video: true, .. }))
+    }
+}
+
 /// The page's picture and how it dissolves into the fill.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Backdrop {
     pub asset_id: String,
     pub path: String,
+    /// A clip the backend plays rather than a picture it decodes once.
+    pub video: bool,
     /// Absent for a simple background, which covers the box.
     pub composition: Option<yunari_model::document::BackgroundComposition>,
     pub geometry: crate::background::Geometry,
@@ -91,6 +107,10 @@ pub enum Shape {
         height: f32,
         fit: yunari_model::document::ImageFit,
         monochrome: Option<Color>,
+        /// A clip the backend plays rather than a picture it decodes once.
+        video: bool,
+        /// Whether a clip starts again at its end; a background always does.
+        video_loop: bool,
     },
 }
 

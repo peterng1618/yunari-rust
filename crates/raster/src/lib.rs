@@ -88,10 +88,15 @@ pub fn render(
             height,
             fit,
             monochrome,
+            video,
+            video_loop,
             ..
         } = &op.shape
         {
-            let Some(asset) = images.as_deref_mut().and_then(|store| store.load(path)) else {
+            let Some(asset) = images
+                .as_deref_mut()
+                .and_then(|store| store.load_clip(path, !*video || *video_loop))
+            else {
                 continue;
             };
             draw_image(

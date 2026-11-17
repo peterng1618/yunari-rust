@@ -66,6 +66,8 @@ use crate::viewport::{LINE_HEIGHT, Viewport, ZOOM_STEP, wheel_factor};
 /// How often the window looks at the sampler; the sampler decides when a poll
 /// is actually due, so this only bounds how late a new reading can be.
 const TICK: Duration = Duration::from_millis(250);
+/// A playing clip repaints at its own cadence between sampler polls.
+const FRAME: Duration = Duration::from_millis(33);
 
 const ACCENT: u32 = 0x4f9cf9;
 /// Arrow-key steps, in artboard units.
@@ -3212,9 +3214,14 @@ impl Render for EditorWindow {
             self.polling = true;
             cx.spawn_in(window, async move |this, cx| {
                 loop {
-                    cx.background_executor().timer(TICK).await;
+                    let playing = this
+                        .update(cx, |this, _| this.list.has_video())
+                        .unwrap_or(false);
+                    cx.background_executor()
+                        .timer(if playing { FRAME } else { TICK })
+                        .await;
                     let alive = this.update(cx, |this, cx| {
-                        if this.poll(now_ms()) {
+                        if this.poll(now_ms()) || this.list.has_video() {
                             cx.notify();
                         }
                     });

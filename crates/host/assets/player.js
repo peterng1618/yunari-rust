@@ -7,6 +7,7 @@ const canvas = document.getElementById("stage");
 const context = canvas.getContext("2d");
 const stateLabel = document.getElementById("state");
 const pictures = new Map();
+const videos = new Map();
 
 let frame = null;
 let themeId = null;
@@ -77,6 +78,40 @@ function picture(source) {
   return image;
 }
 
+/** A theme clip is its own element: the canvas draws whatever frame it holds. */
+function video(source) {
+  const url = `/api/themes/${encodeURIComponent(themeId)}/assets/${source.path.split("/").map(encodeURIComponent).join("/")}`;
+  let clip = videos.get(url);
+  if (!clip) {
+    clip = document.createElement("video");
+    clip.muted = true;
+    clip.loop = source.video_loop !== false;
+    clip.playsInline = true;
+    clip.autoplay = true;
+    clip.src = url;
+    clip.play().catch(() => undefined);
+    clip.addEventListener("loadeddata", () => render(), { once: true });
+    clip.addEventListener("timeupdate", () => render());
+    videos.set(url, clip);
+  }
+  return clip;
+}
+
+function media(source) {
+  return source.video ? video(source) : picture(source);
+}
+
+function mediaSize(source, element) {
+  return source.video
+    ? { width: element.videoWidth, height: element.videoHeight }
+    : { width: element.naturalWidth, height: element.naturalHeight };
+}
+
+function mediaReady(source, element) {
+  const size = mediaSize(source, element);
+  return size.width > 0 && size.height > 0;
+}
+
 function drawText(layout) {
   const clip = layout.clip;
   if (clip) context.rect(0, 0, clip[0], clip[1]);
@@ -93,24 +128,42 @@ function drawText(layout) {
 }
 
 function drawImage(source) {
-  const image = picture(source);
+  const element = media(source);
   const { width, height } = source;
   const fit = source.fit;
   const draw = (w, h, dx = 0, dy = 0) => {
-    if (image.complete && image.naturalWidth) context.drawImage(image, dx, dy, w, h);
+    if (mediaReady(source, element)) context.drawImage(element, dx, dy, w, h);
   };
   if (fit === "Stretch" || fit === "stretch") return draw(width, height);
-  if (!image.complete || !image.naturalWidth) {
-    image.addEventListener("load", () => render(), { once: true });
+  if (!mediaReady(source, element)) {
+    const event = source.video ? "loadeddata" : "load";
+    element.addEventListener(event, () => render(), { once: true });
     return;
   }
+  const size = mediaSize(source, element);
   const cover = fit === "Cover" || fit === "cover";
   const ratio = cover
-    ? Math.max(width / image.naturalWidth, height / image.naturalHeight)
-    : Math.min(width / image.naturalWidth, height / image.naturalHeight);
-  const w = image.naturalWidth * ratio;
-  const h = image.naturalHeight * ratio;
+    ? Math.max(width / size.width, height / size.height)
+    : Math.min(width / size.width, height / size.height);
+  const w = size.width * ratio;
+  const h = size.height * ratio;
   draw(w, h, (width - w) / 2, (height - h) / 2);
+}
+
+/** The page's own picture or clip, covering the artboard. */
+function drawBackdrop(backdrop) {
+  if (!backdrop) return;
+  const element = media(backdrop);
+  if (!mediaReady(backdrop, element)) {
+    const event = backdrop.video ? "loadeddata" : "load";
+    element.addEventListener(event, () => render(), { once: true });
+    return;
+  }
+  const size = mediaSize(backdrop, element);
+  const ratio = Math.max(frame.width / size.width, frame.height / size.height);
+  const w = size.width * ratio;
+  const h = size.height * ratio;
+  context.drawImage(element, (frame.width - w) / 2, (frame.height - h) / 2, w, h);
 }
 
 function drawOp(op) {
@@ -186,6 +239,7 @@ function render() {
     context.fillStyle = paint(context, frame.background);
     context.fillRect(0, 0, frame.width, frame.height);
   }
+  drawBackdrop(frame.backdrop);
   for (const op of frame.ops) drawOp(op);
 }
 
