@@ -113,7 +113,7 @@ fn body(
     cx: &mut Context<EditorWindow>,
     selected: usize,
 ) -> AnyElement {
-    use gpui_kit::component::button::{Button, ButtonVariants};
+    use gpui_kit::component::{Sizable, button::{Button, ButtonVariants}};
 
     let label = label_at(selected);
     let hint = match selected {
@@ -314,12 +314,40 @@ fn body(
                 );
             }
             for (index, preset) in presets.presets.iter().enumerate() {
+                let id = preset.id.clone();
+                let label = preset.label.clone();
                 content.push(
                     div()
                         .id(("settings-path-preset", index))
+                        .flex()
+                        .items_center()
+                        .justify_between()
                         .text_sm()
                         .text_color(cx.theme().foreground)
-                        .child(preset.label.clone())
+                        .child(label)
+                        .child(
+                            Button::new(format!("settings-remove-preset-{index}"))
+                                .ghost()
+                                .small()
+                                .label("Remove")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    let dir = yunari_host::config::HostConfig::resolve(None, None, false)
+                                        .settings_dir();
+                                    let store = yunari_host::path_presets::Store::at(dir);
+                                    let is_builtin = yunari_host::path_presets::builtins()
+                                        .iter()
+                                        .any(|item| item.id == id);
+                                    let result = if is_builtin {
+                                        store.remove_builtin(&id)
+                                    } else {
+                                        store.remove(&id)
+                                    };
+                                    if let Err(error) = result {
+                                        this.status = Some(super::Status::error(error));
+                                    }
+                                    cx.notify();
+                                })),
+                        )
                         .into_any_element(),
                 );
             }
