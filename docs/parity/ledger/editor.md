@@ -358,5 +358,10 @@ source's empty/failure copy with Retry, "Search listings", "Installed state",
 
 Still open from the review: the source's detailed layer-tree columns and
 accessibility roles, Add-pane grouping, Theme settings Credits section,
-finder selection/footer actions, full library facet popovers and per-tab views.
+full library facet popovers and per-tab views.
+
+
+Finder rows now select first; a separate footer action applies the source's
+per-kind verb, and Escape clears the selection before it closes the dialog.
+The Close copy matches `uiCopy.assets.close`.
 

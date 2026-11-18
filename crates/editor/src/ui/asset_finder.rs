@@ -81,6 +81,9 @@ impl FinderTab {
 
 pub struct AssetFinder {
     pub tab: FinderTab,
+    /// The row the footer acts on. A click selects first; the action is a
+    /// separate press, as in the source.
+    pub selected: Option<Choice>,
     pub disabled: BTreeSet<String>,
     pub choices: Vec<Choice>,
     /// Rows a stock search returned. Replaced by each answer, so a stale page
@@ -174,6 +177,7 @@ impl AssetFinder {
         }
         Self {
             tab: FinderTab::Icons,
+            selected: None,
             disabled: BTreeSet::new(),
             choices,
             remote: Vec::new(),
@@ -501,7 +505,7 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .py_2()
                 .rounded_sm()
                 .cursor_pointer()
-                .bg(rgb(0x22222a))
+                .bg(if dialog.selected.as_ref().is_some_and(|item| item.label == choice.label) { rgb(0x2e2e38) } else { rgb(0x22222a) })
                 .child(
                     div()
                         .flex()
@@ -524,7 +528,10 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                         .child(choice.label.clone()),
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.place_asset(&choice, cx);
+                    if let Some(super::Overlay::AssetFinder(finder)) = &mut this.overlay {
+                        finder.selected = Some(choice.clone());
+                    }
+                    cx.notify();
                 }))
         })
         .collect();
@@ -626,16 +633,58 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .child(div().text_color(rgb(0x8a8a94)).child(status)),
         )
         .child(body)
-        .child(
+        .child({
+            let action_label = match dialog.tab {
+                FinderTab::Icons => "Place on canvas",
+                FinderTab::Images | FinderTab::Videos => "Set as background",
+                FinderTab::Fonts => "Apply to token",
+                FinderTab::Colors => "Add to presets",
+                FinderTab::WallpaperEngine => "Open in Wallpaper Engine",
+            };
+            let selected = dialog.selected.clone();
             div()
-                .id("asset-finder-cancel")
-                .px_3()
-                .py_2()
-                .cursor_pointer()
-                .text_color(rgb(0x8a8a94))
-                .child("Cancel  ·  Esc")
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_overlay(cx))),
-        )
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x8a8a94))
+                        .child(selected.as_ref().map(|item| item.label.clone()).unwrap_or_else(|| "Select a row".to_owned())),
+                )
+                .child(
+                    div()
+                        .id("asset-finder-action")
+                        .px_3()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(if selected.is_some() { rgb(0x4f9cf9) } else { rgb(0x22222a) })
+                        .text_color(rgb(0x101014))
+                        .cursor_pointer()
+                        .child(action_label)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let (Some(item), Some(super::Overlay::AssetFinder(finder))) =
+                                (&selected, &mut this.overlay)
+                            {
+                                let choice = item.clone();
+                                finder.selected = None;
+                                let _ = finder;
+                                this.place_asset(&choice, cx);
+                            }
+                        })),
+                )
+                .child(
+                    div()
+                        .id("asset-finder-close")
+                        .px_3()
+                        .py_2()
+                        .cursor_pointer()
+                        .text_color(rgb(0x8a8a94))
+                        .child("Close")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_overlay(cx))),
+                )
+        })
 }
 
 #[cfg(test)]

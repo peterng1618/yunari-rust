@@ -3356,6 +3356,12 @@ impl EditorWindow {
                 }
             }
             Overlay::AssetFinder(mut dialog) => {
+                if keystroke.key == "escape" && dialog.selected.is_some() {
+                    dialog.selected = None;
+                    self.overlay = Some(Overlay::AssetFinder(dialog));
+                    cx.notify();
+                    return;
+                }
                 match dialog
                     .query
                     .key(&keystroke.key, keystroke.key_char.as_deref())
