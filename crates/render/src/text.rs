@@ -13,6 +13,7 @@ use cosmic_text::{
     Align, Attrs, Buffer, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style as TextPosture,
     Weight, fontdb,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use yunari_model::document::{AssetKind, FontFormat, ThemeDocument};
 
 // Re-exported so a backend shapes with the same settings this module measured
@@ -118,6 +119,9 @@ pub struct TextStyle {
     pub italic: bool,
     /// In artboard units, so scaling is the backend's.
     pub size: f32,
+    /// Extra advance after every glyph, in artboard units. Source paints it as
+    /// Fabric's `charSpacing` (`scene-fabric/paint.ts:85-88`).
+    pub letter_spacing: f32,
     pub color: Color,
 }
 
@@ -128,6 +132,7 @@ impl Default for TextStyle {
             weight: 400,
             italic: false,
             size: 16.0,
+            letter_spacing: 0.0,
             color: Color::rgb(255, 255, 255),
         }
     }
@@ -238,8 +243,13 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
     let mut segments: Vec<TextSegment> = Vec::new();
     let mut lines = 0.0_f32;
     let mut dropped = false;
+    let clipping = request.overflow != TextOverflow::Visible;
     for run in buffer.layout_runs() {
-        if let Some((_, box_height)) = request.box_
+        // Source paints every line when overflow is visible and clamps the
+        // rest to at least one line (`scene-fabric/authored-box.ts:310-327`).
+        if clipping
+            && lines >= 1.0
+            && let Some((_, box_height)) = request.box_
             && run.line_top + run.line_height > box_height + 0.5
         {
             dropped = true;
@@ -304,7 +314,9 @@ pub fn attrs(style: &TextStyle) -> Attrs<'_> {
     if style.italic {
         attrs = attrs.style(TextPosture::Italic);
     }
-    attrs.metrics(Metrics::new(style.size, style.size * DEFAULT_LINE_HEIGHT))
+    attrs
+        .letter_spacing(style.letter_spacing)
+        .metrics(Metrics::new(style.size, style.size * DEFAULT_LINE_HEIGHT))
 }
 
 fn cosmic_color(color: Color) -> cosmic_text::Color {
@@ -373,14 +385,20 @@ fn measure(fonts: &mut Fonts, text: &str, style: &TextStyle) -> f32 {
 }
 
 /// Characters stacked upright, one line each, so a vertical clock reads down
-/// the box instead of across it.
+/// the box instead of across it. Grapheme clusters are the unit, and authored
+/// line breaks are dropped because every cluster already gets its own line
+/// (`scene-fabric/text-runs.ts:55-65`).
 fn vertical(fonts: &mut Fonts, request: &TextRequest<'_>, line_height: f32) -> TextLayout {
     let metrics_of = |style: &TextStyle| Metrics::new(style.size, style.size * line_height);
     let mut segments = Vec::new();
     let mut y = 0.0;
     for run in request.runs {
-        for character in run.text.chars() {
-            let text = character.to_string();
+        for cluster in run
+            .text
+            .graphemes(true)
+            .filter(|cluster| !matches!(*cluster, "\n" | "\r" | "\r\n"))
+        {
+            let text = cluster.to_string();
             let metrics = metrics_of(&run.style);
             let mut buffer = Buffer::new(&mut fonts.system, metrics);
             let width = {
@@ -530,6 +548,68 @@ mod tests {
         let laid = layout(&mut fonts(), &request);
         let last = laid.segments.last().expect("a line survives");
         assert!(last.text.ends_with('\u{2026}'), "{:?}", last.text);
+    }
+
+    #[test]
+    fn a_box_shorter_than_one_line_still_paints_one_line() {
+        // Source clamps capacity with maxLines: Math.max(1, floor(height / line))
+        // (scene-fabric/authored-box.ts:310-316), so a box that fits no full
+        // line paints a clipped first line rather than nothing.
+        let runs = vec![run("STATUS", 20.0)];
+        let mut request = request(&runs);
+        request.box_ = Some((100.0, 20.0));
+        request.overflow = TextOverflow::Clip;
+        let laid = layout(&mut fonts(), &request);
+        assert_eq!(laid.segments.len(), 1, "{:?}", laid.segments);
+        assert_eq!(laid.segments[0].text, "STATUS");
+        assert_eq!(laid.clip, Some((100.0, 20.0)));
+    }
+
+    #[test]
+    fn a_visible_box_keeps_the_lines_past_its_height() {
+        // Source deletes the clip path for overflow "visible" and paints every
+        // line (scene-fabric/authored-box.ts:320-327).
+        let runs = vec![run(
+            "one two three four five six seven eight nine ten",
+            20.0,
+        )];
+        let mut unbounded = request(&runs);
+        unbounded.box_ = Some((100.0, 10_000.0));
+        let all = layout(&mut fonts(), &unbounded).segments.len();
+        assert!(all > 2, "{all} wrapped lines");
+
+        let mut short = request(&runs);
+        short.box_ = Some((100.0, 48.0));
+        short.overflow = TextOverflow::Visible;
+        let laid = layout(&mut fonts(), &short);
+        assert_eq!(laid.clip, None);
+        assert_eq!(laid.segments.len(), all, "{:?}", laid.segments);
+    }
+
+    #[test]
+    fn vertical_mode_stacks_grapheme_clusters_and_drops_line_breaks() {
+        // Source splits with a grapheme splitter and filters "\n" and "\r"
+        // (scene-fabric/text-runs.ts:55-65).
+        let runs = vec![run(
+            "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}A\r\nB",
+            20.0,
+        )];
+        let mut request = request(&runs);
+        request.vertical = true;
+        let laid = layout(&mut fonts(), &request);
+        let texts: Vec<&str> = laid
+            .segments
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+                "A",
+                "B"
+            ]
+        );
     }
 
     #[test]

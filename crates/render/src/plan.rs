@@ -632,6 +632,10 @@ fn run_style(
         weight: weight_of(token.and_then(|token| token.weight.as_ref())),
         italic: false,
         size,
+        letter_spacing: style
+            .get("letterSpacing")
+            .and_then(style_number)
+            .unwrap_or(0.0) as f32,
         color: colour,
     }
 }
@@ -1238,6 +1242,40 @@ mod tests {
             panic!("expected a text op");
         };
         assert_eq!(layout.segments[0].style.size, 42.0);
+    }
+
+    #[test]
+    fn a_run_authored_letter_spacing_widens_it() {
+        // Source emits Fabric's charSpacing from the resolved letterSpacing
+        // (scene-fabric/paint.ts:85-88); tracking changes the advance, which a
+        // right-aligned run shows as a left-shifted origin.
+        fn laid_out(spacing: &str) -> crate::text::TextLayout {
+            let (list, issues) = build(
+                &document(&format!(
+                    r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":450,"height":675}},
+                        "typeTokens":{{"body":{{"family":"Inter"}}}},
+                        "nodes":[{{"id":"n1","transform":{{"width":200,"height":100}},
+                        "kind":{{"type":"text","content":{{"box":{{"width":200,"height":100}},
+                        "align":"right","runs":[
+                            {{"kind":"literal","text":"AB","typeToken":"typeTokens.body",
+                            "style":{{"fontSize":{{"value":20}}{spacing}}}}}]}}}}}}]}}"##
+                )),
+                &mut Fonts::new(),
+            );
+            assert!(issues.is_empty(), "{issues:?}");
+            let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+                panic!("expected a text op");
+            };
+            layout.clone()
+        }
+        let spaced = laid_out(r##","letterSpacing":{"value":10}"##);
+        let plain = laid_out("");
+        assert!(
+            spaced.segments[0].origin.0 < plain.segments[0].origin.0 - 9.0,
+            "spaced {:?} plain {:?}",
+            spaced.segments[0].origin,
+            plain.segments[0].origin
+        );
     }
 
     fn value_run_document(binding: &str) -> ThemeDocument {

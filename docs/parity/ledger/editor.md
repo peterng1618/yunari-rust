@@ -8,15 +8,15 @@ The reference capture is the source host driven at 1920x1080
 first mode **Themes**, which is the pinned commit's vocabulary; the checked-out
 HEAD renamed it Library, so the served bundle is pinned-era, not HEAD.
 
-## P1 — shell
+## P1 â€” shell
 
 Evidence run:
 
-- `cargo test -p yunari-editor` — 144 passed (2 suites), including
+- `cargo test -p yunari-editor` â€” 144 passed (2 suites), including
   `shell_modes_are_themes_editor_settings_in_order`,
   `rail_slots_match_the_source_order`, `toolbar_groups_match_the_source_header`,
   `toolbar_groups_do_not_repeat_a_command`.
-- `cargo build -p yunari-app` — finished.
+- `cargo build -p yunari-app` â€” finished.
 - `scripts/capture-window.ps1` (DPI-aware) at 1920x1080 and at 1280x875
   physical = 1024x700 logical (the window minimum at 125% scaling).
 
@@ -121,7 +121,7 @@ Keyboard walkthrough of the header controls, focus visibility after a toggle
 press, and hover/pressed states on the rail and toolbar. P3 owns the keyboard
 path; the P1 gate above is layout only.
 
-## P3 — shortcut sheet
+## P3 â€” shortcut sheet
 
 The source has no command palette. `?` opens the shortcut reference, and the
 port follows it: `SHORTCUT_REFERENCE` carries the source's own rows, labels and
@@ -145,34 +145,34 @@ The sheet also forced the chords into line with the source's `PRODUCT_SHORTCUTS`
 
 Evidence:
 
-- `cargo test -p yunari-editor` — 153 passed, including
+- `cargo test -p yunari-editor` â€” 153 passed, including
   `only_the_commands_the_source_binds_print_a_chord`,
   `the_recent_list_keeps_the_last_five_opens_newest_first` and
   `the_reference_lists_the_source_rows_in_the_source_group_order`.
-- `cargo test --workspace` — no failures.
-- `test-results/parity-shots/editor-port-shortcuts.png` — 1042x747 physical
+- `cargo test --workspace` â€” no failures.
+- `test-results/parity-shots/editor-port-shortcuts.png` â€” 1042x747 physical
   (1024x700 logical at 125%), sheet inside the window, every group visible.
-- `test-results/parity-shots/editor-port-1080p-p1.png` — the sheet is closed on
+- `test-results/parity-shots/editor-port-1080p-p1.png` â€” the sheet is closed on
   boot, so the default shell is unchanged.
-- `test-results/parity-shots/editor-port-recent.png` — 1280x875, the recents
+- `test-results/parity-shots/editor-port-recent.png` â€” 1280x875, the recents
   menu sized to its rows. The seeded list was reverted after the shot.
-- `test-results/parity-shots/editor-port-publish.png` — 1280x875, the publish
+- `test-results/parity-shots/editor-port-publish.png` â€” 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
-- `test-results/parity-shots/editor-port-themes-current-footer.png` — 1920x1080,
+- `test-results/parity-shots/editor-port-themes-current-footer.png` â€” 1920x1080,
   the current-source card footer: name/day at rest, actions on hover.
-- `test-results/parity-shots/editor-port-themes-contain2.png` — 1920x1080, the
+- `test-results/parity-shots/editor-port-themes-contain2.png` â€” 1920x1080, the
   justified gallery reading the box's own `thumbnail.png` files; each picture
   is shown whole, not cropped. Seeded mode reverted after the shot.
-- `test-results/parity-shots/editor-port-settings-mode.png` — 1920x1080, the
+- `test-results/parity-shots/editor-port-settings-mode.png` â€” 1920x1080, the
   Settings nav with its two groups. Seeded mode reverted.
-- `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` —
+- `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` â€”
   1920x1080, the mode toggles with the kit's `spacing_tokens().sm` gap between
   icon and label, a segmented container behind the mode group, a bolder brand,
   small toolbar buttons and the primary accent publish button.
 
 
 
-## P4 — source research
+## P4 â€” source research
 
 A read-only pass over the source checkout (HEAD `c40dd16d`, newer than the
 pinned `1241866e5`) found:
@@ -234,3 +234,42 @@ source files, and every quoted anchor is still present in the source checkout.
 The records are intentionally short-lived: a new surface needs a fresh read of
 the code it claims to port. The gate was pipe-tested with and without a
 record; the settings watcher may need `/hooks` or a restart to load it.
+
+---
+
+# Editor surface audit (PR #35)
+
+## Issue index (this pass)
+
+| Issue | Row(s) | Class | Severity |
+|---|---|---|---|
+| #25 | E1, E6, E11 | layout | S1 |
+| #26 | E3 | layout | S2 |
+| #27 | E1 | missing | S2 |
+| #28 | E2, E11 | missing | S2 |
+| #29 | E5 | missing | S2 |
+| #30 | E4 | missing | S2 |
+| #31 | E6 | interaction | S3 |
+| #32 | E7 | missing | S3 |
+| #33 | E9 | missing | S3 |
+| #34 | E10 | missing | S3 |
+
+## Evidence commands
+
+Matched row:
+```
+cargo test -p yunari-editor history
+cd D:\git-repos\yunari\src\web
+npx vitest run packages/editor/src/history-manager --reporter=verbose
+```
+
+Full editor suites run during this pass:
+```
+cargo test -p yunari-editor
+# 140 passed
+cd src/web
+npx vitest run packages/editor/src/history-manager packages/editor/src/draft-store.test.ts \
+  packages/editor/src/shortcut-manager packages/editor/src/layer-manager \
+  packages/editor/src/selection-inspector/view.test.ts
+# 10 files, 135 tests passed
+```
