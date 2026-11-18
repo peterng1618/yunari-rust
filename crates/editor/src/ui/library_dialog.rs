@@ -114,6 +114,28 @@ impl LibraryPage {
     }
 }
 
+/// The source's installed-state filter. A local theme is on this PC; rows the
+/// catalogue holds alone would answer Not installed once the online half is
+/// read. Until then that choice is empty rather than a lie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryState {
+    All,
+    OnThisPc,
+    NotInstalled,
+}
+
+impl LibraryState {
+    pub const ALL: [Self; 3] = [Self::All, Self::OnThisPc, Self::NotInstalled];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::OnThisPc => "On this PC",
+            Self::NotInstalled => "Not installed",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FacetOption {
     pub id: String,
@@ -132,6 +154,7 @@ pub struct Facet {
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
     pub page: LibraryPage,
+    pub state: LibraryState,
     pub query: String,
     pub sort: ThemeSort,
     pub density: GridDensity,
@@ -262,6 +285,7 @@ impl LibraryDialog {
         Self {
             entries,
             page: LibraryPage::DashboardThemes,
+            state: LibraryState::All,
             query: String::new(),
             sort: ThemeSort::Updated,
             density: GridDensity::Comfortable,
@@ -283,6 +307,7 @@ impl LibraryDialog {
             .entries
             .iter()
             .filter(|entry| needle.is_empty() || entry.name.to_lowercase().contains(&needle))
+            .filter(|_| self.state != LibraryState::NotInstalled)
             .filter(|entry| {
                 self.chosen.iter().all(|(facet, wanted)| {
                     if wanted.is_empty() {
@@ -460,6 +485,25 @@ fn toolbar(
                 .border_color(cx.theme().border)
                 .bg(cx.theme().input)
                 .child(Input::new(state)),
+        );
+    }
+    for state in LibraryState::ALL {
+        let active = dialog.state == state;
+        row = row.child(
+            Button::new(format!("library-state-{:?}", state))
+                .small()
+                .with_variant(if active {
+                    gpui_kit::component::button::ButtonVariant::Primary
+                } else {
+                    gpui_kit::component::button::ButtonVariant::Ghost
+                })
+                .label(state.label())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(themes) = &mut this.themes {
+                        themes.state = state;
+                    }
+                    cx.notify();
+                })),
         );
     }
     for facet in &dialog.facets {
@@ -751,7 +795,11 @@ fn grid(
             .p_3()
             .text_sm()
             .text_color(muted)
-            .child("No stored themes yet. Save one first.")
+            .child(if dialog.state == LibraryState::NotInstalled {
+                "The store catalogue is not loaded yet."
+            } else {
+                "No stored themes yet. Save one first."
+            })
             .into_any_element();
     }
     let mut columns: Vec<AnyElement> = Vec::new();
@@ -999,7 +1047,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{GridDensity, LibraryDialog, LibraryPage, ThemeSort};
+    use super::{GridDensity, LibraryDialog, LibraryPage, LibraryState, ThemeSort};
     use std::collections::BTreeSet;
     use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
@@ -1048,6 +1096,27 @@ mod tests {
     }
 
     #[test]
+    fn not_installed_has_no_local_rows_to_show() {
+        let mut dialog = LibraryDialog {
+            entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            page: LibraryPage::DashboardThemes,
+            state: LibraryState::NotInstalled,
+            query: String::new(),
+            sort: ThemeSort::Updated,
+            density: GridDensity::Comfortable,
+            frames: BTreeMap::new(),
+            ratios: BTreeMap::new(),
+            facets: Vec::new(),
+            entry_facets: BTreeMap::new(),
+            chosen: BTreeMap::new(),
+            active_facet: None,
+        };
+        assert!(dialog.sorted().is_empty());
+        dialog.state = LibraryState::OnThisPc;
+        assert_eq!(dialog.sorted().len(), 2);
+    }
+
+    #[test]
     fn the_library_nav_uses_the_source_pages_in_order() {
         assert_eq!(
             LibraryPage::ALL.map(LibraryPage::label),
@@ -1074,6 +1143,7 @@ mod tests {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
             page: LibraryPage::DashboardThemes,
+            state: LibraryState::All,
             query: String::new(),
             sort: ThemeSort::Name,
             density: GridDensity::Comfortable,
@@ -1098,6 +1168,7 @@ mod tests {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
             page: LibraryPage::DashboardThemes,
+            state: LibraryState::All,
             query: "ALP".to_owned(),
             sort: ThemeSort::Updated,
             density: GridDensity::Comfortable,
@@ -1119,6 +1190,7 @@ mod tests {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
             page: LibraryPage::DashboardThemes,
+            state: LibraryState::All,
             query: String::new(),
             sort: ThemeSort::Name,
             density: GridDensity::Comfortable,

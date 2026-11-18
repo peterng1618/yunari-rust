@@ -158,6 +158,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` â€” 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-library-state.png` — 1920x1080, the
+  installed-state filter beside facets and the compact toolbar.
 - `test-results/parity-shots/editor-port-library-nav2.png` — 1920x1080, the
   Library nav column and a single-row toolbar.
 - `test-results/parity-shots/editor-port-library-facets.png` — 1920x1080,
@@ -244,7 +246,12 @@ stored documents and filter the listing. Counts come from the whole listing,
 as in the source. The port derives sensors from semantic-key families and
 shape from the artboard; a catalogue row would carry richer readings.
 
-Still to fold: Local library / Online store halves, state filter, collection cards
+The Installed state filter (All / On this PC / Not installed) is present. Not
+installed has no local rows to show and says the catalogue is not loaded; the
+current source removed the old Local library / Online store halves, so they
+are not ported.
+
+Still to fold: collection cards
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.
 
