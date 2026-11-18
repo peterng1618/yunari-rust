@@ -406,7 +406,12 @@ impl EditorWindow {
                     crate::ui::library_dialog::LibraryDialog::new(&self.library)
                 });
                 this.child(div().absolute().inset_0().bg(cx.theme().background).child(
-                    crate::ui::library_dialog::page(&dialog, cx, self.window_width),
+                    crate::ui::library_dialog::page(
+                        &dialog,
+                        cx,
+                        self.window_width,
+                        self.library_search.as_ref(),
+                    ),
                 ))
             })
             .when(self.mode == ShellMode::Settings, |this| {

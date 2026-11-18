@@ -11,12 +11,60 @@ use crate::ui::EditorWindow;
 pub enum ThemeSort {
     Name,
     Updated,
+    Created,
+    Downloads,
+    Favorites,
+}
+
+/// The four gallery densities, smallest cards first, as the source names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridDensity {
+    Compact,
+    Comfortable,
+    Roomy,
+    Spacious,
+}
+
+impl GridDensity {
+    pub const ALL: [Self; 4] = [
+        Self::Compact,
+        Self::Comfortable,
+        Self::Roomy,
+        Self::Spacious,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "Compact",
+            Self::Comfortable => "Comfortable",
+            Self::Roomy => "Roomy",
+            Self::Spacious => "Spacious",
+        }
+    }
+
+    fn target_width(self) -> f32 {
+        match self {
+            Self::Compact => 150.0,
+            Self::Comfortable => 204.0,
+            Self::Roomy => 270.0,
+            Self::Spacious => 360.0,
+        }
+    }
+}
+
+/// How many columns `width` holds at `level`, clamped to the source's range.
+fn columns_for(width: f32, density: GridDensity) -> usize {
+    let gap = 12.0;
+    let fit = ((width + gap) / (density.target_width() + gap)).floor() as usize;
+    fit.clamp(2, 12)
 }
 
 #[derive(Clone)]
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
+    pub query: String,
     pub sort: ThemeSort,
+    pub density: GridDensity,
     /// Real artboard previews, rastered once when the list opens. Images the
     /// document names are absent because reading them per card would stall the
     /// mode switch; shapes and text still come from the authored frame.
@@ -38,16 +86,24 @@ impl LibraryDialog {
         }
         Self {
             entries,
-            sort: ThemeSort::Name,
+            query: String::new(),
+            sort: ThemeSort::Updated,
+            density: GridDensity::Comfortable,
             frames,
             ratios,
         }
     }
 
-    /// The listing the page draws: sorted by the chosen column, newest first
-    /// when the author asked for time. The source lands on Name.
+    /// The listing the page draws: search by name, then the chosen order.
+    /// The source opens on Updated; a local row has no catalogue counts, so
+    /// Created/Downloads/Favorites leave the retained order alone.
     pub fn sorted(&self) -> Vec<&ThemeEntry> {
-        let mut rows: Vec<_> = self.entries.iter().collect();
+        let needle = self.query.trim().to_lowercase();
+        let mut rows: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| needle.is_empty() || entry.name.to_lowercase().contains(&needle))
+            .collect();
         match self.sort {
             ThemeSort::Name => rows.sort_by(|left, right| {
                 left.name
@@ -61,6 +117,7 @@ impl LibraryDialog {
                     .cmp(&left.updated_at)
                     .then_with(|| left.id.cmp(&right.id))
             }),
+            _ => {}
         }
         rows
     }
@@ -92,6 +149,7 @@ pub fn page(
     dialog: &LibraryDialog,
     cx: &mut Context<EditorWindow>,
     width: gpui_kit::Pixels,
+    search: Option<&gpui_kit::Entity<gpui_kit::component::input::InputState>>,
 ) -> impl IntoElement {
     use gpui_kit::component::{ActiveTheme, scroll::ScrollableElement};
 
@@ -111,21 +169,49 @@ pub fn page(
                         .text_color(cx.theme().foreground)
                         .child("Stored themes"),
                 )
-                .child(sort_row(dialog, cx))
+                .child(toolbar(dialog, cx, width, search))
                 .child(grid(dialog, cx, width)),
         )
 }
 
-/// The source's sort well, in its order: Name, then Updated. One surface owns
-/// the choice, so the page and the `Open` dialog agree on what "first" means.
-fn sort_row(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl IntoElement {
+/// The source's listing toolbar: search, facets' place, the sort well and the
+/// density level. Facets are derived from catalogue rows and land with the
+/// library halves; the controls that are already backed by real data are here.
+fn toolbar(
+    dialog: &LibraryDialog,
+    cx: &mut Context<EditorWindow>,
+    width: gpui_kit::Pixels,
+    search: Option<&gpui_kit::Entity<gpui_kit::component::input::InputState>>,
+) -> impl IntoElement {
     use gpui_kit::component::{
+        ActiveTheme,
         Sizable,
         button::{Button, ButtonVariants},
+        input::Input,
     };
 
-    div().flex().gap_2().children(
-        [(ThemeSort::Name, "Name"), (ThemeSort::Updated, "Updated")].map(|(sort, label)| {
+    let mut row = div().flex().flex_wrap().items_center().gap_2();
+    if let Some(state) = search {
+        row = row.child(
+            div()
+                .id("library-search")
+                .w(px(260.0))
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().input)
+                .child(Input::new(state)),
+        );
+    }
+    let sorts = [
+        (ThemeSort::Name, "Name"),
+        (ThemeSort::Updated, "Updated"),
+        (ThemeSort::Created, "Created"),
+        (ThemeSort::Downloads, "Downloads"),
+        (ThemeSort::Favorites, "Favorites"),
+    ];
+    for (sort, label) in sorts {
+        row = row.child(
             Button::new(format!("theme-sort-{label}"))
                 .small()
                 .with_variant(if dialog.sort == sort {
@@ -139,9 +225,28 @@ fn sort_row(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
                         themes.sort = sort;
                     }
                     cx.notify();
-                }))
-        }),
-    )
+                })),
+        );
+    }
+    for density in GridDensity::ALL {
+        row = row.child(
+            Button::new(format!("library-density-{:?}", density))
+                .small()
+                .with_variant(if dialog.density == density {
+                    gpui_kit::component::button::ButtonVariant::Primary
+                } else {
+                    gpui_kit::component::button::ButtonVariant::Ghost
+                })
+                .label(format!("{} · {}", density.label(), columns_for(f32::from(width), density)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(themes) = &mut this.themes {
+                        themes.density = density;
+                    }
+                    cx.notify();
+                })),
+        );
+    }
+    row
 }
 
 /// A theme's own thumbnail, written by the source when the theme was saved.
@@ -307,7 +412,10 @@ fn grid(
         .iter()
         .map(|entry| dialog.ratios.get(&entry.id).copied().unwrap_or(2.0))
         .collect();
-    let rows = justify_rows(&ratios, f32::from(width), 150.0, 12.0);
+    let gap = 12.0;
+    let columns = columns_for(f32::from(width), dialog.density);
+    let target_height = (f32::from(width) - gap * (columns as f32 - 1.0)) / columns as f32;
+    let rows = justify_rows(&ratios, f32::from(width), target_height, gap);
     if rows.is_empty() {
         return div()
             .p_3()
@@ -561,7 +669,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryDialog, ThemeSort};
+    use super::{GridDensity, LibraryDialog, ThemeSort};
     use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
 
@@ -609,10 +717,28 @@ mod tests {
     }
 
     #[test]
+    fn the_search_narrows_the_listing_by_name() {
+        let mut dialog = LibraryDialog {
+            entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            query: "ALP".to_owned(),
+            sort: ThemeSort::Updated,
+            density: GridDensity::Comfortable,
+            frames: BTreeMap::new(),
+            ratios: BTreeMap::new(),
+        };
+        let ids: Vec<_> = dialog.sorted().iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["a"]);
+        dialog.query.clear();
+        assert_eq!(dialog.sorted().len(), 2);
+    }
+
+    #[test]
     fn the_listing_sorts_by_name_or_by_the_latest_update() {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            query: String::new(),
             sort: ThemeSort::Name,
+            density: GridDensity::Comfortable,
             frames: BTreeMap::new(),
             ratios: BTreeMap::new(),
         };

@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme, TitleBar};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -324,6 +325,9 @@ pub struct EditorWindow {
     /// The Themes mode's listing, reloaded when the mode is entered so a save
     /// or a delete made elsewhere is not shown stale.
     themes: Option<library_dialog::LibraryDialog>,
+    /// The Themes mode's search box. The kit binds an `Input` to an entity, so
+    /// the state is created with the first window that renders this editor.
+    library_search: Option<Entity<InputState>>,
     /// The themes this editor has opened, newest first. The source keeps five.
     recents: Vec<RecentTheme>,
     /// Which top-level surface the header is showing. The editor body stays
@@ -549,6 +553,7 @@ impl EditorWindow {
             editing: None,
             overlay: None,
             themes: None,
+            library_search: None,
             recents,
             status: None,
             focus: cx.focus_handle(),
@@ -4487,6 +4492,19 @@ impl Render for EditorWindow {
         });
         self.window_height = window.bounds().size.height;
         self.window_width = window.bounds().size.width;
+        if self.library_search.is_none() {
+            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search themes"));
+            cx.subscribe(&search, |this: &mut EditorWindow, search: Entity<InputState>, event: &InputEvent, cx: &mut Context<EditorWindow>| {
+                if matches!(event, InputEvent::Change) {
+                    if let Some(themes) = &mut this.themes {
+                        themes.query = search.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                }
+            })
+            .detach();
+            self.library_search = Some(search);
+        }
         div()
             .size_full()
             .relative()
