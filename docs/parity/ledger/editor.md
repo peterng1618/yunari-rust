@@ -230,10 +230,8 @@ pinned `1241866e5`) found:
   Settings, and MCP in a separate server.
 - Store is not its own mode: the shell's Store command now opens the Library
   at My submissions, and the port's old standalone store dialog and its
-  sign-in path are gone. Catalogue install uses the host path; collection
-  consent is still unported.
-
-These are P4 gaps, not claims of parity.
+  sign-in path are gone. Catalogue install and collection consent use the
+  host's own paths.
 
 ### Folding in the newer source
 
@@ -278,10 +276,14 @@ are not ported.
 
 The Collections and My submissions pages read the host's catalogue halves
 once, list the rows the host answered and offer Install through the host's own
-download, digest check and install path. The publish surface draws the host's
-address, pairing code and QR symbol. Collection consent is still unported.
+download, digest check and install path. A collection opens a consent sheet
+listing required and optional includes before any member is installed. The
+publish surface draws the host's address, pairing code and QR symbol.
 
-These are P4 gaps, not claims of parity.
+The host now reads the collection package under its configured store origin,
+validates its format and includes, and resolves members against its catalogue
+answer before the editor draws the consent sheet. Internal multi-object
+spacing holds remain P3; that is a gap, not a claim of parity.
 
 ## Source-reading gate
 

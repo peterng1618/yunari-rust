@@ -4053,11 +4053,9 @@ impl EditorWindow {
             cx.notify();
             return;
         };
-        let includes = match host.store.read_url(url).map_err(|error| error.to_string())
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).map_err(|error| error.to_string()))
-        {
-            Ok(package) => package
-                .get("includes")
+        let includes = match host.store.collection_plan(url, None) {
+            Ok(plan) => plan
+                .get("members")
                 .and_then(serde_json::Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
