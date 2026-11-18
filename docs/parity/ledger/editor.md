@@ -214,7 +214,9 @@ pinned `1241866e5`) found:
   Engine), defaulting to Icons, with per-tab search and empty/key-required/
   error states. The port now draws that rail and separates its stock icons,
   its local pictures and its Wallpaper Engine rows by tab. Source chips now switch the stock and local rows on and off, and every row
-  carries its source. Colors, Fonts and Videos still say they are not ported;
+  carries its source. Local picture rows show the file's own bytes as a small
+  preview when the file can be read; remote rows still carry no preview until
+  the host answers with one. Colors, Fonts and Videos still say they are not ported;
   per-tab search, previews and the key-required/error states remain P4.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the

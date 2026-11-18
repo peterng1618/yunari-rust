@@ -41,6 +41,9 @@ pub struct Choice {
     pub tab: FinderTab,
     /// The source that offered this row, for the source chips.
     pub source: String,
+    /// A local picture's own bytes, shown in the row. Remote and wallpaper
+    /// rows carry no preview until the host answers with one.
+    pub preview: Option<std::sync::Arc<gpui_kit::Image>>,
 }
 
 /// The source's finder rail, in its declared order. Icons is the opening tab.
@@ -114,6 +117,7 @@ impl AssetFinder {
             note = Some("No pictures are in this PC's Pictures folder.".to_owned());
         }
         choices.extend(pictures.into_iter().map(|path| {
+            let preview = preview_of(&path);
             Choice {
                 label: path
                     .file_name()
@@ -122,6 +126,7 @@ impl AssetFinder {
                 pick: Pick::File(path),
                 tab: FinderTab::Images,
                 source: "local".to_owned(),
+                preview,
             }
         }));
 
@@ -134,6 +139,7 @@ impl AssetFinder {
                         pick: Pick::Wallpaper(item.workshop_id.clone()),
                         tab: FinderTab::WallpaperEngine,
                         source: "wallpaper-engine".to_owned(),
+                        preview: None,
                     }];
                     // A scene is a package, not a picture: its own action is
                     // writing it out as a project the engine can edit.
@@ -143,6 +149,7 @@ impl AssetFinder {
                             pick: Pick::Project(item.workshop_id),
                             tab: FinderTab::WallpaperEngine,
                             source: "wallpaper-engine".to_owned(),
+                            preview: None,
                         });
                     }
                     rows
@@ -165,6 +172,33 @@ impl AssetFinder {
             note,
         }
     }
+}
+
+/// Reads a local picture into the image element the kit draws. An unreadable
+/// or unknown file simply has no preview; the row still names it and can place
+/// it, so a broken thumbnail never becomes a broken action.
+fn preview_of(path: &std::path::Path) -> Option<std::sync::Arc<gpui_kit::Image>> {
+    const MAX_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+    if std::fs::metadata(path).ok()?.len() > MAX_PREVIEW_BYTES {
+        return None;
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let format = match extension.as_str() {
+        "png" => gpui_kit::ImageFormat::Png,
+        "jpg" | "jpeg" => gpui_kit::ImageFormat::Jpeg,
+        "gif" => gpui_kit::ImageFormat::Gif,
+        "webp" => gpui_kit::ImageFormat::Webp,
+        "bmp" => gpui_kit::ImageFormat::Bmp,
+        _ => return None,
+    };
+    let bytes = std::fs::read(path).ok()?;
+    Some(std::sync::Arc::new(gpui_kit::Image::from_bytes(
+        format, bytes,
+    )))
 }
 
 fn local_pictures() -> Vec<PathBuf> {
@@ -229,6 +263,7 @@ pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, O
                         label: format!("{name}  ·  {}", stock.label),
                         tab,
                         source: stock.id.to_owned(),
+                        preview: None,
                         pick: Pick::Stock {
                             source: stock.id.to_owned(),
                             id: id.to_owned(),
@@ -343,7 +378,27 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .rounded_sm()
                 .cursor_pointer()
                 .bg(rgb(0x22222a))
-                .child(choice.label.clone())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(match &choice.preview {
+                            Some(image) => div()
+                                .size(px(36.0))
+                                .flex_shrink_0()
+                                .rounded_sm()
+                                .overflow_hidden()
+                                .child(
+                                    img(gpui_kit::ImageSource::Image(image.clone()))
+                                        .size_full()
+                                        .object_fit(gpui_kit::ObjectFit::Cover),
+                                )
+                                .into_any_element(),
+                            None => div().w(px(36.0)).into_any_element(),
+                        })
+                        .child(choice.label.clone()),
+                )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.place_asset(&choice, cx);
                 }))
