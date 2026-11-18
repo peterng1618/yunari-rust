@@ -175,6 +175,8 @@ Evidence:
 - `test-results/parity-shots/editor-port-themes-contain2.png` â€” 1920x1080, the
   justified gallery reading the box's own `thumbnail.png` files; each picture
   is shown whole, not cropped. Seeded mode reverted after the shot.
+- `test-results/parity-shots/editor-port-settings-pages.png` — 1280x875,
+  the source's two nav groups with a per-page hint.
 - `test-results/parity-shots/editor-port-settings-mode.png` â€” 1920x1080, the
   Settings nav with its two groups. Seeded mode reverted.
 - `test-results/parity-shots/editor-port-chrome-final.png` / `-polish.png` / `-spacing.png` â€”
