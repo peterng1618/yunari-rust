@@ -7,16 +7,54 @@ use crate::validate::{ValidationIssue, validate_document};
 pub const SCHEMA_VERSION: &str = "3.0.0";
 pub const SUPPORTED_SCHEMA_MAJOR: u64 = 3;
 
-/// Task 1 placeholders: the schema's `globals` and `scene` objects are carried
-/// as raw JSON until Task 2 types them. Values are never dropped, so a real
-/// schema-3 document round-trips; only their contents go unvalidated for now.
+/// The authoritative token bags. `palette` and `type_tokens` reuse the shapes
+/// the editor already authors; the ids are the map keys, so a rename never
+/// breaks a reference.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Globals(pub serde_json::Value);
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Globals {
+    #[serde(default)]
+    pub palette: BTreeMap<String, PaletteEntry>,
+    #[serde(default)]
+    pub type_tokens: BTreeMap<String, TypeToken>,
+}
 
+/// Fabric JSON, retained as scene data. `version` is the Fabric version axis,
+/// preserved and never used for dispatch. Extra scene keys are kept as data —
+/// the schema's `fabricScene` allows `additionalProperties`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct FabricScene(pub serde_json::Value);
+#[serde(rename_all = "camelCase")]
+pub struct FabricScene {
+    /// The schema requires a `scene` with a version. Legacy source envelopes
+    /// and packages may omit it (or write `null`); absence is kept as `None`
+    /// rather than dropping the rest of the scene.
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub objects: Vec<FabricObject>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// One Fabric scene object. Only the fields Yunari interprets are typed; the
+/// rest of the Fabric record stays in `data` so nothing is dropped. A group's
+/// children are Fabric objects too, never major-1 `Node`s.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FabricObject {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, rename = "type")]
+    pub object_type: Option<String>,
+    #[serde(default, rename = "yunariGlass")]
+    pub yunari_glass: Option<GlassTreatment>,
+    #[serde(default, rename = "objects")]
+    pub children: Vec<FabricObject>,
+    #[serde(flatten)]
+    pub data: serde_json::Map<String, serde_json::Value>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -35,13 +73,16 @@ pub struct ThemeDocument {
     pub globals: Globals,
     #[serde(default)]
     pub scene: FabricScene,
-    #[serde(default)]
+    /// Major-1 in-memory view, kept for the source-lift/editor path. A real
+    /// schema-3 document leaves these empty, so they are omitted from output:
+    /// the schema forbids them as top-level fields.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub palette: BTreeMap<String, PaletteEntry>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub type_tokens: BTreeMap<String, TypeToken>,
     #[serde(default)]
     pub assets: Vec<AssetReference>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<Node>,
     #[serde(default)]
     pub bindings: BTreeMap<String, Vec<Binding>>,

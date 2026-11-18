@@ -1,6 +1,6 @@
-//! Task 1 of the schema-3 migration: the version gate and the top-level fields
-//! the schema marks as required. Nested `globals`/`scene` shapes belong to Task
-//! 2; these tests only pin that Task 1 does not drop their data.
+//! Schema-3 migration: version gate, top-level fields, and typed nested
+//! `globals`/`scene` shapes. These tests pin that real installed themes parse
+//! with their palette, type tokens and Fabric scene retained as typed data.
 
 use yunari_model::document::{
     DocumentError, SCHEMA_VERSION, SUPPORTED_SCHEMA_MAJOR, parse_document, write_document,
@@ -64,4 +64,130 @@ fn refuses_schema_major_four_without_coercion() {
         panic!("expected a version validation error, got {error:?}");
     };
     assert!(issues.iter().any(|issue| issue.path == "schemaVersion"));
+}
+
+/// A real 3.0.0 document with populated globals and a populated Fabric scene.
+/// Kept inline so the typed-shape assertions run offline; the installed-theme
+/// test below runs only when `YUNARI_TEST_THEME` points at a real file.
+const POPULATED_SCHEMA3: &str = r##"{
+    "schemaVersion": "3.0.0",
+    "fabricVersion": "7.4.0",
+    "id": "populated",
+    "artboard": { "width": 800, "height": 480 },
+    "globals": {
+        "palette": {
+            "none": { "name": "None", "value": { "kind": "solid", "color": "transparent" } },
+            "text": { "name": "Text", "value": { "kind": "solid", "color": "#ecf5ff" } }
+        },
+        "typeTokens": {
+            "body": { "family": "Segoe UI", "weight": 400 }
+        }
+    },
+    "scene": {
+        "version": "7.4.0",
+        "objects": [
+            { "type": "Rect", "id": "rule", "left": 0, "top": 0, "width": 10, "height": 10 },
+            { "type": "Group", "id": "group", "objects": [
+                { "type": "Circle", "id": "dot", "left": 2, "top": 2 }
+            ] }
+        ]
+    }
+}"##;
+
+#[test]
+fn parses_typed_globals_and_scene() {
+    let doc = parse_document(POPULATED_SCHEMA3).expect("populated schema-3 document parses");
+    // Typed access must reach into globals, not a raw serde_json::Value bag.
+    assert_eq!(doc.globals.palette["none"].name, "None");
+    assert_eq!(doc.globals.type_tokens["body"].family, "Segoe UI");
+    assert_eq!(doc.scene.version.as_deref(), Some("7.4.0"));
+    assert_eq!(doc.scene.objects.len(), 2);
+}
+
+#[test]
+fn fabric_objects_stay_scene_data_not_nodes() {
+    let doc = parse_document(POPULATED_SCHEMA3).expect("parses");
+    assert!(
+        doc.nodes.is_empty(),
+        "Fabric objects stay in the scene, never folded into major-1 nodes"
+    );
+    let rule = &doc.scene.objects[0];
+    assert_eq!(rule.id, "rule");
+    assert_eq!(rule.object_type.as_deref(), Some("Rect"));
+    assert_eq!(rule.data["width"], 10);
+    let group = &doc.scene.objects[1];
+    assert_eq!(group.children.len(), 1, "nesting is retained as scene data");
+    assert_eq!(group.children[0].id, "dot");
+}
+
+#[test]
+fn refused_nested_paint_and_malformed_scene_fields() {
+    let bad_paint = POPULATED_SCHEMA3.replace("\"color\": \"#ecf5ff\"", "\"colour\": \"#ecf5ff\"");
+    parse_document(&bad_paint).expect_err("a paint with no colour field is refused");
+
+    let bad_version = POPULATED_SCHEMA3.replace("\"version\": \"7.4.0\",", "\"version\": \"7.4\",");
+    let DocumentError::Invalid(issues) =
+        parse_document(&bad_version).expect_err("scene.version must be major.minor.patch")
+    else {
+        panic!("expected validation issues");
+    };
+    assert!(issues.iter().any(|issue| issue.path == "scene/version"));
+}
+
+#[test]
+fn empty_defaults_serialize_as_objects_not_null() {
+    let doc = parse_document(MINIMAL_SCHEMA3).expect("parses");
+    let json = write_document(&doc).expect("writes");
+    let raw: serde_json::Value = serde_json::from_str(&json).expect("written JSON");
+    assert!(raw["globals"].is_object(), "globals is never null");
+    assert!(raw["scene"].is_object(), "scene is never null");
+    assert!(raw["scene"]["objects"].is_array(), "objects is never null");
+}
+
+#[test]
+fn written_schema3_document_has_no_legacy_top_level_fields() {
+    let doc = parse_document(POPULATED_SCHEMA3).expect("parses");
+    let json = write_document(&doc).expect("writes");
+    let raw: serde_json::Value = serde_json::from_str(&json).expect("written JSON");
+    for legacy in ["palette", "typeTokens", "nodes"] {
+        assert!(
+            raw.get(legacy).is_none(),
+            "schema-3 output must not contain legacy top-level field {legacy}"
+        );
+    }
+    // The typed nested bags survive the write.
+    assert_eq!(raw["globals"]["palette"]["none"]["name"], "None");
+    assert_eq!(raw["scene"]["objects"][0]["id"], "rule");
+}
+
+/// Reads a real installed theme from the environment. Absent means offline:
+/// the test skips with a clear message, so the suite stays self-contained.
+#[test]
+fn parses_a_real_installed_theme() {
+    let Ok(path) = std::env::var("YUNARI_TEST_THEME") else {
+        eprintln!("SKIP: YUNARI_TEST_THEME is not set; no real theme to parse");
+        return;
+    };
+    let json = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("could not read {path}: {error}"));
+    let doc = parse_document(&json)
+        .unwrap_or_else(|error| panic!("parse_document rejected {path}: {error}"));
+    assert_eq!(doc.schema_version, "3.0.0");
+    assert!(!doc.fabric_version.is_empty(), "fabricVersion is preserved");
+    assert!(
+        !doc.globals.palette.is_empty(),
+        "globals.palette is retained as typed data"
+    );
+    assert!(
+        !doc.globals.type_tokens.is_empty(),
+        "globals.typeTokens is retained as typed data"
+    );
+    assert!(
+        !doc.scene.objects.is_empty(),
+        "scene.objects is retained as typed scene data"
+    );
+    assert!(
+        doc.nodes.is_empty(),
+        "real Fabric objects are not folded into major-1 nodes"
+    );
 }

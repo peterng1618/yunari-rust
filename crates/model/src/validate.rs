@@ -3,8 +3,8 @@ use std::fmt;
 
 use crate::document::{
     Artboard, ArtboardShape, AssetKind, AssetReference, Background, BackgroundMode, Binding,
-    ChartFamily, Metadata, Node, NodeKind, Paint, SUPPORTED_SCHEMA_MAJOR, StyleMap, StyleValue,
-    ThemeDocument, TypeToken,
+    ChartFamily, FabricObject, GlassTreatment, Metadata, Node, NodeKind, Paint,
+    SUPPORTED_SCHEMA_MAJOR, StyleMap, StyleValue, ThemeDocument, TypeToken,
 };
 
 pub const MAX_ARTBOARD_DIMENSION: f64 = 16384.0;
@@ -39,11 +39,20 @@ pub fn resolve_style_ref<'a>(
         return None;
     }
     match group {
+        // Globals are authoritative in a parsed schema-3 document; the
+        // top-level bags are the legacy view a source-lifted document keeps.
         "palette" => document
+            .globals
             .palette
             .get(id)
+            .or_else(|| document.palette.get(id))
             .map(|entry| StyleRefTarget::Palette(&entry.value)),
-        "typeTokens" => document.type_tokens.get(id).map(StyleRefTarget::TypeToken),
+        "typeTokens" => document
+            .globals
+            .type_tokens
+            .get(id)
+            .or_else(|| document.type_tokens.get(id))
+            .map(StyleRefTarget::TypeToken),
         _ => None,
     }
 }
@@ -99,6 +108,7 @@ pub fn validate_document(document: &ThemeDocument) -> Result<(), Vec<ValidationI
     validate_metadata(&document.metadata, &mut issues);
     validate_artboard(&document.artboard, &mut issues);
     validate_tokens(document, &mut issues);
+    validate_globals_and_scene(document, &mut issues);
     validate_assets(document, &mut issues);
     validate_background(document, &mut issues);
     validate_nodes(document, &mut issues);
@@ -234,24 +244,36 @@ fn validate_artboard(artboard: &Artboard, issues: &mut Vec<ValidationIssue>) {
 }
 
 fn validate_tokens(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
-    for id in document.palette.keys() {
-        if !is_stable_id(id) {
-            issues.push(issue(
-                format!("palette/{id}"),
-                "A palette token id must match [A-Za-z0-9_-]{1,64}.",
-            ));
+    // Globals are authoritative in schema 3; the top-level bags stay checked
+    // for source-lifted documents that still carry the major-1 view.
+    for (bag, tokens) in [
+        ("globals/palette", &document.globals.palette),
+        ("palette", &document.palette),
+    ] {
+        for id in tokens.keys() {
+            if !is_stable_id(id) {
+                issues.push(issue(
+                    format!("{bag}/{id}"),
+                    "A palette token id must match [A-Za-z0-9_-]{1,64}.",
+                ));
+            }
+        }
+        for (id, entry) in tokens {
+            validate_paint(&entry.value, &format!("{bag}/{id}"), issues);
         }
     }
-    for id in document.type_tokens.keys() {
-        if !is_stable_id(id) {
-            issues.push(issue(
-                format!("typeTokens/{id}"),
-                "A type token id must match [A-Za-z0-9_-]{1,64}.",
-            ));
+    for (bag, tokens) in [
+        ("globals/typeTokens", &document.globals.type_tokens),
+        ("typeTokens", &document.type_tokens),
+    ] {
+        for id in tokens.keys() {
+            if !is_stable_id(id) {
+                issues.push(issue(
+                    format!("{bag}/{id}"),
+                    "A type token id must match [A-Za-z0-9_-]{1,64}.",
+                ));
+            }
         }
-    }
-    for (id, entry) in &document.palette {
-        validate_paint(&entry.value, &format!("palette/{id}"), issues);
     }
 }
 
@@ -274,6 +296,69 @@ fn validate_paint(paint: &Paint, path: &str, issues: &mut Vec<ValidationIssue>) 
                 ));
             }
         }
+    }
+}
+
+/// Fabric's own version axis is preserved as data. The schema requires a
+/// `major.minor.patch` string; a Fabric object carries no Yunari semantic
+/// meaning, so only that shape is checked, never the version's value.
+fn is_semver_string(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn validate_globals_and_scene(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
+    if document
+        .scene
+        .version
+        .as_deref()
+        .is_some_and(|version| !is_semver_string(version))
+    {
+        issues.push(issue(
+            "scene/version",
+            "A scene version is major.minor.patch.",
+        ));
+    }
+    for object in &document.scene.objects {
+        validate_fabric_object(object, "scene/objects", issues);
+    }
+}
+
+fn validate_fabric_object(object: &FabricObject, path: &str, issues: &mut Vec<ValidationIssue>) {
+    for child in &object.children {
+        validate_fabric_object(child, &format!("{path}/objects"), issues);
+    }
+    let Some(glass) = &object.yunari_glass else {
+        return;
+    };
+    validate_fabric_glass(glass, &format!("{path}/{}/yunariGlass", object.id), issues);
+    if object.object_type.as_deref().is_none_or(|kind| {
+        !matches!(
+            kind,
+            "Rect" | "Circle" | "Ellipse" | "Triangle" | "Polygon" | "Path" | "Group"
+        )
+    }) {
+        issues.push(issue(
+            format!("{path}/{}/yunariGlass", object.id),
+            "Only a closed Fabric shape can carry a glass backdrop.",
+        ));
+    }
+}
+
+fn validate_fabric_glass(glass: &GlassTreatment, path: &str, issues: &mut Vec<ValidationIssue>) {
+    if !glass.blur_radius.is_finite()
+        || !(0.0..=crate::document::MAX_GLASS_BLUR_RADIUS).contains(&glass.blur_radius)
+    {
+        issues.push(issue(
+            format!("{path}/blurRadius"),
+            format!(
+                "A glass blur is from 0 to {} artboard units.",
+                crate::document::MAX_GLASS_BLUR_RADIUS
+            ),
+        ));
     }
 }
 
@@ -542,17 +627,7 @@ fn validate_glass(node: &Node, path: &str, issues: &mut Vec<ValidationIssue>) {
             "Only a closed shape can carry a glass backdrop.",
         ));
     }
-    if !glass.blur_radius.is_finite()
-        || !(0.0..=crate::document::MAX_GLASS_BLUR_RADIUS).contains(&glass.blur_radius)
-    {
-        issues.push(issue(
-            format!("{path}/glass/blurRadius"),
-            format!(
-                "A glass blur is from 0 to {} artboard units.",
-                crate::document::MAX_GLASS_BLUR_RADIUS
-            ),
-        ));
-    }
+    validate_fabric_glass(glass, &format!("{path}/glass"), issues);
 }
 
 fn validate_node_kind(
@@ -685,6 +760,15 @@ fn validate_bindings(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>
         while let Some(node) = stack.pop() {
             ids.insert(node.id.as_str());
             stack.extend(node.children.iter());
+        }
+        // A schema-3 document has no nodes: a binding is owned by a Fabric
+        // scene object instead. Both views must be accepted.
+        let mut objects: Vec<&FabricObject> = document.scene.objects.iter().collect();
+        while let Some(object) = objects.pop() {
+            if !object.id.is_empty() {
+                ids.insert(object.id.as_str());
+            }
+            objects.extend(object.children.iter());
         }
         ids
     };
