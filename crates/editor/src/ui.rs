@@ -366,6 +366,9 @@ pub struct EditorWindow {
     /// An acquired equal-spacing line, held while the pointer stays within
     /// the source's wider release window.
     spacing_hold: Option<(snap::Axis, f64)>,
+    /// Gaps between the first two selected nodes, held while their selection
+    /// is dragged so an authored pattern survives the gesture.
+    internal_spacing: Vec<(snap::Axis, String, String, f64)>,
     /// Bumped per arrow press so a stale idle timer ends nothing.
     nudge_epoch: u64,
     /// Group rows the layers panel is showing the children of.
@@ -633,6 +636,7 @@ impl EditorWindow {
             gesture: None,
             guides: Vec::new(),
             spacing_hold: None,
+            internal_spacing: Vec::new(),
             nudge_epoch: 0,
             expanded: BTreeSet::new(),
             renaming: None,
@@ -2027,8 +2031,41 @@ impl EditorWindow {
     /// A press on the canvas: a handle starts a transform, a node joins or
     /// replaces the selection and may be dragged, and empty canvas starts a
     /// marquee.
+    /// Records the gaps between the first two selected nodes. A two-object
+    /// selection carries its authored spacing through a drag until the pointer
+    /// pulls it outside the source's release window.
+    fn capture_internal_spacing(&mut self) {
+        self.internal_spacing.clear();
+        let starts = self.start_transforms();
+        let Some((first_id, first)) = starts.first() else {
+            return;
+        };
+        let Some((second_id, second)) = starts.get(1) else {
+            return;
+        };
+        let gap_x = second.x - first.x;
+        let gap_y = second.y - first.y;
+        if gap_x > 0.0 {
+            self.internal_spacing.push((
+                snap::Axis::X,
+                first_id.clone(),
+                second_id.clone(),
+                gap_x,
+            ));
+        }
+        if gap_y > 0.0 {
+            self.internal_spacing.push((
+                snap::Axis::Y,
+                first_id.clone(),
+                second_id.clone(),
+                gap_y,
+            ));
+        }
+    }
+
     fn canvas_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
         self.spacing_hold = None;
+        self.internal_spacing.clear();
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
@@ -2066,6 +2103,7 @@ impl EditorWindow {
                         .find(|(held, _)| *held == id)
                         .map(|(_, transform)| (transform.x, transform.y))
                     {
+                        self.capture_internal_spacing();
                         self.editor.begin_burst();
                         self.gesture = Some(Gesture::Move {
                             start: (x, y),
@@ -2170,7 +2208,7 @@ impl EditorWindow {
                 };
                 guides = found;
                 let (dx, dy) = (x - anchor.0, y - anchor.1);
-                starts
+                let mut moved: Vec<(String, Transform)> = starts
                     .iter()
                     .map(|(id, transform)| {
                         let mut next = *transform;
@@ -2178,7 +2216,45 @@ impl EditorWindow {
                         next.y += dy;
                         (id.clone(), next)
                     })
-                    .collect()
+                    .collect();
+                let release = f64::from(10.0 / self.viewport.scale.max(f32::MIN_POSITIVE));
+                let mut kept = Vec::new();
+                for hold in self.internal_spacing.drain(..) {
+                    let (axis, first_id, second_id, gap) = hold;
+                    let Some(first_pos) = moved
+                        .iter()
+                        .find(|(id, _)| *id == first_id)
+                        .map(|(_, transform)| match axis {
+                            snap::Axis::X => transform.x,
+                            snap::Axis::Y => transform.y,
+                        })
+                    else {
+                        continue;
+                    };
+                    let Some(second) = moved.iter_mut().find(|(id, _)| *id == second_id) else {
+                        continue;
+                    };
+                    let current = match axis { snap::Axis::X => second.1.x, snap::Axis::Y => second.1.y };
+                    let wanted = first_pos + gap;
+                    let drift = current - wanted;
+                    if enabled && drift.abs() <= release {
+                        match axis {
+                            snap::Axis::X => second.1.x = wanted,
+                            snap::Axis::Y => second.1.y = wanted,
+                        }
+                        let board = &self.editor.document().artboard;
+                        guides.push(snap::Guide {
+                            axis,
+                            at: (first_pos + wanted) / 2.0,
+                            from: 0.0,
+                            to: match axis { snap::Axis::X => board.height, snap::Axis::Y => board.width },
+                            spacing: true,
+                        });
+                        kept.push((axis, first_id.clone(), second_id.clone(), gap));
+                    }
+                }
+                self.internal_spacing = kept;
+                moved
             }
             Gesture::Resize {
                 id,
@@ -3076,6 +3152,7 @@ impl EditorWindow {
         self.panning = None;
         if self.gesture.take().is_some() {
             self.spacing_hold = None;
+            self.internal_spacing.clear();
             self.guides.clear();
             self.editor.end_burst();
             self.refresh();
