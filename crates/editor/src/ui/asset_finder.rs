@@ -253,7 +253,7 @@ fn stock_preview(
 }
 
 pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, Option<String>) {
-    search_sources(query, credential, &PICTURE_SOURCES)
+    search_sources(query, credential, &PICTURE_SOURCES, kinds_for(FinderTab::Images), FinderTab::Images)
 }
 
 /// The sources a tab may ask. Icons and images share one host search, but the
@@ -269,8 +269,26 @@ pub fn search_for(
             query,
             credential,
             &["lucide", "lineicons", "fontawesome-free"],
+            kinds_for(FinderTab::Icons),
+            FinderTab::Icons,
         ),
-        FinderTab::Images => search_sources(query, credential, &["unsplash"]),
+        FinderTab::Images => search_sources(query, credential, &["unsplash"], kinds_for(FinderTab::Images), FinderTab::Images),
+        FinderTab::Colors => search_sources(
+            query,
+            credential,
+            &["webgradients", "uigradients", "colorswoop", "colorhunt"],
+            kinds_for(FinderTab::Colors),
+            FinderTab::Colors,
+        ),
+        FinderTab::Fonts => {
+            search_sources(
+                query,
+                credential,
+                &["google-fonts", "curated-fonts"],
+                kinds_for(FinderTab::Fonts),
+                FinderTab::Fonts,
+            )
+        }
         FinderTab::WallpaperEngine => (
             Vec::new(),
             Some("Wallpaper Engine searches this PC's library, not a remote source.".to_owned()),
@@ -279,10 +297,22 @@ pub fn search_for(
     }
 }
 
+/// The result kinds each tab can place.
+fn kinds_for(tab: FinderTab) -> &'static [&'static str] {
+    match tab {
+        FinderTab::Colors => &["gradient", "palette"],
+        FinderTab::Fonts => &["font"],
+        FinderTab::Videos => &["video"],
+        _ => &["image", "svg", "gif"],
+    }
+}
+
 fn search_sources(
     query: &str,
     credential: Option<&str>,
     sources: &[&str],
+    kinds: &[&str],
+    tab: FinderTab,
 ) -> (Vec<Choice>, Option<String>) {
     let mut choices = Vec::new();
     let mut notes = Vec::new();
@@ -295,7 +325,7 @@ fn search_sources(
             Ok(page) => {
                 for result in page.results {
                     let kind = result["kind"].as_str().unwrap_or_default();
-                    if !matches!(kind, "image" | "svg" | "gif") {
+                    if !kinds.contains(&kind) {
                         continue;
                     }
                     let Some(id) = result["id"].as_str() else {
@@ -307,11 +337,6 @@ fn search_sources(
                             .as_str()
                             .filter(|value| !value.is_empty())
                             .map(str::to_owned)
-                    };
-                    let tab = if stock.id == "unsplash" {
-                        FinderTab::Images
-                    } else {
-                        FinderTab::Icons
                     };
                     let preview = stock_preview(stock.id, id, credential);
                     choices.push(Choice {
@@ -465,11 +490,15 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
         dialog.query.value.clone()
     };
     let unported = match dialog.tab {
-        FinderTab::Colors | FinderTab::Fonts | FinderTab::Videos => Some(format!(
+        FinderTab::Videos => Some(format!(
             "The {} tab is not ported yet. Its sources need the host's asset registry.",
             dialog.tab.label()
         )),
-        FinderTab::Icons | FinderTab::Images | FinderTab::WallpaperEngine => None,
+        FinderTab::Icons
+        | FinderTab::Images
+        | FinderTab::Colors
+        | FinderTab::Fonts
+        | FinderTab::WallpaperEngine => None,
     };
     let body: AnyElement = if let Some(message) = unported {
         div()
