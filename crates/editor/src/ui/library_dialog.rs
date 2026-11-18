@@ -16,6 +16,18 @@ pub enum ThemeSort {
     Favorites,
 }
 
+impl ThemeSort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Updated => "Updated",
+            Self::Created => "Created",
+            Self::Downloads => "Downloads",
+            Self::Favorites => "Favorites",
+        }
+    }
+}
+
 /// The four gallery densities, smallest cards first, as the source names them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GridDensity {
@@ -59,6 +71,49 @@ fn columns_for(width: f32, density: GridDensity) -> usize {
     fit.clamp(2, 12)
 }
 
+/// The Library mode's navigation, in the source's order. One owner for the
+/// column and the page body, so a word cannot name a page that cannot draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryPage {
+    DashboardThemes,
+    AppThemes,
+    Widgets,
+    Shapes,
+    SensorProviders,
+    AssetSources,
+    PanelDrivers,
+    Collections,
+    Submissions,
+}
+
+impl LibraryPage {
+    pub const ALL: [Self; 9] = [
+        Self::DashboardThemes,
+        Self::AppThemes,
+        Self::Widgets,
+        Self::Shapes,
+        Self::SensorProviders,
+        Self::AssetSources,
+        Self::PanelDrivers,
+        Self::Collections,
+        Self::Submissions,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DashboardThemes => "Dashboard themes",
+            Self::AppThemes => "App themes",
+            Self::Widgets => "Widgets",
+            Self::Shapes => "Shapes",
+            Self::SensorProviders => "Sensor providers",
+            Self::AssetSources => "Asset sources",
+            Self::PanelDrivers => "Panel drivers",
+            Self::Collections => "Collections",
+            Self::Submissions => "My submissions",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct FacetOption {
     pub id: String,
@@ -76,6 +131,7 @@ pub struct Facet {
 #[derive(Clone)]
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
+    pub page: LibraryPage,
     pub query: String,
     pub sort: ThemeSort,
     pub density: GridDensity,
@@ -205,6 +261,7 @@ impl LibraryDialog {
         let (facets, entry_facets) = build_facets(library, &entries);
         Self {
             entries,
+            page: LibraryPage::DashboardThemes,
             query: String::new(),
             sort: ThemeSort::Updated,
             density: GridDensity::Comfortable,
@@ -285,27 +342,95 @@ pub fn page(
     width: gpui_kit::Pixels,
     search: Option<&gpui_kit::Entity<gpui_kit::component::input::InputState>>,
 ) -> impl IntoElement {
-    use gpui_kit::component::{ActiveTheme, scroll::ScrollableElement};
+    use gpui_kit::component::{
+        ActiveTheme,
+        Sizable,
+        button::{Button, ButtonVariants},
+        scroll::ScrollableElement,
+    };
 
+    let nav = div()
+        .w(px(232.0))
+        .flex_shrink_0()
+        .min_h(px(0.0))
+        .p_3()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .bg(cx.theme().sidebar)
+        .border_r_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .pb_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Browse"),
+        );
+    let mut nav = nav;
+    for page in LibraryPage::ALL {
+        if page == LibraryPage::Submissions {
+            nav = nav.child(
+                div()
+                    .pt_3()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Publish"),
+            );
+        }
+        let selected = dialog.page == page;
+        nav = nav.child(
+            Button::new(format!("library-page-{:?}", page))
+                .ghost()
+                .small()
+                .w_full()
+                .with_variant(if selected {
+                    gpui_kit::component::button::ButtonVariant::Primary
+                } else {
+                    gpui_kit::component::button::ButtonVariant::Ghost
+                })
+                .label(page.label())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(themes) = &mut this.themes {
+                        themes.page = page;
+                    }
+                    cx.notify();
+                })),
+        );
+    }
+    let body: AnyElement = if dialog.page == LibraryPage::DashboardThemes {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(
+                div()
+                    .text_color(cx.theme().foreground)
+                    .child("Stored themes"),
+            )
+            .child(toolbar(dialog, cx, width - px(232.0), search))
+            .child(grid(dialog, cx, width - px(232.0)))
+            .into_any_element()
+    } else {
+        div()
+            .p_6()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(format!(
+                "The {} page is not ported yet.",
+                dialog.page.label()
+            ))
+            .into_any_element()
+    };
     div()
         .id("themes-page")
         .size_full()
         .min_h(px(0.0))
-        .overflow_y_scrollbar()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .child(
-                    div()
-                        .text_color(cx.theme().foreground)
-                        .child("Stored themes"),
-                )
-                .child(toolbar(dialog, cx, width, search))
-                .child(grid(dialog, cx, width)),
-        )
+        .flex()
+        .child(nav)
+        .child(div().flex_1().min_w_0().overflow_y_scrollbar().child(body))
 }
 
 /// The source's listing toolbar: search, facets' place, the sort well and the
@@ -362,49 +487,59 @@ fn toolbar(
                 })),
         );
     }
+    // The source keeps both controls in one well: a sort select and a density
+    // slider. Pressing either cycles the offered values until their popovers
+    // are ported with the kit's Select and Slider.
     let sorts = [
-        (ThemeSort::Name, "Name"),
-        (ThemeSort::Updated, "Updated"),
-        (ThemeSort::Created, "Created"),
-        (ThemeSort::Downloads, "Downloads"),
-        (ThemeSort::Favorites, "Favorites"),
+        ThemeSort::Name,
+        ThemeSort::Updated,
+        ThemeSort::Created,
+        ThemeSort::Downloads,
+        ThemeSort::Favorites,
     ];
-    for (sort, label) in sorts {
-        row = row.child(
-            Button::new(format!("theme-sort-{label}"))
-                .small()
-                .with_variant(if dialog.sort == sort {
-                    gpui_kit::component::button::ButtonVariant::Primary
-                } else {
-                    gpui_kit::component::button::ButtonVariant::Ghost
-                })
-                .label(label)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if let Some(themes) = &mut this.themes {
-                        themes.sort = sort;
-                    }
-                    cx.notify();
-                })),
-        );
-    }
-    for density in GridDensity::ALL {
-        row = row.child(
-            Button::new(format!("library-density-{:?}", density))
-                .small()
-                .with_variant(if dialog.density == density {
-                    gpui_kit::component::button::ButtonVariant::Primary
-                } else {
-                    gpui_kit::component::button::ButtonVariant::Ghost
-                })
-                .label(format!("{} · {}", density.label(), columns_for(f32::from(width), density)))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if let Some(themes) = &mut this.themes {
-                        themes.density = density;
-                    }
-                    cx.notify();
-                })),
-        );
-    }
+    let sort_index = sorts
+        .iter()
+        .position(|sort| *sort == dialog.sort)
+        .unwrap_or(0);
+    row = row.child(
+        Button::new("theme-sort-well")
+            .small()
+            .label(format!("Sort themes: {}", sorts[sort_index].label()))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if let Some(themes) = &mut this.themes {
+                    let current = sorts
+                        .iter()
+                        .position(|sort| *sort == themes.sort)
+                        .unwrap_or(0);
+                    themes.sort = sorts[(current + 1) % sorts.len()];
+                }
+                cx.notify();
+            })),
+    );
+    let densities = GridDensity::ALL;
+    let density_index = densities
+        .iter()
+        .position(|density| *density == dialog.density)
+        .unwrap_or(0);
+    row = row.child(
+        Button::new("library-density-well")
+            .small()
+            .label(format!(
+                "Density: {} · {}",
+                densities[density_index].label(),
+                columns_for(f32::from(width), densities[density_index])
+            ))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if let Some(themes) = &mut this.themes {
+                    let current = densities
+                        .iter()
+                        .position(|density| *density == themes.density)
+                        .unwrap_or(0);
+                    themes.density = densities[(current + 1) % densities.len()];
+                }
+                cx.notify();
+            })),
+    );
     let mut root = div().flex().flex_col().gap_2().child(row);
     if let Some(active) = dialog.active_facet {
         if let Some(facet) = dialog.facets.iter().find(|facet| facet.id == active) {
@@ -864,7 +999,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{GridDensity, LibraryDialog, ThemeSort};
+    use super::{GridDensity, LibraryDialog, LibraryPage, ThemeSort};
     use std::collections::BTreeSet;
     use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
@@ -913,6 +1048,24 @@ mod tests {
     }
 
     #[test]
+    fn the_library_nav_uses_the_source_pages_in_order() {
+        assert_eq!(
+            LibraryPage::ALL.map(LibraryPage::label),
+            [
+                "Dashboard themes",
+                "App themes",
+                "Widgets",
+                "Shapes",
+                "Sensor providers",
+                "Asset sources",
+                "Panel drivers",
+                "Collections",
+                "My submissions",
+            ]
+        );
+    }
+
+    #[test]
     fn a_facet_choice_narrows_the_listing() {
         let mut entry_facets = BTreeMap::new();
         let mut values = BTreeMap::new();
@@ -920,6 +1073,7 @@ mod tests {
         entry_facets.insert("a".to_owned(), values);
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            page: LibraryPage::DashboardThemes,
             query: String::new(),
             sort: ThemeSort::Name,
             density: GridDensity::Comfortable,
@@ -943,6 +1097,7 @@ mod tests {
     fn the_search_narrows_the_listing_by_name() {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            page: LibraryPage::DashboardThemes,
             query: "ALP".to_owned(),
             sort: ThemeSort::Updated,
             density: GridDensity::Comfortable,
@@ -963,6 +1118,7 @@ mod tests {
     fn the_listing_sorts_by_name_or_by_the_latest_update() {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            page: LibraryPage::DashboardThemes,
             query: String::new(),
             sort: ThemeSort::Name,
             density: GridDensity::Comfortable,
