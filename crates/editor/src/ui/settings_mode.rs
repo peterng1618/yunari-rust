@@ -271,6 +271,23 @@ fn body(
                 .child("Graphite is the prioritized editor palette; light themes land later.")
                 .into_any_element(),
         ),
+        (6, Some(_)) => {
+            // The source ships these five tokens. Editing the catalogue lives
+            // with the host's lens store and is not wired here yet.
+            for (index, token) in ["16:9", "19.5:9", "4:3", "1:1", "Circle"]
+                .iter()
+                .enumerate()
+            {
+                content.push(
+                    div()
+                        .id(("settings-preview-ratio", index))
+                        .text_sm()
+                        .text_color(cx.theme().foreground)
+                        .child(*token)
+                        .into_any_element(),
+                );
+            }
+        }
         (9, Some(settings)) => {
             for (id, set) in &settings.source_credentials {
                 let credential = id.clone();
