@@ -166,6 +166,8 @@ Evidence:
   Library nav column and a single-row toolbar.
 - `test-results/parity-shots/editor-port-library-facets.png` — 1920x1080,
   the five facet triggers in source order beside search, sort and density.
+- `test-results/parity-shots/editor-port-asset-finder-chips.png` — 1280x875,
+  the finder rail with per-source chips.
 - `test-results/parity-shots/editor-port-asset-finder-tabs2.png` — 1280x875,
   the six-tab rail with Icons selected and per-tab empty copy.
 - `test-results/parity-shots/editor-port-library-toolbar.png` — 1920x1080,
@@ -203,9 +205,9 @@ pinned `1241866e5`) found:
 - Asset Finder has six tabs (Colors, Fonts, Icons, Images, Videos, Wallpaper
   Engine), defaulting to Icons, with per-tab search and empty/key-required/
   error states. The port now draws that rail and separates its stock icons,
-  its local pictures and its Wallpaper Engine rows by tab. Colors, Fonts and
-  Videos still say they are not ported; per-tab search, filters, source chips,
-  previews and the key-required/error states remain P4.
+  its local pictures and its Wallpaper Engine rows by tab. Source chips now switch the stock and local rows on and off, and every row
+  carries its source. Colors, Fonts and Videos still say they are not ported;
+  per-tab search, previews and the key-required/error states remain P4.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the
   source's library detail, type authoring in the Tokens pane, path presets in

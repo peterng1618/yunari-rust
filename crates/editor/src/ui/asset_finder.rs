@@ -6,6 +6,7 @@
 //! A stock search runs off the UI thread: a slow catalogue must not freeze the
 //! window it is answering into.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use gpui_kit::component::scroll::ScrollableElement;
@@ -38,6 +39,8 @@ pub struct Choice {
     pub pick: Pick,
     /// The rail tab this row belongs to, so a tab shows only its own rows.
     pub tab: FinderTab,
+    /// The source that offered this row, for the source chips.
+    pub source: String,
 }
 
 /// The source's finder rail, in its declared order. Icons is the opening tab.
@@ -75,6 +78,7 @@ impl FinderTab {
 
 pub struct AssetFinder {
     pub tab: FinderTab,
+    pub disabled: BTreeSet<String>,
     pub choices: Vec<Choice>,
     /// Rows a stock search returned. Replaced by each answer, so a stale page
     /// cannot outlive the question that asked for it.
@@ -117,6 +121,7 @@ impl AssetFinder {
                     .unwrap_or_else(|| path.display().to_string()),
                 pick: Pick::File(path),
                 tab: FinderTab::Images,
+                source: "local".to_owned(),
             }
         }));
 
@@ -128,6 +133,7 @@ impl AssetFinder {
                         label: format!("{}  ·  wallpaper", item.title),
                         pick: Pick::Wallpaper(item.workshop_id.clone()),
                         tab: FinderTab::WallpaperEngine,
+                        source: "wallpaper-engine".to_owned(),
                     }];
                     // A scene is a package, not a picture: its own action is
                     // writing it out as a project the engine can edit.
@@ -136,6 +142,7 @@ impl AssetFinder {
                             label: format!("{}  ·  convert to a project", item.title),
                             pick: Pick::Project(item.workshop_id),
                             tab: FinderTab::WallpaperEngine,
+                            source: "wallpaper-engine".to_owned(),
                         });
                     }
                     rows
@@ -149,6 +156,7 @@ impl AssetFinder {
         }
         Self {
             tab: FinderTab::Icons,
+            disabled: BTreeSet::new(),
             choices,
             remote: Vec::new(),
             query: Prompt::new("Search", "Search the stock sources", ""),
@@ -220,6 +228,7 @@ pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, O
                     choices.push(Choice {
                         label: format!("{name}  ·  {}", stock.label),
                         tab,
+                        source: stock.id.to_owned(),
                         pick: Pick::Stock {
                             source: stock.id.to_owned(),
                             id: id.to_owned(),
@@ -293,11 +302,36 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 cx.notify();
             }))
     }));
+    let mut sources: Vec<String> = PICTURE_SOURCES.iter().map(|id| (*id).to_owned()).collect();
+    sources.push("local".to_owned());
+    sources.push("wallpaper-engine".to_owned());
+    let chips = div().flex().flex_wrap().gap_1().children(sources.into_iter().map(|source| {
+        let id = source.clone();
+        Button::new(format!("asset-source-{source}"))
+            .small()
+            .with_variant(if dialog.disabled.contains(&source) {
+                gpui_kit::component::button::ButtonVariant::Ghost
+            } else {
+                gpui_kit::component::button::ButtonVariant::Primary
+            })
+            .label(source)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if let Some(super::Overlay::AssetFinder(finder)) = &mut this.overlay {
+                    if finder.disabled.contains(&id) {
+                        finder.disabled.remove(&id);
+                    } else {
+                        finder.disabled.insert(id.clone());
+                    }
+                }
+                cx.notify();
+            }))
+    }));
     let rows: Vec<_> = dialog
         .choices
         .iter()
         .chain(dialog.remote.iter())
         .filter(|choice| choice.tab == dialog.tab)
+        .filter(|choice| !dialog.disabled.contains(&choice.source))
         .enumerate()
         .map(|(index, choice)| {
             let choice = choice.clone();
@@ -384,6 +418,7 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .gap_1()
                 .child(div().text_color(cx.theme().foreground).child("Asset Finder"))
                 .child(tabs)
+                .child(chips)
                 .child(
                     div()
                         .id("asset-finder-search")
