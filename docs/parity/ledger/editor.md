@@ -158,6 +158,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` â€” 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-asset-finder-tabs2.png` — 1280x875,
+  the six-tab rail with Icons selected and per-tab empty copy.
 - `test-results/parity-shots/editor-port-library-toolbar.png` — 1920x1080,
   search, five sort keys and four densities; Comfortable gives seven columns.
 - `test-results/parity-shots/editor-port-themes-current-footer.png` â€” 1920x1080,
@@ -189,8 +191,11 @@ pinned `1241866e5`) found:
 - Library is a two-half catalogue with nav groups, search, five facets, sort
   and a density control; the port's Themes mode still lists stored themes.
 - Asset Finder has six tabs (Colors, Fonts, Icons, Images, Videos, Wallpaper
-  Engine) with per-tab search and empty/key-required/error states; the port has
-  one picture list plus stock sources.
+  Engine), defaulting to Icons, with per-tab search and empty/key-required/
+  error states. The port now draws that rail and separates its stock icons,
+  its local pictures and its Wallpaper Engine rows by tab. Colors, Fonts and
+  Videos still say they are not ported; per-tab search, filters, source chips,
+  previews and the key-required/error states remain P4.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the
   source's library detail, type authoring in the Tokens pane, path presets in

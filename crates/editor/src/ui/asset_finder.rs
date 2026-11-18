@@ -36,9 +36,45 @@ pub enum Pick {
 pub struct Choice {
     pub label: String,
     pub pick: Pick,
+    /// The rail tab this row belongs to, so a tab shows only its own rows.
+    pub tab: FinderTab,
+}
+
+/// The source's finder rail, in its declared order. Icons is the opening tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinderTab {
+    Colors,
+    Fonts,
+    Icons,
+    Images,
+    Videos,
+    WallpaperEngine,
+}
+
+impl FinderTab {
+    pub const ALL: [Self; 6] = [
+        Self::Colors,
+        Self::Fonts,
+        Self::Icons,
+        Self::Images,
+        Self::Videos,
+        Self::WallpaperEngine,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Colors => "Colors",
+            Self::Fonts => "Fonts",
+            Self::Icons => "Icons",
+            Self::Images => "Images",
+            Self::Videos => "Videos",
+            Self::WallpaperEngine => "Wallpaper Engine",
+        }
+    }
 }
 
 pub struct AssetFinder {
+    pub tab: FinderTab,
     pub choices: Vec<Choice>,
     /// Rows a stock search returned. Replaced by each answer, so a stale page
     /// cannot outlive the question that asked for it.
@@ -80,6 +116,7 @@ impl AssetFinder {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string()),
                 pick: Pick::File(path),
+                tab: FinderTab::Images,
             }
         }));
 
@@ -90,6 +127,7 @@ impl AssetFinder {
                     let mut rows = vec![Choice {
                         label: format!("{}  ·  wallpaper", item.title),
                         pick: Pick::Wallpaper(item.workshop_id.clone()),
+                        tab: FinderTab::WallpaperEngine,
                     }];
                     // A scene is a package, not a picture: its own action is
                     // writing it out as a project the engine can edit.
@@ -97,6 +135,7 @@ impl AssetFinder {
                         rows.push(Choice {
                             label: format!("{}  ·  convert to a project", item.title),
                             pick: Pick::Project(item.workshop_id),
+                            tab: FinderTab::WallpaperEngine,
                         });
                     }
                     rows
@@ -109,6 +148,7 @@ impl AssetFinder {
             }
         }
         Self {
+            tab: FinderTab::Icons,
             choices,
             remote: Vec::new(),
             query: Prompt::new("Search", "Search the stock sources", ""),
@@ -172,8 +212,14 @@ pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, O
                             .filter(|value| !value.is_empty())
                             .map(str::to_owned)
                     };
+                    let tab = if stock.id == "unsplash" {
+                        FinderTab::Images
+                    } else {
+                        FinderTab::Icons
+                    };
                     choices.push(Choice {
                         label: format!("{name}  ·  {}", stock.label),
+                        tab,
                         pick: Pick::Stock {
                             source: stock.id.to_owned(),
                             id: id.to_owned(),
@@ -225,10 +271,33 @@ pub fn bytes_of(pick: &Pick, credential: Option<&str>) -> Result<(String, Vec<u8
 }
 
 pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoElement {
+    use gpui_kit::component::{
+        ActiveTheme,
+        Sizable,
+        button::{Button, ButtonVariants},
+    };
+
+    let tabs = div().flex().flex_wrap().gap_1().children(FinderTab::ALL.map(|tab| {
+        Button::new(format!("asset-tab-{:?}", tab))
+            .small()
+            .with_variant(if dialog.tab == tab {
+                gpui_kit::component::button::ButtonVariant::Primary
+            } else {
+                gpui_kit::component::button::ButtonVariant::Ghost
+            })
+            .label(tab.label())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if let Some(super::Overlay::AssetFinder(finder)) = &mut this.overlay {
+                    finder.tab = tab;
+                }
+                cx.notify();
+            }))
+    }));
     let rows: Vec<_> = dialog
         .choices
         .iter()
         .chain(dialog.remote.iter())
+        .filter(|choice| choice.tab == dialog.tab)
         .enumerate()
         .map(|(index, choice)| {
             let choice = choice.clone();
@@ -251,16 +320,34 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     } else {
         dialog.query.value.clone()
     };
-    let body: AnyElement = if rows.is_empty() {
+    let unported = match dialog.tab {
+        FinderTab::Colors | FinderTab::Fonts | FinderTab::Videos => Some(format!(
+            "The {} tab is not ported yet. Its sources need the host's asset registry.",
+            dialog.tab.label()
+        )),
+        FinderTab::Icons | FinderTab::Images | FinderTab::WallpaperEngine => None,
+    };
+    let body: AnyElement = if let Some(message) = unported {
+        div()
+            .p_3()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(message)
+            .into_any_element()
+    } else if rows.is_empty() {
         div()
             .p_3()
             .text_color(rgb(0x8a8a94))
-            .child(
-                dialog
+            .child(match dialog.tab {
+                FinderTab::Icons => "Nothing to browse here yet. Try a word.".to_owned(),
+                FinderTab::Images => dialog
                     .note
                     .clone()
                     .unwrap_or_else(|| "No pictures are available.".to_owned()),
-            )
+                FinderTab::WallpaperEngine => "Wallpaper Engine is not installed on this PC."
+                    .to_owned(),
+                _ => "No results. Try another word.".to_owned(),
+            })
             .into_any_element()
     } else {
         div()
@@ -275,7 +362,9 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     };
     let status = if dialog.busy {
         "Searching…".to_owned()
-    } else if let Some(note) = &dialog.note {
+    } else if let (Some(note), FinderTab::Images | FinderTab::WallpaperEngine) =
+        (&dialog.note, dialog.tab)
+    {
         note.clone()
     } else if dialog.searched {
         format!("{} stock rows", dialog.remote.len())
@@ -293,7 +382,8 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(div().text_color(rgb(0xe8e8ea)).child("Place a picture"))
+                .child(div().text_color(cx.theme().foreground).child("Asset Finder"))
+                .child(tabs)
                 .child(
                     div()
                         .id("asset-finder-search")
@@ -321,7 +411,16 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
 
 #[cfg(test)]
 mod tests {
-    use super::{PICTURE_SOURCES, PICTURES, Pick, bytes_of};
+    use super::{FinderTab, PICTURE_SOURCES, PICTURES, Pick, bytes_of};
+
+    #[test]
+    fn the_finder_rail_uses_the_source_order_and_opens_on_icons() {
+        assert_eq!(
+            FinderTab::ALL.map(FinderTab::label),
+            ["Colors", "Fonts", "Icons", "Images", "Videos", "Wallpaper Engine"]
+        );
+        assert_eq!(FinderTab::Icons.label(), "Icons");
+    }
 
     #[test]
     fn only_picture_extensions_are_listed() {
