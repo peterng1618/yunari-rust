@@ -217,8 +217,8 @@ pinned `1241866e5`) found:
   the icon libraries, Images searches the picture source, and Wallpaper Engine
   says its library is local. Source chips switch rows on and off, and every row
   carries its source. Local picture rows show the file's own bytes as a small
-  preview when the file can be read; remote rows still carry no preview until
-  the host answers with one. Colors, Fonts and Videos still say they are not ported;
+  preview when the file can be read; stock rows fetch their own bytes on the
+  search thread and draw the same preview. Colors, Fonts and Videos still say they are not ported;
   per-tab search, previews and the key-required/error states remain P4.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the

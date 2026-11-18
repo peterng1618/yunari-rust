@@ -229,6 +229,29 @@ fn local_pictures() -> Vec<PathBuf> {
 
 /// Asks every picture source. One source that cannot answer is a sentence
 /// beside the others' rows, never an empty finder.
+/// Fetches one stock row's bytes to draw its preview. Called on the search's
+/// background thread; a refusal leaves the row without a picture rather than
+/// holding the search open on one bad asset.
+fn stock_preview(
+    source: &str,
+    id: &str,
+    credential: Option<&str>,
+) -> Option<std::sync::Arc<gpui_kit::Image>> {
+    let (bytes, format, _) = yunari_host::assets::bytes_with(source, id, credential)
+        .and_then(Result::ok)?;
+    let format = match format {
+        "png" => gpui_kit::ImageFormat::Png,
+        "jpg" | "jpeg" => gpui_kit::ImageFormat::Jpeg,
+        "gif" => gpui_kit::ImageFormat::Gif,
+        "webp" => gpui_kit::ImageFormat::Webp,
+        "svg" => gpui_kit::ImageFormat::Svg,
+        _ => return None,
+    };
+    Some(std::sync::Arc::new(gpui_kit::Image::from_bytes(
+        format, bytes,
+    )))
+}
+
 pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, Option<String>) {
     search_sources(query, credential, &PICTURE_SOURCES)
 }
@@ -290,11 +313,12 @@ fn search_sources(
                     } else {
                         FinderTab::Icons
                     };
+                    let preview = stock_preview(stock.id, id, credential);
                     choices.push(Choice {
                         label: format!("{name}  ·  {}", stock.label),
                         tab,
                         source: stock.id.to_owned(),
-                        preview: None,
+                        preview,
                         pick: Pick::Stock {
                             source: stock.id.to_owned(),
                             id: id.to_owned(),
