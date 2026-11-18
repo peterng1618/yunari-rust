@@ -508,10 +508,25 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
             .child(message)
             .into_any_element()
     } else if rows.is_empty() {
+        let tab_sources: &[&str] = match dialog.tab {
+            FinderTab::Icons => &["lucide", "lineicons", "fontawesome-free"],
+            FinderTab::Images => &["local", "unsplash"],
+            FinderTab::Colors => &["webgradients", "uigradients", "colorswoop", "colorhunt"],
+            FinderTab::Fonts => &["google-fonts", "curated-fonts"],
+            FinderTab::WallpaperEngine => &["wallpaper-engine"],
+            FinderTab::Videos => &[],
+        };
+        let all_off = !tab_sources.is_empty()
+            && tab_sources
+                .iter()
+                .all(|source| dialog.disabled.contains(*source));
         div()
             .p_3()
             .text_color(rgb(0x8a8a94))
-            .child(match dialog.tab {
+            .child(if all_off {
+                "Every source for this kind is switched off. Turn one on above.".to_owned()
+            } else {
+                match dialog.tab {
                 FinderTab::Icons => "Nothing to browse here yet. Try a word.".to_owned(),
                 FinderTab::Images => dialog
                     .note
@@ -520,6 +535,7 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 FinderTab::WallpaperEngine => "Wallpaper Engine is not installed on this PC."
                     .to_owned(),
                 _ => "No results. Try another word.".to_owned(),
+                }
             })
             .into_any_element()
     } else {
