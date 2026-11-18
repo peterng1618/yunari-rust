@@ -333,3 +333,14 @@ npx vitest run packages/editor/src/history-manager packages/editor/src/draft-sto
   packages/editor/src/selection-inspector/view.test.ts
 # 10 files, 135 tests passed
 ```
+
+## Accessibility and keyboard evidence
+
+UI Automation on the native window lists 24 named, focusable shell controls in
+visual order: modes, toolbar, publish, pane toggles and rail destinations.
+`AutomationElement.SetFocus` is not honoured by this GPUI build, so the UIA
+focus walkthrough could not read back a changed `FocusedElement`; Orca's
+computer-use provider is blocked on this box by its antivirus. Focus-ring
+appearance therefore remains unverified, but the controls have accessible
+names and report as keyboard-focusable.
+
