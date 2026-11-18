@@ -389,6 +389,7 @@ fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<Edit
                 .get("kind")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("listing");
+            let is_collection = kind == "collection";
             div()
                 .id(("catalogue-row", index))
                 .flex()
@@ -418,7 +419,11 @@ fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<Edit
                                 .small()
                                 .label("Install")
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    this.install_library_item(&install_row, window, cx)
+                                    if is_collection {
+                                        this.open_collection_consent(&install_row, cx)
+                                    } else {
+                                        this.install_library_item(&install_row, window, cx)
+                                    }
                                 })),
                         ),
                 )

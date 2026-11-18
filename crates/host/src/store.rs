@@ -53,6 +53,18 @@ impl Store {
         self.origin.as_deref()
     }
 
+    /// Reads one URL under this host's configured store origin. The editor
+    /// uses it for a collection package: a URL outside the origin is refused
+    /// before a request leaves this machine.
+    pub fn read_url(&self, url: &str) -> Result<String, String> {
+        let origin = self.origin.as_deref().ok_or_else(|| NO_STORE_MESSAGE.to_owned())?;
+        let prefix = origin.trim_end_matches('/');
+        if !url.starts_with(&format!("{prefix}/")) {
+            return Err("That address is outside the configured store.".to_owned());
+        }
+        (self.fetch)(url, TIMEOUT_MS)
+    }
+
     /// The catalogue, from the cache while it is fresh.
     pub fn themes(&self, now_ms: i64) -> Result<Value, String> {
         if let Some(cached) = self.cached.lock().expect("the store cache").as_ref()

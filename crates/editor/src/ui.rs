@@ -127,6 +127,13 @@ enum Overlay {
     /// The header's one accent button: assign this theme to a display,
     /// then the publishing switch below the choice.
     Publish,
+    /// A collection's install sheet: the includes the host's package names,
+    /// and the optional ones this author chose to keep.
+    CollectionConsent {
+        row: serde_json::Value,
+        includes: Vec<serde_json::Value>,
+        chosen: BTreeSet<String>,
+    },
     /// The canvas's menu, opened where the pointer pressed. Right-pressing an
     /// object selects it and offers its commands; a press on empty canvas
     /// offers what can be inserted.
@@ -3240,6 +3247,7 @@ impl EditorWindow {
             | Overlay::Typography(_)
             | Overlay::Mcp(_)
             | Overlay::Settings(_)
+            | Overlay::CollectionConsent { .. }
             | Overlay::Publish => {
                 if keystroke.key == "escape" {
                     self.overlay = None;
@@ -4028,6 +4036,59 @@ impl EditorWindow {
         self.menu_layer(at, px(200.0), px(rows * 26.0 + 16.0), entries, cx)
     }
 
+    /// Opens a collection's consent sheet. The host reads the package under
+    /// its configured origin; the editor only shows the includes it names.
+    fn open_collection_consent(&mut self, row: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            self.status = Some(Status::error(
+                "The theme store needs the host running on this PC.",
+            ));
+            cx.notify();
+            return;
+        };
+        let Some(url) = row.get("packageUrl").and_then(serde_json::Value::as_str) else {
+            self.status = Some(Status::error(
+                "That listing does not name a package to read.",
+            ));
+            cx.notify();
+            return;
+        };
+        let includes = match host.store.read_url(url).map_err(|error| error.to_string())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).map_err(|error| error.to_string()))
+        {
+            Ok(package) => package
+                .get("includes")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            Err(error) => {
+                self.status = Some(Status::error(error));
+                cx.notify();
+                return;
+            }
+        };
+        let chosen = includes
+            .iter()
+            .filter_map(|entry| entry.get("id").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            .collect();
+        self.overlay = Some(Overlay::CollectionConsent {
+            row: row.clone(),
+            includes,
+            chosen,
+        });
+        cx.notify();
+    }
+
+    fn toggle_collection_include(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(Overlay::CollectionConsent { chosen, .. }) = &mut self.overlay {
+            if !chosen.remove(id) {
+                chosen.insert(id.to_owned());
+            }
+        }
+        cx.notify();
+    }
+
     /// Installs one catalogue row through the host's own install path. The
     /// editor never fetches bytes itself and never holds a session token; the
     /// row's own digest and size travel with the request.
@@ -4168,6 +4229,129 @@ impl EditorWindow {
             "Publishing stopped"
         }));
         cx.notify();
+    }
+
+    /// The collection sheet: required includes stay chosen, optional ones can
+    /// be left out, and Install sends only the chosen members to the host.
+    fn collection_consent_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::button::{Button, ButtonVariants};
+
+        let Some(Overlay::CollectionConsent {
+            includes, chosen, ..
+        }) = &self.overlay
+        else {
+            return div().into_any_element();
+        };
+        let mut children: Vec<AnyElement> = Vec::new();
+        children.push(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("A collection installs the listings it names. Optional members can be left out.")
+                .into_any_element(),
+        );
+        for entry in includes {
+            let id = entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            if id.is_empty() {
+                continue;
+            }
+            let optional = entry
+                .get("optional")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let picked = chosen.contains(&id);
+            let name = entry
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(id.as_str())
+                .to_owned();
+            let toggle_id = id.clone();
+            children.push(
+                Button::new(format!("collection-include-{id}"))
+                    .ghost()
+                    .label(format!(
+                        "{}  ·  {}{}",
+                        name,
+                        if optional { "optional" } else { "required" },
+                        if picked { "  ·  included" } else { "  ·  skipped" }
+                    ))
+                    .with_variant(if picked {
+                        gpui_kit::component::button::ButtonVariant::Primary
+                    } else {
+                        gpui_kit::component::button::ButtonVariant::Ghost
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.toggle_collection_include(&toggle_id, cx)
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let rows: Vec<serde_json::Value> = includes
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| chosen.contains(id))
+            })
+            .cloned()
+            .collect();
+        children.push(
+            Button::new("collection-install")
+                .label("Install chosen")
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    let Some(Overlay::CollectionConsent { row, .. }) = &this.overlay else {
+                        return;
+                    };
+                    let row = row.clone();
+                    let members = rows.clone();
+                    this.overlay = None;
+                    // A collection's members are installed through the same
+                    // host path as a single listing; each carries its own
+                    // package facts from the catalogue answer.
+                    for member in members {
+                        let found = member
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|id| {
+                                this.library_catalogue
+                                    .iter()
+                                    .find(|candidate| {
+                                        candidate.get("id").and_then(serde_json::Value::as_str)
+                                            == Some(id)
+                                    })
+                                    .cloned()
+                            });
+                        if let Some(found) = found {
+                            this.install_library_item(&found, window, cx);
+                        }
+                    }
+                    let _ = row;
+                    cx.notify();
+                }))
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .id("collection-cancel")
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .cursor_pointer()
+                .child("Cancel  ·  Esc")
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_overlay(cx)))
+                .into_any_element(),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .children(children)
+            .into_any_element()
     }
 
     fn publish_panel(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -4523,6 +4707,7 @@ impl EditorWindow {
             Some(Overlay::Settings(dialog)) => settings_dialog::view(dialog, cx).into_any_element(),
             Some(Overlay::Shortcuts) => Self::shortcuts_panel(cx),
             Some(Overlay::Publish) => self.publish_panel(cx),
+            Some(Overlay::CollectionConsent { .. }) => self.collection_consent_panel(cx),
             // A menu is anchored to the gesture, not to a dialog's centre.
             Some(Overlay::ContextMenu { at, object }) => {
                 return Some(self.context_menu_layer(*at, object.clone(), cx));
