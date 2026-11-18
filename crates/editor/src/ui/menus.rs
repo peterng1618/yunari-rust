@@ -52,13 +52,15 @@ pub enum Command {
     Paste,
     Duplicate,
     OpenDisplay,
+    // The source toolbar Activate: assign this theme to a display.
+    Activate,
     /// Opens the publish surface. Its own switch starts or stops publishing.
     Publish,
     Store,
 }
 
 impl Command {
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 51] = [
         Self::New,
         Self::NewFromTemplate,
         Self::Open,
@@ -107,6 +109,7 @@ impl Command {
         Self::Paste,
         Self::Duplicate,
         Self::OpenDisplay,
+        Self::Activate,
         Self::Publish,
         Self::Store,
     ];
@@ -117,15 +120,15 @@ impl Command {
             Self::NewFromTemplate => "New from template",
             // `Ctrl+O` is the source's import-theme route, and the toolbar
             // control it sits on is what the reader reads.
-            Self::Open => "Open library",
+            Self::Open => "Open",
             Self::Save => "Save",
-            Self::SaveAs => "Save As…",
-            Self::Export => "Export…",
-            Self::ExportWidget => "Export widget…",
+            Self::SaveAs => "Save as",
+            Self::Export => "Export theme",
+            Self::ExportWidget => "Export selection as widget",
             Self::Import => "Import theme",
             Self::ImportAsset => "Import asset…",
             Self::Widgets => "Widgets…",
-            Self::AssetFinder => "Asset finder…",
+            Self::AssetFinder => "Find assets",
             Self::Settings => "Settings…",
             Self::Mcp => "Agent tools…",
             Self::Undo => "Undo",
@@ -163,6 +166,7 @@ impl Command {
             Self::Paste => "Paste",
             Self::Duplicate => "Duplicate",
             Self::OpenDisplay => "Open display",
+            Self::Activate => "Activate",
             Self::Publish => "Open publishing",
             Self::Store => "Store…",
         }
@@ -258,13 +262,18 @@ pub const SHORTCUT_REFERENCE: [ShortcutRow; 22] = [
     },
     ShortcutRow {
         group: "Edit",
+        label: "Undo",
+        chord: "Ctrl+Z",
+    },
+    ShortcutRow {
+        group: "Edit",
         label: "Redo",
         chord: "Ctrl+Shift+Z · Ctrl+Y",
     },
     ShortcutRow {
         group: "Edit",
-        label: "Undo",
-        chord: "Ctrl+Z",
+        label: "Delete",
+        chord: "Delete · Backspace",
     },
     ShortcutRow {
         group: "Edit",
@@ -288,18 +297,13 @@ pub const SHORTCUT_REFERENCE: [ShortcutRow; 22] = [
     },
     ShortcutRow {
         group: "Edit",
-        label: "Ungroup",
-        chord: "Ctrl+Shift+G",
-    },
-    ShortcutRow {
-        group: "Edit",
         label: "Group",
         chord: "Ctrl+G",
     },
     ShortcutRow {
         group: "Edit",
-        label: "Delete",
-        chord: "Delete · Backspace",
+        label: "Ungroup",
+        chord: "Ctrl+Shift+G",
     },
     ShortcutRow {
         group: "Canvas",

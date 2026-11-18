@@ -16,13 +16,14 @@ const THIS_PC: [&str; 5] = [
     "Units & time",
     "Readings",
 ];
-const EDITOR: [&str; 6] = [
+const EDITOR: [&str; 7] = [
     "Appearance",
     "Preview ratios",
     "Custom shape presets",
     "Keyboard",
     "Asset sources",
     "About",
+    "Extensions",
 ];
 
 /// Which destination is showing. Kept here rather than on `EditorWindow`: it is
@@ -445,6 +446,7 @@ mod tests {
                 "Keyboard",
                 "Asset sources",
                 "About",
+                "Extensions",
             ]
         );
     }
@@ -453,7 +455,7 @@ mod tests {
     fn the_first_destination_is_the_page_the_port_has() {
         assert_eq!(label_at(0), "Displays");
         assert_eq!(label_at(THIS_PC.len()), "Appearance");
-        assert_eq!(label_at(THIS_PC.len() + EDITOR.len() - 1), "About");
+        assert_eq!(label_at(THIS_PC.len() + EDITOR.len() - 1), "Extensions");
         assert_eq!(label_at(usize::MAX), "Displays");
     }
 }

@@ -344,3 +344,19 @@ computer-use provider is blocked on this box by its antivirus. Focus-ring
 appearance therefore remains unverified, but the controls have accessible
 names and report as keyboard-focusable.
 
+
+## Surface review pass — shell/panes/library/settings/finder
+
+Source-driven review found and fixed: mode label now **Library**; toolbar uses
+Activate at the source index and ends with the readings Preview/Live toggle;
+the header's invented pane toggles are gone and the inspector has its own
+labelled toggle; command labels and the Edit shortcut order match `ui-copy.ts`
+and `PRODUCT_SHORTCUTS`; Settings no longer hides host-independent pages when
+no dialog is open and has an Extensions destination; the Library page uses the
+source's empty/failure copy with Retry, "Search listings", "Installed state",
+"Sort" and "Try again".
+
+Still open from the review: the source's detailed layer-tree columns and
+accessibility roles, Add-pane grouping, Theme settings Credits section,
+finder selection/footer actions, full library facet popovers and per-tab views.
+

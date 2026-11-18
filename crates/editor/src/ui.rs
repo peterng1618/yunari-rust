@@ -410,12 +410,15 @@ pub struct EditorWindow {
     library_catalogue: Vec<serde_json::Value>,
     library_mine: Vec<serde_json::Value>,
     library_catalogue_loaded: bool,
+    library_error: Option<String>,
     /// The display menu's ratio tokens, kept beside this PC's settings as the
     /// source keeps them in browser storage.
     preview_ratios: Vec<String>,
     /// The Themes mode's search box. The kit binds an `Input` to an entity, so
     /// the state is created with the first window that renders this editor.
     library_search: Option<Entity<InputState>>,
+    /// The readings source toggle at the end of the source toolbar.
+    readings_live: bool,
     /// The themes this editor has opened, newest first. The source keeps five.
     recents: Vec<RecentTheme>,
     /// Which top-level surface the header is showing. The editor body stays
@@ -647,8 +650,10 @@ impl EditorWindow {
             library_catalogue: Vec::new(),
             library_mine: Vec::new(),
             library_catalogue_loaded: false,
+            library_error: None,
             preview_ratios: load_preview_ratios(),
             library_search: None,
+            readings_live: false,
             recents,
             status: None,
             focus: cx.focus_handle(),
@@ -819,7 +824,7 @@ impl EditorWindow {
             // The source has no Store mode: the catalogue and the author's
             // own submissions live in the Library's navigation.
             Command::Store => {
-                self.set_mode(ShellMode::Themes, cx);
+                self.set_mode(ShellMode::Library, cx);
                 if let Some(themes) = &mut self.themes {
                     themes.page = library_dialog::LibraryPage::Submissions;
                 }
@@ -946,7 +951,7 @@ impl EditorWindow {
                 }
             }
             Command::OpenDisplay => self.open_display(cx),
-            Command::Publish => self.open_publish(cx),
+            Command::Activate | Command::Publish => self.open_publish(cx),
         }
         cx.notify();
     }
@@ -4288,6 +4293,13 @@ impl EditorWindow {
             .unwrap_or_default()
     }
 
+    fn reload_library_catalogue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.library_error = None;
+        self.library_catalogue_loaded = false;
+        self.load_library_catalogue(window, cx);
+        cx.notify();
+    }
+
     /// Reads the catalogue halves once, off the UI thread, for the Library's
     /// Collections and My submissions pages.
     fn load_library_catalogue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4310,10 +4322,18 @@ impl EditorWindow {
                     Ok(value) => {
                         this.library_catalogue = Self::catalogue_entries(&value)
                     }
-                    Err(message) => this.status = Some(Status::error(message)),
+                    Err(message) => {
+                        this.library_error = Some(message);
+                        this.status = Some(Status::error("The store could not be read."));
+                    }
                 }
-                if let Some(Ok(mine)) = mine {
-                    this.library_mine = Self::catalogue_entries(&mine);
+                match mine {
+                    Some(Ok(mine)) => this.library_mine = Self::catalogue_entries(&mine),
+                    Some(Err(error)) => {
+                        this.library_error = Some(error.message);
+                        this.status = Some(Status::error("Your submissions could not be read."));
+                    }
+                    None => {}
                 }
                 cx.notify();
             });
@@ -4956,7 +4976,7 @@ impl Render for EditorWindow {
         self.window_height = window.bounds().size.height;
         self.window_width = window.bounds().size.width;
         if self.library_search.is_none() {
-            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search themes"));
+            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search listings"));
             cx.subscribe(&search, |this: &mut EditorWindow, search: Entity<InputState>, event: &InputEvent, cx: &mut Context<EditorWindow>| {
                 if matches!(event, InputEvent::Change) {
                     if let Some(themes) = &mut this.themes {
@@ -4968,7 +4988,7 @@ impl Render for EditorWindow {
             .detach();
             self.library_search = Some(search);
         }
-        if self.mode == ShellMode::Themes && !self.library_catalogue_loaded {
+        if self.mode == ShellMode::Library && !self.library_catalogue_loaded {
             self.load_library_catalogue(window, cx);
         }
         div()

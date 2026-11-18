@@ -448,6 +448,7 @@ pub fn page(
     search: Option<&gpui_kit::Entity<gpui_kit::component::input::InputState>>,
     catalogue: &[serde_json::Value],
     mine: &[serde_json::Value],
+    library_error: Option<&str>,
 ) -> impl IntoElement {
     use gpui_kit::component::{
         ActiveTheme,
@@ -506,7 +507,28 @@ pub fn page(
                 })),
         );
     }
-    let body: AnyElement = if dialog.page == LibraryPage::DashboardThemes {
+    let body: AnyElement = if let Some(reason) = library_error {
+        div()
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().danger)
+                    .child(format!("The store could not be read. {reason}")),
+            )
+            .child(
+                Button::new("library-retry")
+                    .small()
+                    .label("Try again")
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.reload_library_catalogue(window, cx)
+                    })),
+            )
+            .into_any_element()
+    } else if dialog.page == LibraryPage::DashboardThemes {
         div()
             .flex()
             .flex_col()
@@ -521,9 +543,9 @@ pub fn page(
             .child(grid(dialog, cx, width - px(232.0)))
             .into_any_element()
     } else if dialog.page == LibraryPage::Collections {
-        catalogue_rows(catalogue, "No collections in the catalogue yet.", cx)
+        catalogue_rows(catalogue, "Nothing here yet.", cx)
     } else if dialog.page == LibraryPage::Submissions {
-        catalogue_rows(mine, "You have not published anything yet.", cx)
+        catalogue_rows(mine, "You have no store submissions yet.", cx)
     } else {
         div()
             .p_6()
@@ -583,7 +605,7 @@ fn toolbar(
                 } else {
                     gpui_kit::component::button::ButtonVariant::Ghost
                 })
-                .label(state.label())
+                .label(format!("Installed state: {}", state.label()))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some(themes) = &mut this.themes {
                         themes.state = state;
@@ -634,7 +656,7 @@ fn toolbar(
     row = row.child(
         Button::new("theme-sort-well")
             .small()
-            .label(format!("Sort themes: {}", sorts[sort_index].label()))
+            .label(format!("Sort: {}", sorts[sort_index].label()))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 if let Some(themes) = &mut this.themes {
                     let current = sorts
@@ -884,7 +906,7 @@ fn grid(
             .child(if dialog.state == LibraryState::NotInstalled {
                 "The store catalogue is not loaded yet."
             } else {
-                "No stored themes yet. Save one first."
+                "Nothing here yet."
             })
             .into_any_element();
     }
@@ -1089,7 +1111,7 @@ fn list(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> AnyElement {
         div()
             .p_3()
             .text_color(cx.theme().muted_foreground)
-            .child("No stored themes yet. Save one first.")
+            .child("Nothing here yet.")
             .into_any_element()
     } else {
         div()

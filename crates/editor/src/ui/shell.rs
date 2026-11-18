@@ -10,17 +10,17 @@ use crate::ui::menus::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellMode {
-    Themes,
+    Library,
     Editor,
     Settings,
 }
 
 impl ShellMode {
-    pub const ALL: [Self; 3] = [Self::Themes, Self::Editor, Self::Settings];
+    pub const ALL: [Self; 3] = [Self::Library, Self::Editor, Self::Settings];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Themes => "Themes",
+            Self::Library => "Library",
             Self::Editor => "Editor",
             Self::Settings => "Settings",
         }
@@ -28,7 +28,7 @@ impl ShellMode {
 
     pub fn index(self) -> usize {
         match self {
-            Self::Themes => 0,
+            Self::Library => 0,
             Self::Editor => 1,
             Self::Settings => 2,
         }
@@ -36,7 +36,7 @@ impl ShellMode {
 
     fn icon(self) -> IconName {
         match self {
-            Self::Themes => IconName::BookOpen,
+            Self::Library => IconName::BookOpen,
             Self::Editor => IconName::Frame,
             Self::Settings => IconName::Settings,
         }
@@ -101,7 +101,7 @@ pub const TOOLBAR_GROUPS: [&[Command]; 3] = [
     &[
         Command::Save,
         Command::SaveAs,
-        Command::OpenDisplay,
+        Command::Activate,
         Command::Export,
         Command::ExportWidget,
     ],
@@ -120,6 +120,7 @@ fn toolbar_icon(command: Command) -> IconName {
         Command::ExportWidget => IconName::Frame,
         Command::OpenDisplay => IconName::Play,
         Command::AssetFinder => IconName::Search,
+        Command::Activate => IconName::Play,
         _ => IconName::Ellipsis,
     }
 }
@@ -127,7 +128,7 @@ fn toolbar_icon(command: Command) -> IconName {
 impl EditorWindow {
     pub(super) fn set_mode(&mut self, mode: ShellMode, cx: &mut Context<Self>) {
         self.mode = mode;
-        if mode == ShellMode::Themes {
+        if mode == ShellMode::Library {
             self.themes = Some(crate::ui::library_dialog::LibraryDialog::new(&self.library));
         }
         cx.notify();
@@ -142,11 +143,6 @@ impl EditorWindow {
             self.left_pane = pane;
             self.left_collapsed = false;
         }
-        cx.notify();
-    }
-
-    pub(super) fn toggle_left_pane(&mut self, cx: &mut Context<Self>) {
-        self.left_collapsed = !self.left_collapsed;
         cx.notify();
     }
 
@@ -207,8 +203,6 @@ impl EditorWindow {
         };
 
         let mode = self.mode;
-        let left = self.left_collapsed;
-        let right = self.right_collapsed;
 
         let modes = ShellMode::ALL
             .into_iter()
@@ -268,6 +262,23 @@ impl EditorWindow {
                 }
             }
         }
+        let readings_label = if self.readings_live { "Readings from: Live" } else { "Readings from: Preview" };
+        toolbar = toolbar.child(
+            Button::new("toolbar-readings-source")
+                .accessibility_label(readings_label)
+                .small()
+                .px_1p5()
+                .with_variant(if self.readings_live {
+                    gpui_kit::component::button::ButtonVariant::Primary
+                } else {
+                    gpui_kit::component::button::ButtonVariant::Ghost
+                })
+                .label(readings_label)
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.readings_live = !this.readings_live;
+                    cx.notify();
+                })),
+        );
 
         TitleBar::new().child(
             h_flex()
@@ -325,41 +336,11 @@ impl EditorWindow {
                             })),
                     )
                 })
-                .child(
-                    Button::new("toggle-left-pane")
-                        .accessibility_label(if left { "Show left pane" } else { "Hide left pane" })
-                        .ghost()
-                        .small()
-                        .icon(IconName::PanelLeft)
-                        .tooltip(if left {
-                            "Show left pane"
-                        } else {
-                            "Hide left pane"
-                        })
-                        .on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_left_pane(cx)),
-                        ),
-                )
-                .child(
-                    Button::new("toggle-right-pane")
-                        .accessibility_label(if right { "Show inspector" } else { "Hide inspector" })
-                        .ghost()
-                        .small()
-                        .icon(IconName::PanelRight)
-                        .tooltip(if right {
-                            "Show inspector"
-                        } else {
-                            "Hide inspector"
-                        })
-                        .on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_right_pane(cx)),
-                        ),
-                ),
         )
     }
 
     pub(super) fn body(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_kit::component::{ActiveTheme, h_flex};
+        use gpui_kit::component::{ActiveTheme, Sizable, h_flex, button::{Button, ButtonVariants}};
 
         let mut editor = h_flex().size_full().min_h(px(0.0));
         editor = editor.child(
@@ -393,7 +374,44 @@ impl EditorWindow {
                     .w(px(276.0))
                     .flex_shrink_0()
                     .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .p_1()
+                            .child(
+                                Button::new("inspector-toggle")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::PanelRight)
+                                    .accessibility_label("Hide inspector")
+                                    .tooltip("Hide inspector")
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.toggle_right_pane(cx)
+                                    })),
+                            ),
+                    )
                     .child(self.inspector_view(cx)),
+            );
+        } else {
+            editor = editor.child(
+                div()
+                    .absolute()
+                    .top(px(12.0))
+                    .right(px(12.0))
+                    .child(
+                        Button::new("inspector-show")
+                            .ghost()
+                            .small()
+                            .icon(IconName::PanelRight)
+                            .accessibility_label("Show inspector")
+                            .tooltip("Show inspector")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.toggle_right_pane(cx)
+                            })),
+                    ),
             );
         }
 
@@ -409,7 +427,7 @@ impl EditorWindow {
                     .when(self.mode != ShellMode::Editor, |this| this.invisible())
                     .child(editor),
             )
-            .when(self.mode == ShellMode::Themes, |this| {
+            .when(self.mode == ShellMode::Library, |this| {
                 let dialog = self.themes.clone().unwrap_or_else(|| {
                     crate::ui::library_dialog::LibraryDialog::new(&self.library)
                 });
@@ -421,6 +439,7 @@ impl EditorWindow {
                         self.library_search.as_ref(),
                         &self.library_catalogue,
                         &self.library_mine,
+                        self.library_error.as_deref(),
                     ),
                 ))
             })
@@ -502,7 +521,7 @@ mod tests {
     fn shell_modes_are_themes_editor_settings_in_order() {
         assert_eq!(
             ShellMode::ALL.map(ShellMode::label),
-            ["Themes", "Editor", "Settings"]
+            ["Library", "Editor", "Settings"]
         );
         assert_eq!(ShellMode::ALL.map(ShellMode::index), [0, 1, 2]);
     }
@@ -536,7 +555,7 @@ mod tests {
                 &[
                     Command::Save,
                     Command::SaveAs,
-                    Command::OpenDisplay,
+                    Command::Activate,
                     Command::Export,
                     Command::ExportWidget,
                 ][..],
