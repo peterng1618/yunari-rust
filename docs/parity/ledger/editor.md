@@ -74,7 +74,10 @@ the rail's active-slot press closes it, matching the source's rail press.
   pane's own insert groups, from the one `INSERT_GROUPS` table the pane reads
   too. The menu flips above the press when it would run off the foot, and
   bounds itself to 520px so a short window scrolls it instead of clipping it.
-  Snap guides against the source and drag feedback remain P3.
+  Snap lines follow the source's five-screen-pixel threshold and boundary >
+  edge > centre priority. Dragging one object between two neighbours also snaps
+  to an equal gap when the two gaps are within the hold margin, drawing both
+  spacing intervals. Multi-object spacing patterns remain P3.
 - **Arrange.** The eight arrange actions sit at the top of the selection
   inspector, which is where the source keeps them: the dock deliberately does
   not repeat them. Each button routes through `Command::apply`, so an

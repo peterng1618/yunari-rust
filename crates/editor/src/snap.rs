@@ -101,7 +101,88 @@ pub fn snap_move(
             to: width,
         });
     }
+    if let Some((shift, spacing_guides)) =
+        equal_spacing(document, moving, bounds, dx + (x - proposed.0), Axis::X, threshold)
+    {
+        x += shift;
+        guides.extend(spacing_guides);
+    }
+    if let Some((shift, spacing_guides)) =
+        equal_spacing(document, moving, bounds, dy + (y - proposed.1), Axis::Y, threshold)
+    {
+        y += shift;
+        guides.extend(spacing_guides);
+    }
     (x, y, guides)
+}
+
+/// Equal-spacing correction for one moved selection between its two nearest
+/// neighbours on an axis. The source offers the same interval as a snap when
+/// the two gaps are within its hold margin; the guide marks both intervals.
+fn equal_spacing(
+    document: &ThemeDocument,
+    moving: &[String],
+    bounds: (f64, f64, f64, f64),
+    delta: f64,
+    axis: Axis,
+    threshold: f64,
+) -> Option<(f64, Vec<Guide>)> {
+    if moving.len() != 1 {
+        return None;
+    }
+    let mut neighbors: Vec<(f64, f64)> = Vec::new();
+    collect_intervals(&document.nodes, moving, axis, &mut neighbors);
+    neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let (active_start, active_end) = match axis {
+        Axis::X => (bounds.0 + delta, bounds.2 + delta),
+        Axis::Y => (bounds.1 + delta, bounds.3 + delta),
+    };
+    let before = neighbors.iter().rev().find(|candidate| candidate.1 <= active_start);
+    let after = neighbors.iter().find(|candidate| candidate.0 >= active_end);
+    let (before_end, after_start) = match (before, after) {
+        (Some(left), Some(right)) => (left.1, right.0),
+        _ => return None,
+    };
+    let gap_before = active_start - before_end;
+    let gap_after = after_start - active_end;
+    if gap_before <= 0.0 || gap_after <= 0.0 || (gap_before - gap_after).abs() > threshold {
+        return None;
+    }
+    let shift = (gap_after - gap_before) / 2.0;
+    let (from, to, midpoint_before, midpoint_after) = match axis {
+        Axis::X => (
+            0.0,
+            document.artboard.height,
+            before_end + gap_before / 2.0,
+            active_end + gap_after / 2.0 + shift,
+        ),
+        Axis::Y => (
+            0.0,
+            document.artboard.width,
+            before_end + gap_before / 2.0,
+            active_end + gap_after / 2.0 + shift,
+        ),
+    };
+    Some((
+        shift,
+        vec![
+            Guide { axis, at: midpoint_before, from, to },
+            Guide { axis, at: midpoint_after, from, to },
+        ],
+    ))
+}
+
+fn collect_intervals(nodes: &[Node], moving: &[String], axis: Axis, out: &mut Vec<(f64, f64)>) {
+    for node in nodes {
+        if !moving.contains(&node.id) && node.visible {
+            let (x, y, width, height) = box_of(node);
+            out.push(match axis {
+                Axis::X => (x, x + width),
+                Axis::Y => (y, y + height),
+            });
+        }
+        collect_intervals(&node.children, moving, axis, out);
+    }
 }
 
 /// The edge nearest a line, and which edge it was, when it is within reach.
@@ -384,6 +465,20 @@ mod tests {
         let (x, _, guides) = snap_move(&document, &ids(&["a"]), (89.5, 300.0), 1.0, true);
         assert_eq!(x, 89.5);
         assert!(guides.is_empty());
+    }
+
+    #[test]
+    fn a_move_between_two_neighbours_can_land_on_an_equal_gap() {
+        let document = document(vec![
+            rect("left", 0.0, 0.0, 10.0, 10.0),
+            rect("moving", 20.0, 0.0, 10.0, 10.0),
+            rect("right", 45.0, 0.0, 10.0, 10.0),
+        ]);
+        // The gaps are 10 and 12.5. Moving 1.25 right makes both 11.25.
+        let (x, _, guides) = snap_move(&document, &ids(&["moving"]), (21.25, 0.0), 1.0, true);
+        assert_eq!(x, 22.5);
+        assert!(guides.len() >= 2);
+        assert!(guides.iter().any(|guide| guide.axis == Axis::X));
     }
 
     #[test]
