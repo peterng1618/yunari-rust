@@ -4225,6 +4225,25 @@ impl EditorWindow {
                             .child(format!("Pairing code: {code}"))
                             .into_any_element(),
                     );
+                    if let Some(address) = yunari_host::hosting::lan_address() {
+                        let url = format!("https://{address}:{port}/pair?code={code}");
+                        if let Ok(qr) = qrcode::QrCode::new(url.as_bytes()) {
+                            let svg = qr.render::<qrcode::render::svg::Color>().build();
+                            let image = std::sync::Arc::new(gpui_kit::Image::from_bytes(
+                                gpui_kit::ImageFormat::Svg,
+                                svg.into_bytes(),
+                            ));
+                            children.push(
+                                div()
+                                    .id("publish-qr")
+                                    .size(px(120.0))
+                                    .child(
+                                        img(gpui_kit::ImageSource::Image(image)).size_full(),
+                                    )
+                                    .into_any_element(),
+                            );
+                        }
+                    }
                 }
             } else {
                 children.push(

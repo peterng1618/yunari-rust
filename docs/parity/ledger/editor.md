@@ -271,7 +271,9 @@ current source removed the old Local library / Online store halves, so they
 are not ported.
 
 The Collections and My submissions pages read the host's catalogue halves
-  once and list the rows the host answered. Collection consent and the publish QR symbol are still unported; an Install
+  once and list the rows the host answered. The publish surface also draws a QR symbol for the host's own pairing URL,
+beside the printed code for devices without a camera. Collection consent is
+still unported; an Install
   press uses the host's own download, digest check and install path.
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.

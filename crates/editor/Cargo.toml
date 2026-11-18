@@ -9,6 +9,7 @@ license.workspace = true
 gpui-kit = "0.9.1"
 serde_json.workspace = true
 time = "0.3"
+qrcode = { version = "0.14", features = ["svg"] }
 yunari-host.workspace = true
 yunari-library.workspace = true
 yunari-model.workspace = true
