@@ -77,7 +77,9 @@ the rail's active-slot press closes it, matching the source's rail press.
   Snap lines follow the source's five-screen-pixel threshold and boundary >
   edge > centre priority. Dragging one object between two neighbours also snaps
   to an equal gap when the two gaps are within the hold margin, drawing both
-  spacing intervals. Multi-object spacing patterns remain P3.
+  spacing intervals. A multi-object drag is treated as one interval, so its
+  outer gaps can land on an equal spacing too; internal pattern holds remain
+  P3.
 - **Arrange.** The eight arrange actions sit at the top of the selection
   inspector, which is where the source keeps them: the dock deliberately does
   not repeat them. Each button routes through `Command::apply`, so an

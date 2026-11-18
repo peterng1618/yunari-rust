@@ -116,7 +116,8 @@ pub fn snap_move(
     (x, y, guides)
 }
 
-/// Equal-spacing correction for one moved selection between its two nearest
+/// Equal-spacing correction for a moved selection, treated as one interval,
+/// between its two nearest
 /// neighbours on an axis. The source offers the same interval as a snap when
 /// the two gaps are within its hold margin; the guide marks both intervals.
 fn equal_spacing(
@@ -127,9 +128,6 @@ fn equal_spacing(
     axis: Axis,
     threshold: f64,
 ) -> Option<(f64, Vec<Guide>)> {
-    if moving.len() != 1 {
-        return None;
-    }
     let mut neighbors: Vec<(f64, f64)> = Vec::new();
     collect_intervals(&document.nodes, moving, axis, &mut neighbors);
     neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
@@ -479,6 +477,25 @@ mod tests {
         assert_eq!(x, 22.5);
         assert!(guides.len() >= 2);
         assert!(guides.iter().any(|guide| guide.axis == Axis::X));
+    }
+
+    #[test]
+    fn a_two_object_selection_can_snap_its_outer_gaps() {
+        let document = document(vec![
+            rect("left", 0.0, 0.0, 10.0, 10.0),
+            rect("first", 20.0, 0.0, 10.0, 10.0),
+            rect("second", 30.0, 0.0, 10.0, 10.0),
+            rect("right", 57.0, 0.0, 10.0, 10.0),
+        ]);
+        let (x, _, guides) = snap_move(
+            &document,
+            &ids(&["first", "second"]),
+            (21.25, 0.0),
+            1.0,
+            true,
+        );
+        assert!(x > 21.25);
+        assert!(guides.len() >= 2);
     }
 
     #[test]
