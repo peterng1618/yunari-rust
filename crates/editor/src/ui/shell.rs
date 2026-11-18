@@ -174,6 +174,7 @@ impl EditorWindow {
             .border_color(cx.theme().border)
             .children(LeftPane::ALL.map(|pane| {
                 Button::new(format!("rail-{pane:?}"))
+                    .accessibility_label(pane.label())
                     .ghost()
                     .small()
                     .icon(pane.icon())
@@ -186,6 +187,7 @@ impl EditorWindow {
             .child(div().flex_1())
             .child(
                 Button::new("rail-settings")
+                    .accessibility_label("Settings")
                     .ghost()
                     .small()
                     .icon(IconName::Settings)
@@ -213,6 +215,7 @@ impl EditorWindow {
             .map(|candidate| {
                 let gap = cx.theme().spacing_tokens().sm;
                 Toggle::new(format!("shell-mode-{}", candidate.index()))
+                    .tooltip(candidate.label())
                     .child(
                         h_flex()
                             .gap(gap)
@@ -231,6 +234,7 @@ impl EditorWindow {
             for command in group.iter().copied() {
                 toolbar = toolbar.child(
                     Button::new(format!("toolbar-{:?}", command))
+                        .accessibility_label(command.label())
                         .ghost()
                         .small()
                         .px_1p5()
@@ -245,6 +249,7 @@ impl EditorWindow {
                 if command == Command::Open {
                     toolbar = toolbar.child(
                         Button::new("toolbar-recent")
+                            .accessibility_label("Open recent")
                             .ghost()
                             .small()
                             .px_1p5()
@@ -300,6 +305,7 @@ impl EditorWindow {
                 .when(mode == ShellMode::Editor, |this| {
                     this.child(
                         gpui_kit::component::button::Button::new("publish-open")
+                            .accessibility_label(crate::ui::menus::Command::Publish.label())
                             .primary()
                             .small()
                             .child(
@@ -321,6 +327,7 @@ impl EditorWindow {
                 })
                 .child(
                     Button::new("toggle-left-pane")
+                        .accessibility_label(if left { "Show left pane" } else { "Hide left pane" })
                         .ghost()
                         .small()
                         .icon(IconName::PanelLeft)
@@ -335,6 +342,7 @@ impl EditorWindow {
                 )
                 .child(
                     Button::new("toggle-right-pane")
+                        .accessibility_label(if right { "Show inspector" } else { "Hide inspector" })
                         .ghost()
                         .small()
                         .icon(IconName::PanelRight)
