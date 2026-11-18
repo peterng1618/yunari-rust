@@ -382,3 +382,8 @@ group names and library links; Theme settings shows Theme, Artboard and
 Credits; Paint tokens shows its count; the status bar drops the invented
 "Opened" reading and matches the source's "Unsaved changes" copy.
 
+
+Overlay copy fixes: Recents has its "Open recent" heading, the shortcut sheet
+has a Close control, the publish surface prints the source's IP-change warning
+and names the QR symbol "QR code: {url}".
+

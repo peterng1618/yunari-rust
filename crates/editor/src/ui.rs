@@ -4254,6 +4254,16 @@ impl EditorWindow {
             cx.theme().muted_foreground,
         );
         let mut entries: Vec<AnyElement> = Vec::new();
+        entries.push(
+            div()
+                .px_3()
+                .pt_2()
+                .pb_1()
+                .text_xs()
+                .text_color(muted)
+                .child("Open recent")
+                .into_any_element(),
+        );
         if self.recents.is_empty() {
             entries.push(
                 div()
@@ -4746,6 +4756,13 @@ impl EditorWindow {
                             .child(format!("Fallback http://{address}:{port}"))
                             .into_any_element(),
                     );
+                    children.push(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("The address above breaks if the Host's IP changes.")
+                            .into_any_element(),
+                    );
                 } else {
                     children.push(
                         div()
@@ -4781,6 +4798,7 @@ impl EditorWindow {
                             children.push(
                                 div()
                                     .id("publish-qr")
+                                    .aria_label(format!("QR code: {url}"))
                                     .size(px(120.0))
                                     .child(
                                         img(gpui_kit::ImageSource::Image(image)).size_full(),
@@ -4883,6 +4901,15 @@ impl EditorWindow {
                     .min_h(px(0.0))
                     .overflow_y_scroll()
                     .children(columns),
+            )
+            .child(
+                div()
+                    .id("shortcuts-close")
+                    .text_xs()
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .child("Close")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_overlay(cx))),
             )
             .into_any_element()
     }
