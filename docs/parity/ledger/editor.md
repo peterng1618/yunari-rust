@@ -158,6 +158,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` â€” 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-library-toolbar.png` — 1920x1080,
+  search, five sort keys and four densities; Comfortable gives seven columns.
 - `test-results/parity-shots/editor-port-themes-current-footer.png` â€” 1920x1080,
   the current-source card footer: name/day at rest, actions on hover.
 - `test-results/parity-shots/editor-port-themes-contain2.png` â€” 1920x1080, the
@@ -217,11 +219,14 @@ The rest of the port stays on the pinned commitment. Concrete folding so far:
   the day is the resting reading and Duplicate/Delete fade in over it when the
   card is attended. The author is a hover chip above the picture. A `time`
   dependency formats the ISO day from `ThemeEntry::updated_at`.
-- Themes sort defaults to Updated in the source; the port keeps Name as its
-  default until the sort control is folded in with the rest of the toolbar.
+- The listing toolbar has the source's inline search and five sort keys
+  (Name, Updated, Created, Downloads, Favorites), defaulting to Updated, plus
+  four density levels (Compact 150, Comfortable 204, Roomy 270, Spacious 360)
+  whose column count is derived from the measured width. Local rows carry no
+  catalogue counts, so Created/Downloads/Favorites leave their order alone.
 
 Still to fold: Local library / Online store halves, type navigation, state
-filter, search, five facets, sort well and density slider; collection cards
+filter, five facets; collection cards
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.
 
