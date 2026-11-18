@@ -1,12 +1,15 @@
 # Editor UI ledger
 
-Source: `D:\git-repos\yunari` @ `1241866e53df252307e22ff3c51c842f89e458c8`.
+Source: `D:\git-repos\yunari` @ `c40dd16d` for the P4 surfaces reviewed here;
+the earlier pinned commit `1241866e53df252307e22ff3c51c842f89e458c8` remains the
+baseline for the rest of the port.
 Port: `D:\git-repos\yunari-rust`.
 
 The reference capture is the source host driven at 1920x1080
 (`node packages/host/bin/yunari.js --no-browser`). The served bundle names the
-first mode **Themes**, which is the pinned commit's vocabulary; the checked-out
-HEAD renamed it Library, so the served bundle is pinned-era, not HEAD.
+first mode **Themes** (pinned-era vocabulary); the checked-out HEAD names it
+**Library**, which is what the port now uses. The port is not claiming the
+older capture matches the current label.
 
 ## P1 â€” shell
 
@@ -211,7 +214,7 @@ pinned `1241866e5`) found:
 - Settings is a two-group navigation (This PC, Editor) with one title and hint
   per page; the port now draws that navigation and its backed pages.
 - Library is a catalogue with nav groups, search, five facets, sort, a density
-  control and an installed-state filter; the port's Themes mode draws those.
+  control and an installed-state filter; the port's Library mode draws those.
 - Asset Finder has six tabs (Colors, Fonts, Icons, Images, Videos, Wallpaper
   Engine), defaulting to Icons, with per-tab search and empty/key-required/
   error states. The port now draws that rail and separates its stock icons,
@@ -259,7 +262,7 @@ The rest of the port stays on the pinned commitment. Concrete folding so far:
   whose column count is derived from the measured width. Local rows carry no
   catalogue counts, so Created/Downloads/Favorites leave their order alone.
 
-The Library/Themes mode now has the source's navigation column: Browse (nine
+The Library/Library mode now has the source's navigation column: Browse (nine
 pages in source order) and Publish (My submissions). Dashboard themes draws the
 local gallery; the other pages name themselves instead of pretending to hold
 controls. Search, facets, sort and density share one toolbar row.
