@@ -221,8 +221,9 @@ pinned `1241866e5`) found:
   carries its source. Local picture rows show the file's own bytes as a small
   preview when the file can be read; stock rows fetch their own bytes on the
   search thread and draw the same preview. Colors, Fonts and Videos still say
-  they are not ported; Videos has no stock source in this host. Colors and
-  Fonts now search their own sources and show the results in the finder.
+  Videos lists this PC's video files; Colors and Fonts search their own sources.
+  No tab now claims to be unported, but each is limited to the sources this
+  host declares.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the
   source's library detail, type authoring in the Tokens pane, path presets in

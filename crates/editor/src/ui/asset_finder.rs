@@ -96,6 +96,7 @@ pub struct AssetFinder {
 /// The picture extensions a local row may name. Bytes still decide what the
 /// file is; the extension only decides what is listed.
 const PICTURES: [&str; 7] = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"];
+const VIDEOS: [&str; 4] = ["mp4", "webm", "mov", "avi"];
 /// A listing is a picker, not a filesystem walk.
 const MAX_LOCAL: usize = 200;
 /// The stock sources whose rows are pictures this finder can place. A font or
@@ -128,6 +129,16 @@ impl AssetFinder {
                 source: "local".to_owned(),
                 preview,
             }
+        }));
+        choices.extend(local_videos().into_iter().map(|path| Choice {
+            label: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            pick: Pick::File(path),
+            tab: FinderTab::Videos,
+            source: "local".to_owned(),
+            preview: None,
         }));
 
         match yunari_host::wallpaper_engine::locate() {
@@ -199,6 +210,32 @@ fn preview_of(path: &std::path::Path) -> Option<std::sync::Arc<gpui_kit::Image>>
     Some(std::sync::Arc::new(gpui_kit::Image::from_bytes(
         format, bytes,
     )))
+}
+
+/// Videos this PC already holds. There is no stock video source in this host,
+/// so the tab lists local files only.
+fn local_videos() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) else {
+        return Vec::new();
+    };
+    let folder = PathBuf::from(home).join("Videos");
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| VIDEOS.contains(&value.to_ascii_lowercase().as_str()))
+        })
+        .take(MAX_LOCAL)
+        .collect();
+    paths.sort();
+    paths
 }
 
 fn local_pictures() -> Vec<PathBuf> {
@@ -293,7 +330,10 @@ pub fn search_for(
             Vec::new(),
             Some("Wallpaper Engine searches this PC's library, not a remote source.".to_owned()),
         ),
-        _ => (Vec::new(), None),
+        FinderTab::Videos => (
+            Vec::new(),
+            Some("Videos come from this PC's Videos folder.".to_owned()),
+        ),
     }
 }
 
@@ -493,11 +533,8 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     } else {
         dialog.query.value.clone()
     };
-    let unported = match dialog.tab {
-        FinderTab::Videos => Some(format!(
-            "The {} tab is not ported yet. Its sources need the host's asset registry.",
-            dialog.tab.label()
-        )),
+    let unported: Option<String> = match dialog.tab {
+        FinderTab::Videos => None,
         FinderTab::Icons
         | FinderTab::Images
         | FinderTab::Colors
