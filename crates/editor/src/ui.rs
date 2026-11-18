@@ -127,6 +127,8 @@ enum Overlay {
     /// The header's one accent button: assign this theme to a display,
     /// then the publishing switch below the choice.
     Publish,
+    /// The readout's display/zoom menu, anchored to the stage cluster.
+    DisplayMenu { at: Point<Pixels> },
     /// A collection's install sheet: the includes the host's package names,
     /// and the optional ones this author chose to keep.
     CollectionConsent {
@@ -3379,6 +3381,7 @@ impl EditorWindow {
             | Overlay::Typography(_)
             | Overlay::Mcp(_)
             | Overlay::Settings(_)
+            | Overlay::DisplayMenu { .. }
             | Overlay::CollectionConsent { .. }
             | Overlay::Publish => {
                 if keystroke.key == "escape" {
@@ -3801,7 +3804,6 @@ impl EditorWindow {
         let theme = cx.theme();
         let (panel, border, foreground) = (theme.popover, theme.border, theme.foreground);
         let present = format!("{:.0}%", self.viewport.scale * 100.0);
-        let right = self.right_collapsed;
         let document = self.editor.document();
         let label = document
             .metadata
@@ -3823,20 +3825,6 @@ impl EditorWindow {
             .border_1()
             .border_color(border)
             .child(
-                Button::new("stage-inspector")
-                    .ghost()
-                    .small()
-                    .icon(IconName::PanelRight)
-                    .tooltip(if right {
-                        "Show inspector"
-                    } else {
-                        "Hide inspector"
-                    })
-                    .on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_right_pane(cx)),
-                    ),
-            )
-            .child(
                 Button::new("stage-zoom-out")
                     .ghost()
                     .small()
@@ -3854,8 +3842,16 @@ impl EditorWindow {
                     .text_center()
                     .text_color(foreground)
                     .cursor_pointer()
+                    .aria_label(format!("Display and zoom: {present}"))
                     .child(present)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.reset_stage(cx))),
+                    .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                        let at = match event {
+                            ClickEvent::Mouse(mouse) => mouse.down.position,
+                            _ => point(px(1600.0), px(80.0)),
+                        };
+                        this.overlay = Some(Overlay::DisplayMenu { at });
+                        cx.notify();
+                    })),
             )
             .child(
                 Button::new("stage-zoom-in")
@@ -3872,8 +3868,19 @@ impl EditorWindow {
                     .ghost()
                     .small()
                     .icon(IconName::Maximize)
-                    .tooltip("Fit artboard")
+                    .tooltip("Zoom to fit")
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.fit_stage(cx))),
+            )
+            .child(
+                Button::new("stage-fullscreen")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Maximize)
+                    .tooltip("View in full screen")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.status = Some(Status::error("Full screen is not available in this build."));
+                        cx.notify();
+                    })),
             );
         div()
             .absolute()
@@ -3974,6 +3981,57 @@ impl EditorWindow {
         }
     }
 
+    fn zoom_to_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(bounds) = self.canvas_bounds.get() else {
+            return;
+        };
+        let rects = self.selection_rects();
+        if rects.is_empty() {
+            self.fit_stage(cx);
+            return;
+        }
+        let left = rects.iter().map(|rect| rect.0).fold(f64::MAX, f64::min);
+        let top = rects.iter().map(|rect| rect.1).fold(f64::MAX, f64::min);
+        let right = rects.iter().map(|rect| rect.0 + rect.2).fold(f64::MIN, f64::max);
+        let bottom = rects.iter().map(|rect| rect.1 + rect.3).fold(f64::MIN, f64::max);
+        self.viewport = Viewport::contain((right - left, bottom - top), bounds);
+        self.camera_touched = true;
+        cx.notify();
+    }
+
+    fn display_menu_layer(&self, at: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::button::{Button, ButtonVariants};
+
+        let rows = [
+            ("Zoom to fit", 0u8),
+            ("Zoom to selection", 1),
+            ("Zoom to 100 %", 2),
+            ("View in full screen", 3),
+        ];
+        let mut entries: Vec<AnyElement> = Vec::new();
+        for (label, action) in rows {
+            entries.push(
+                Button::new(format!("display-menu-{action}"))
+                    .ghost()
+                    .label(label)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.overlay = None;
+                        match action {
+                            0 => this.fit_stage(cx),
+                            1 => this.zoom_to_selection(cx),
+                            2 => this.reset_stage(cx),
+                            _ => this.status = Some(Status::error(
+                                "Full screen is not available in this build.",
+                            )),
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+        self.menu_layer(at, px(200.0), px(160.0), entries, cx)
+    }
+
     /// The canvas menu: a cursor-anchored list of the object's commands, or of
     /// everything insertable when the press missed every object.
     fn context_menu_layer(
@@ -3996,6 +4054,7 @@ impl EditorWindow {
             entries.push(
                 div()
                     .id(format!("canvas-menu-{label}"))
+                    .aria_label(label)
                     .px_3()
                     .py_0p5()
                     .text_sm()
@@ -4789,20 +4848,39 @@ impl EditorWindow {
                     .child(prompt.hint.clone()),
             )
             .child(
-                div().flex().justify_end().child(
-                    div()
-                        .id("prompt-ok")
-                        .px_3()
-                        .py_1()
-                        .rounded_sm()
-                        .bg(rgb(ACCENT))
-                        .text_color(rgb(0x101014))
-                        .cursor_pointer()
-                        .child("OK  ·  Enter")
-                        .on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.submit_prompt(cx)),
-                        ),
-                ),
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("prompt-cancel")
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .cursor_pointer()
+                            .text_color(rgb(INK))
+                            .child("Cancel")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.close_overlay(cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("prompt-ok")
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(ACCENT))
+                            .text_color(rgb(0x101014))
+                            .cursor_pointer()
+                            .child("OK  ·  Enter")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.submit_prompt(cx)
+                            })),
+                    ),
             )
             .into_any_element()
     }
@@ -4853,6 +4931,7 @@ impl EditorWindow {
             Some(Overlay::Shortcuts) => Self::shortcuts_panel(cx),
             Some(Overlay::Publish) => self.publish_panel(cx),
             Some(Overlay::CollectionConsent { .. }) => self.collection_consent_panel(cx),
+            Some(Overlay::DisplayMenu { at }) => self.display_menu_layer(*at, cx),
             // A menu is anchored to the gesture, not to a dialog's centre.
             Some(Overlay::ContextMenu { at, object }) => {
                 return Some(self.context_menu_layer(*at, object.clone(), cx));

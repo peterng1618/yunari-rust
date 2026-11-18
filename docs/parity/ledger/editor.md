@@ -369,3 +369,9 @@ The object context menu and canvas dock now use the source's flat registry
 order, including Lock and Unlock, and no longer repeat the inspector's arrange
 actions.
 
+
+The stage readout now opens the source's display/zoom menu (fit, selection,
+100 %, full screen), with source copy and an accessible name. The full-screen
+row reports that this build has no fullscreen API instead of pretending.
+Prompts have a Cancel control, and canvas menu rows carry accessible names.
+
