@@ -397,3 +397,20 @@ visible canvas; object menu rows show chords and mark Delete destructive; Add
 pane buttons render as tiles; finder queries are kept per tab; facets have a
 search control; guide extents, menu chord hints and tile layout are in place.
 
+
+## Stop-hook gap closure
+
+- Object menu and dock now carry all 17 source actions in registry order,
+  including Convert to paths, Replace file, Flip horizontally and Flip
+  vertically. Convert to paths and Replace file report that their session-side
+  implementations are not ported rather than silently doing nothing.
+- Not installed now draws catalogue rows whose ids are not in the local
+  library, with Install, instead of hiding every row.
+- Finder state is per tab: query, rows, notes and page. Retry and Show more
+  reuse the host's paged search; remote rows are appended, not overwritten.
+- Library cards expose Open in editor, Assign to display and Export theme
+  package alongside Duplicate and Delete, as the source's cell actions do.
+- Focus-ring appearance could not be inspected on this box: UIA SetFocus is not
+  honoured by this GPUI build and Orca's runtime is blocked by antivirus. The
+  controls do have accessible names and report as keyboard-focusable.
+

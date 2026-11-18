@@ -86,6 +86,11 @@ pub struct AssetFinder {
     pub selected: Option<Choice>,
     // Each tab keeps its own question, as the source tab views do.
     pub queries: BTreeMap<FinderTab, String>,
+    /// Rows, answers and failure notes kept separately for each tab.
+    pub rows_by_tab: BTreeMap<FinderTab, Vec<Choice>>,
+    pub notes_by_tab: BTreeMap<FinderTab, String>,
+    pub searched_tabs: BTreeSet<FinderTab>,
+    pub page_by_tab: BTreeMap<FinderTab, u32>,
     pub disabled: BTreeSet<String>,
     pub choices: Vec<Choice>,
     /// Rows a stock search returned. Replaced by each answer, so a stale page
@@ -181,6 +186,10 @@ impl AssetFinder {
             tab: FinderTab::Icons,
             selected: None,
             queries: BTreeMap::new(),
+            rows_by_tab: BTreeMap::new(),
+            notes_by_tab: BTreeMap::new(),
+            searched_tabs: BTreeSet::new(),
+            page_by_tab: BTreeMap::new(),
             disabled: BTreeSet::new(),
             choices,
             remote: Vec::new(),
@@ -297,7 +306,7 @@ fn stock_preview(
 }
 
 pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, Option<String>) {
-    search_sources(query, credential, &PICTURE_SOURCES, kinds_for(FinderTab::Images), FinderTab::Images)
+    search_sources(query, credential, &PICTURE_SOURCES, kinds_for(FinderTab::Images), FinderTab::Images, 1)
 }
 
 /// The sources a tab may ask. Icons and images share one host search, but the
@@ -307,6 +316,7 @@ pub fn search_for(
     tab: FinderTab,
     query: &str,
     credential: Option<&str>,
+    page: u32,
 ) -> (Vec<Choice>, Option<String>) {
     match tab {
         FinderTab::Icons => search_sources(
@@ -315,14 +325,16 @@ pub fn search_for(
             &["lucide", "lineicons", "fontawesome-free"],
             kinds_for(FinderTab::Icons),
             FinderTab::Icons,
+            page,
         ),
-        FinderTab::Images => search_sources(query, credential, &["unsplash"], kinds_for(FinderTab::Images), FinderTab::Images),
+        FinderTab::Images => search_sources(query, credential, &["unsplash"], kinds_for(FinderTab::Images), FinderTab::Images, page),
         FinderTab::Colors => search_sources(
             query,
             credential,
             &["webgradients", "uigradients", "colorswoop", "colorhunt"],
             kinds_for(FinderTab::Colors),
             FinderTab::Colors,
+            page,
         ),
         FinderTab::Fonts => {
             search_sources(
@@ -331,6 +343,7 @@ pub fn search_for(
                 &["google-fonts", "curated-fonts"],
                 kinds_for(FinderTab::Fonts),
                 FinderTab::Fonts,
+                page,
             )
         }
         FinderTab::WallpaperEngine => (
@@ -371,6 +384,7 @@ fn search_sources(
     sources: &[&str],
     kinds: &[&str],
     tab: FinderTab,
+    page: u32,
 ) -> (Vec<Choice>, Option<String>) {
     let mut choices = Vec::new();
     let mut notes = Vec::new();
@@ -379,7 +393,7 @@ fn search_sources(
             continue;
         };
         let key = stock.requires.and(credential);
-        match yunari_host::assets::search_with(id, query, 1, key) {
+        match yunari_host::assets::search_with(id, query, page.max(1), key) {
             Ok(page) => {
                 for result in page.results {
                     let kind = result["kind"].as_str().unwrap_or_default();
@@ -503,10 +517,11 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 cx.notify();
             }))
     }));
+    let remote_rows = dialog.rows_by_tab.get(&dialog.tab).cloned().unwrap_or_default();
     let rows: Vec<_> = dialog
         .choices
         .iter()
-        .chain(dialog.remote.iter())
+        .chain(remote_rows.iter())
         .filter(|choice| choice.tab == dialog.tab)
         .filter(|choice| !dialog.disabled.contains(&choice.source))
         .enumerate()
@@ -614,12 +629,12 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     };
     let status = if dialog.busy {
         "Searching…".to_owned()
-    } else if let Some(note) = &dialog.note {
+    } else if let Some(note) = dialog.notes_by_tab.get(&dialog.tab).or(dialog.note.as_ref()) {
         note.clone()
-    } else if dialog.searched {
-        format!("{} stock rows", dialog.remote.len())
+    } else if dialog.searched_tabs.contains(&dialog.tab) {
+        format!("{} results", remote_rows.len())
     } else {
-        "Type a search and press Enter.".to_owned()
+        placeholder(dialog.tab).to_owned()
     };
     div()
         .flex()
@@ -667,6 +682,24 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                         .text_xs()
                         .text_color(rgb(0x8a8a94))
                         .child(selected.as_ref().map(|item| item.label.clone()).unwrap_or_else(|| "Select a row".to_owned())),
+                )
+                .child(
+                    div()
+                        .id("finder-retry")
+                        .text_xs()
+                        .text_color(rgb(0x8a8a94))
+                        .cursor_pointer()
+                        .child("Try again")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.retry_finder_search(cx))),
+                )
+                .child(
+                    div()
+                        .id("finder-more")
+                        .text_xs()
+                        .text_color(rgb(0x8a8a94))
+                        .cursor_pointer()
+                        .child("Show more")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.finder_next_page(cx))),
                 )
                 .child(
                     div()

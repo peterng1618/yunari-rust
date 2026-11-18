@@ -477,6 +477,10 @@ enum CanvasMenuEntry {
     Command(Command),
     Restack(LayerMove),
     Lock(bool),
+    OutlineText,
+    ReplaceAsset,
+    FlipHorizontal,
+    FlipVertical,
 }
 
 impl CanvasMenuEntry {
@@ -489,13 +493,17 @@ impl CanvasMenuEntry {
             Self::Restack(LayerMove::Back) => "Send to back",
             Self::Lock(true) => "Lock",
             Self::Lock(false) => "Unlock",
+            Self::OutlineText => "Convert to paths",
+            Self::ReplaceAsset => "Replace file…",
+            Self::FlipHorizontal => "Flip horizontally",
+            Self::FlipVertical => "Flip vertically",
         }
     }
 }
 
 /// The canvas dock's rows: the registry's object commands, without the eight
 /// arrange actions, which the source keeps in the selection inspector.
-const DOCK_ACTIONS: [CanvasMenuEntry; 13] = [
+const DOCK_ACTIONS: [CanvasMenuEntry; 17] = [
     CanvasMenuEntry::Command(Command::Duplicate),
     CanvasMenuEntry::Command(Command::Copy),
     CanvasMenuEntry::Command(Command::Cut),
@@ -508,6 +516,10 @@ const DOCK_ACTIONS: [CanvasMenuEntry; 13] = [
     CanvasMenuEntry::Lock(false),
     CanvasMenuEntry::Command(Command::Group),
     CanvasMenuEntry::Command(Command::Ungroup),
+    CanvasMenuEntry::OutlineText,
+    CanvasMenuEntry::ReplaceAsset,
+    CanvasMenuEntry::FlipHorizontal,
+    CanvasMenuEntry::FlipVertical,
     CanvasMenuEntry::Command(Command::DeleteSelected),
 ];
 
@@ -558,6 +570,36 @@ fn run_canvas_entry(
                 cx.notify();
             }
         }
+        CanvasMenuEntry::FlipHorizontal | CanvasMenuEntry::FlipVertical => {
+            let horizontal = matches!(entry, CanvasMenuEntry::FlipHorizontal);
+            let ids = this.selection.ids().to_vec();
+            if this.editor.edit(|document| {
+                for id in &ids {
+                    if let Some(node) = selection::find_mut(&mut document.nodes, id) {
+                        if horizontal {
+                            node.transform.scale_x = -node.transform.scale_x;
+                        } else {
+                            node.transform.scale_y = -node.transform.scale_y;
+                        }
+                    }
+                }
+            }) {
+                this.refresh();
+            }
+            cx.notify();
+        }
+        CanvasMenuEntry::ReplaceAsset => {
+            let mut finder = asset_finder::AssetFinder::new();
+            finder.tab = asset_finder::FinderTab::Images;
+            this.overlay = Some(Overlay::AssetFinder(finder));
+            cx.notify();
+        }
+        CanvasMenuEntry::OutlineText => {
+            this.status = Some(Status::error(
+                "Convert to paths needs the theme's font bytes and is not ported yet.",
+            ));
+            cx.notify();
+        }
     }
 }
 
@@ -604,6 +646,10 @@ const OBJECT_MENU: [&[CanvasMenuEntry]; 1] = [&[
     CanvasMenuEntry::Lock(false),
     CanvasMenuEntry::Command(Command::Group),
     CanvasMenuEntry::Command(Command::Ungroup),
+    CanvasMenuEntry::OutlineText,
+    CanvasMenuEntry::ReplaceAsset,
+    CanvasMenuEntry::FlipHorizontal,
+    CanvasMenuEntry::FlipVertical,
     CanvasMenuEntry::Command(Command::DeleteSelected),
 ]];
 
@@ -1728,13 +1774,15 @@ impl EditorWindow {
     /// Asks the picture sources off the UI thread: a slow catalogue must not
     /// freeze the window, and the answer lands in the finder only if it is
     /// still open.
-    fn search_stock_assets(&mut self, query: String, cx: &mut Context<Self>) {
+    fn search_stock_assets(&mut self, query: String, page: u32, cx: &mut Context<Self>) {
         let mut tab = asset_finder::FinderTab::Icons;
         if let Some(Overlay::AssetFinder(dialog)) = &mut self.overlay {
             tab = dialog.tab;
             dialog.queries.insert(tab, query.clone());
+            dialog.page_by_tab.insert(tab, page);
             dialog.busy = true;
             dialog.note = None;
+            dialog.notes_by_tab.remove(&tab);
         }
         let credential = self
             .host
@@ -1744,21 +1792,61 @@ impl EditorWindow {
             let (rows, note) = cx
                 .background_executor()
                 .spawn(async move {
-                    asset_finder::search_for(tab, &query, credential.as_deref())
+                    asset_finder::search_for(tab, &query, credential.as_deref(), page)
                 })
                 .await;
             this.update(cx, |this, cx| {
                 if let Some(Overlay::AssetFinder(dialog)) = &mut this.overlay {
                     dialog.busy = false;
                     dialog.searched = true;
-                    dialog.remote = rows;
-                    dialog.note = note;
+                    dialog.searched_tabs.insert(tab);
+                    if page > 1 {
+                        dialog.rows_by_tab.entry(tab).or_default().extend(rows);
+                    } else {
+                        dialog.rows_by_tab.insert(tab, rows);
+                    }
+                    dialog.remote = dialog.rows_by_tab.get(&tab).cloned().unwrap_or_default();
+                    if let Some(note) = note {
+                        dialog.notes_by_tab.insert(tab, note.clone());
+                        dialog.note = Some(note);
+                    } else {
+                        dialog.notes_by_tab.remove(&tab);
+                        dialog.note = None;
+                    }
                 }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    fn retry_finder_search(&mut self, cx: &mut Context<Self>) {
+        let Some(Overlay::AssetFinder(dialog)) = &self.overlay else {
+            return;
+        };
+        let tab = dialog.tab;
+        let query = dialog
+            .queries
+            .get(&tab)
+            .cloned()
+            .unwrap_or_default();
+        let page = dialog.page_by_tab.get(&tab).copied().unwrap_or(1);
+        self.search_stock_assets(query, page, cx);
+    }
+
+    fn finder_next_page(&mut self, cx: &mut Context<Self>) {
+        let Some(Overlay::AssetFinder(dialog)) = &self.overlay else {
+            return;
+        };
+        let tab = dialog.tab;
+        let query = dialog
+            .queries
+            .get(&tab)
+            .cloned()
+            .unwrap_or_default();
+        let page = dialog.page_by_tab.get(&tab).copied().unwrap_or(1) + 1;
+        self.search_stock_assets(query, page, cx);
     }
 
     fn place_asset(&mut self, choice: &asset_finder::Choice, cx: &mut Context<Self>) {
@@ -3443,7 +3531,7 @@ impl EditorWindow {
                     Outcome::Cancel => {}
                     Outcome::Submit(query) => {
                         self.overlay = Some(Overlay::AssetFinder(dialog));
-                        self.search_stock_assets(query, cx);
+                        self.search_stock_assets(query, 1, cx);
                     }
                 }
             }
@@ -5814,6 +5902,10 @@ mod tests {
                 "Unlock",
                 "Group",
                 "Ungroup",
+                "Convert to paths",
+                "Replace file…",
+                "Flip horizontally",
+                "Flip vertically",
                 "Delete",
             ]
         );

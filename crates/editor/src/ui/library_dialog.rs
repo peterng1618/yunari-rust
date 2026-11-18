@@ -309,7 +309,6 @@ impl LibraryDialog {
             .entries
             .iter()
             .filter(|entry| needle.is_empty() || entry.name.to_lowercase().contains(&needle))
-            .filter(|_| self.state != LibraryState::NotInstalled)
             .filter(|entry| {
                 self.chosen.iter().all(|(facet, wanted)| {
                     if wanted.is_empty() {
@@ -530,17 +529,37 @@ pub fn page(
                     })),
             )
             .into_any_element()
+    } else if dialog.page == LibraryPage::DashboardThemes
+        && dialog.state == LibraryState::NotInstalled
+    {
+        let held: BTreeSet<&str> = dialog
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect();
+        let missing: Vec<serde_json::Value> = catalogue
+            .iter()
+            .filter(|row| {
+                row.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|id| !held.contains(id))
+            })
+            .cloned()
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .child(toolbar(dialog, cx, width - px(232.0), search))
+            .child(catalogue_rows(&missing, "Nothing here yet.", cx))
+            .into_any_element()
     } else if dialog.page == LibraryPage::DashboardThemes {
         div()
             .flex()
             .flex_col()
             .gap_2()
             .p_3()
-            .child(
-                div()
-                    .text_color(cx.theme().foreground)
-                    .child("Stored themes"),
-            )
             .child(toolbar(dialog, cx, width - px(232.0), search))
             .child(grid(dialog, cx, width - px(232.0)))
             .into_any_element()
@@ -944,6 +963,7 @@ fn grid(
         for item in row.items {
             let entry = entries[item.index];
             let open_id = entry.id.clone();
+            let open_id_for_action = open_id.clone();
             let duplicate_id = entry.id.clone();
             let delete_id = entry.id.clone();
             let preview_height = (row.height - 26.0).max(24.0);
@@ -1047,6 +1067,29 @@ fn grid(
                                     .text_color(muted)
                                     .opacity(0.0)
                                     .group_hover(action_group, |style| style.opacity(1.0))
+                                    .child(action(
+                                        ("library-card-open-editor", item.index),
+                                        "Open in editor",
+                                        {
+                                            let id = open_id_for_action.clone();
+                                            move |this, _, _, cx| this.open_entry(&id, cx)
+                                        },
+                                        cx,
+                                    ))
+                                    .child(action(
+                                        ("library-card-assign", item.index),
+                                        "Assign to display",
+                                        |this, _, _, cx| this.open_publish(cx),
+                                        cx,
+                                    ))
+                                    .child(action(
+                                        ("library-card-export", item.index),
+                                        "Export theme package",
+                                        |this, _, window, cx| {
+                                            this.apply(crate::ui::menus::Command::Export, window, cx)
+                                        },
+                                        cx,
+                                    ))
                                     .child(action(
                                         ("library-card-duplicate", item.index),
                                         "Duplicate",
@@ -1248,7 +1291,9 @@ mod tests {
             active_facet: None,
             facet_queries: BTreeMap::new(),
         };
-        assert!(dialog.sorted().is_empty());
+        // The state filter joins halves in the page, so sorted() keeps local
+        // rows; the Not installed page draws catalogue rows that are not held.
+        assert_eq!(dialog.sorted().len(), 2);
         dialog.state = LibraryState::OnThisPc;
         assert_eq!(dialog.sorted().len(), 2);
     }
