@@ -344,6 +344,11 @@ pub struct EditorWindow {
     /// The Themes mode's listing, reloaded when the mode is entered so a save
     /// or a delete made elsewhere is not shown stale.
     themes: Option<library_dialog::LibraryDialog>,
+    /// The catalogue halves the Library's Collections and Submissions pages
+    /// read. Filled once from the host when the mode is first drawn.
+    library_catalogue: Vec<serde_json::Value>,
+    library_mine: Vec<serde_json::Value>,
+    library_catalogue_loaded: bool,
     /// The Themes mode's search box. The kit binds an `Input` to an entity, so
     /// the state is created with the first window that renders this editor.
     library_search: Option<Entity<InputState>>,
@@ -573,6 +578,9 @@ impl EditorWindow {
             editing: None,
             overlay: None,
             themes: None,
+            library_catalogue: Vec::new(),
+            library_mine: Vec::new(),
+            library_catalogue_loaded: false,
             library_search: None,
             recents,
             status: None,
@@ -3925,6 +3933,52 @@ impl EditorWindow {
         self.menu_layer(at, px(200.0), px(rows * 26.0 + 16.0), entries, cx)
     }
 
+    /// The catalogue answer names its rows `entries`, `items` or `themes`
+    /// depending on which source answered. Reading all three keeps the page
+    /// from showing an empty list for a valid answer.
+    fn catalogue_entries(value: &serde_json::Value) -> Vec<serde_json::Value> {
+        value
+            .get("entries")
+            .or_else(|| value.get("items"))
+            .or_else(|| value.get("themes"))
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Reads the catalogue halves once, off the UI thread, for the Library's
+    /// Collections and My submissions pages.
+    fn load_library_catalogue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(host) = self.host.clone() else {
+            self.library_catalogue_loaded = true;
+            return;
+        };
+        self.library_catalogue_loaded = true;
+        cx.spawn_in(window, async move |weak, cx| {
+            let (catalogue, mine) = cx
+                .background_executor()
+                .spawn(async move {
+                    let catalogue = host.store.themes(yunari_host::http::now_ms());
+                    let mine = host.account.client().map(|client| client.mine());
+                    (catalogue, mine)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                match catalogue {
+                    Ok(value) => {
+                        this.library_catalogue = Self::catalogue_entries(&value)
+                    }
+                    Err(message) => this.status = Some(Status::error(message)),
+                }
+                if let Some(Ok(mine)) = mine {
+                    this.library_mine = Self::catalogue_entries(&mine);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The header's chord opens the surface; pressing it moves nothing.
     fn open_publish(&mut self, cx: &mut Context<Self>) {
         self.overlay = Some(Overlay::Publish);
@@ -4428,6 +4482,9 @@ impl Render for EditorWindow {
             })
             .detach();
             self.library_search = Some(search);
+        }
+        if self.mode == ShellMode::Themes && !self.library_catalogue_loaded {
+            self.load_library_catalogue(window, cx);
         }
         div()
             .size_full()

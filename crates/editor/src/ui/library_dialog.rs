@@ -359,6 +359,61 @@ fn action(
         .on_click(cx.listener(on_click))
 }
 
+/// One row per catalogue entry the host answered. A row names what it can;
+/// installing and collection consent are not wired to this list yet.
+fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<EditorWindow>) -> AnyElement {
+    use gpui_kit::component::ActiveTheme;
+
+    if rows.is_empty() {
+        return div()
+            .p_6()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(empty.to_owned())
+            .into_any_element();
+    }
+    let items: Vec<AnyElement> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let name = row
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Untitled");
+            let kind = row
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("listing");
+            div()
+                .id(("catalogue-row", index))
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_3()
+                .py_2()
+                .rounded_sm()
+                .bg(cx.theme().popover)
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(name.to_owned())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(kind.to_owned()),
+                )
+                .into_any_element()
+        })
+        .collect();
+    div()
+        .p_6()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .children(items)
+        .into_any_element()
+}
+
 /// The Themes mode's surface: the stored themes under the mode's own heading,
 /// with no dismiss footer because nothing was opened over the editor.
 pub fn page(
@@ -366,6 +421,8 @@ pub fn page(
     cx: &mut Context<EditorWindow>,
     width: gpui_kit::Pixels,
     search: Option<&gpui_kit::Entity<gpui_kit::component::input::InputState>>,
+    catalogue: &[serde_json::Value],
+    mine: &[serde_json::Value],
 ) -> impl IntoElement {
     use gpui_kit::component::{
         ActiveTheme,
@@ -438,6 +495,10 @@ pub fn page(
             .child(toolbar(dialog, cx, width - px(232.0), search))
             .child(grid(dialog, cx, width - px(232.0)))
             .into_any_element()
+    } else if dialog.page == LibraryPage::Collections {
+        catalogue_rows(catalogue, "No collections in the catalogue yet.", cx)
+    } else if dialog.page == LibraryPage::Submissions {
+        catalogue_rows(mine, "You have not published anything yet.", cx)
     } else {
         div()
             .p_6()

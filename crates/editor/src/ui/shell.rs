@@ -411,6 +411,8 @@ impl EditorWindow {
                         cx,
                         self.window_width,
                         self.library_search.as_ref(),
+                        &self.library_catalogue,
+                        &self.library_mine,
                     ),
                 ))
             })

@@ -270,7 +270,9 @@ installed has no local rows to show and says the catalogue is not loaded; the
 current source removed the old Local library / Online store halves, so they
 are not ported.
 
-Still to fold: the publish QR symbol, collection cards
+The Collections and My submissions pages read the host's catalogue halves
+  once and list the rows the host answered. Install actions, collection consent
+  and the publish QR symbol are still unported.
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.
 
