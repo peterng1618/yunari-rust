@@ -180,6 +180,25 @@ enum Overlay {
     },
 }
 
+/// The preview dragged with a layer row. It carries the row's name so the
+/// pointer never loses track of what it is moving.
+struct LayerDragPreview(String);
+
+impl Render for LayerDragPreview {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_sm()
+            .text_color(cx.theme().foreground)
+            .child(self.0.clone())
+    }
+}
+
 /// One of the editor's opens, by the id and the name it had when it opened.
 #[derive(Clone)]
 struct RecentTheme {
@@ -3542,6 +3561,17 @@ impl EditorWindow {
                 let ink = if row.visible { foreground } else { muted };
                 div()
                     .id(("layer", index))
+                    .on_drag(id.clone(), |name, _, _, cx| {
+                        cx.new(|_| LayerDragPreview(name.clone()))
+                    })
+                    .on_drop({
+                        let target = id.clone();
+                        cx.listener(move |this, source: &String, _, _cx| {
+                            if this.editor.move_node_to(source, &target) {
+                                this.refresh();
+                            }
+                        })
+                    })
                     .flex()
                     .items_center()
                     .gap_2()

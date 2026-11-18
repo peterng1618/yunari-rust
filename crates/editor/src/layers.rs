@@ -134,6 +134,25 @@ pub fn role_name(node: &Node) -> &'static str {
 
 impl Editor {
     /// Moves a node among its siblings. The move is one history entry.
+    /// Moves a layer to another row's sibling slot, one history entry. A drop
+    /// onto a group's row inserts into that group. A dropped node never becomes
+    /// its own child.
+    pub fn move_node_to(&mut self, source: &str, target: &str) -> bool {
+        if source == target {
+            return false;
+        }
+        self.edit(|document| {
+            let Some(node) = take(&mut document.nodes, source) else {
+                return;
+            };
+            if !insert_before(&mut document.nodes, target, node.clone()) {
+                // The target vanished with the source's subtree; put the node
+                // back rather than dropping it from the document.
+                document.nodes.push(node);
+            }
+        })
+    }
+
     pub fn raise(&mut self, id: &str, step: Move) -> bool {
         self.edit(|document| {
             reorder(&mut document.nodes, id, step);
@@ -195,6 +214,35 @@ fn reorder(nodes: &mut Vec<Node>, id: &str, step: Move) -> bool {
     }
     for node in nodes {
         if reorder(&mut node.children, id, step) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Removes a node from whichever sibling list holds it.
+fn take(nodes: &mut Vec<Node>, id: &str) -> Option<Node> {
+    if let Some(index) = nodes.iter().position(|node| node.id == id) {
+        return Some(nodes.remove(index));
+    }
+    for node in nodes {
+        if let Some(found) = take(&mut node.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Inserts a node immediately before `target` among its siblings. A group row
+/// takes the drop into the group when the target names the group itself only if
+/// it is expanded; the caller resolves that before calling.
+fn insert_before(nodes: &mut Vec<Node>, target: &str, node: Node) -> bool {
+    if let Some(index) = nodes.iter().position(|candidate| candidate.id == target) {
+        nodes.insert(index, node);
+        return true;
+    }
+    for candidate in nodes {
+        if insert_before(&mut candidate.children, target, node.clone()) {
             return true;
         }
     }
@@ -271,6 +319,27 @@ mod tests {
             ["holder", "child", "under"]
         );
         assert_eq!(open[1].depth, 1);
+    }
+
+    #[test]
+    fn a_layer_can_move_into_another_groups_slot() {
+        let document = document(vec![
+            rect("under", 0.0, 0.0, 10.0, 10.0),
+            group("holder", vec![rect("child", 0.0, 0.0, 5.0, 5.0)]),
+        ]);
+        let mut editor = crate::document::Editor::new(document);
+        assert!(editor.move_node_to("under", "child"));
+        let rows = rows(
+            editor.document(),
+            &Selection::new(),
+            &BTreeSet::from(["holder".to_owned()]),
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+            ["holder", "child", "under"]
+        );
+        // A node cannot become its own descendant.
+        assert!(!editor.move_node_to("holder", "child"));
     }
 
     #[test]

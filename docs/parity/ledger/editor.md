@@ -91,8 +91,9 @@ arrow-to-line) are outside the default subset and drew empty.
 - **Layer rows** carry the kind column, visibility and lock controls, and now
   have the source's keyboard path: a clicked row owns arrow/Home/End navigation
   over the flattened tree, Right opens or enters a group, Left closes or steps
-  out, and Enter/F2 renames. Canvas pointer down hands focus back to the stage.
-  Drag reordering remains P2.
+  out, and Enter/F2 renames. Canvas pointer down hands focus back to the stage. Rows are draggable onto
+  another row's slot, including into a group, through one history entry; a node
+  cannot be dropped into its own subtree.
 - **Pane scrolling.** Resolved: the pane bodies use the kit's
   `ScrollableElement` scroll area, so the wheel and the scrollbar share one
   offset instead of the old row-count estimate.
