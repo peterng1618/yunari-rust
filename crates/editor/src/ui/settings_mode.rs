@@ -290,6 +290,19 @@ fn body(
         }
         (7, Some(_)) => {
             let settings = yunari_host::config::HostConfig::resolve(None, None, false).settings_dir();
+            content.push(
+                Button::new("settings-add-path-preset")
+                    .label("Add shape preset…")
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let dir = yunari_host::config::HostConfig::resolve(None, None, false)
+                            .settings_dir();
+                        this.overlay = Some(super::Overlay::PathPresets(
+                            super::path_preset_dialog::PathPresetDialog::new(&dir),
+                        ));
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
             let presets = yunari_host::path_presets::Store::at(settings).read();
             if presets.presets.is_empty() {
                 content.push(
