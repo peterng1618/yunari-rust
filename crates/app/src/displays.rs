@@ -127,7 +127,7 @@ mod tests {
         let directory = app.library.root().join(id);
         std::fs::create_dir_all(&directory).unwrap();
         let document = format!(
-            r#"{{"schemaVersion":"1.0.0","id":"{id}","metadata":{{"name":"{id}"}},"artboard":{{"width":1920,"height":1080}},"nodes":[]}}"#
+            r#"{{"schemaVersion":"3.0.0","id":"{id}","metadata":{{"name":"{id}"}},"artboard":{{"width":1920,"height":1080}},"nodes":[]}}"#
         );
         std::fs::write(directory.join("theme.json"), document).unwrap();
     }

@@ -101,7 +101,8 @@ mod tests {
 
     fn document(name: &str) -> ThemeDocument {
         ThemeDocument {
-            schema_version: "1.0.0".to_owned(),
+            schema_version: "3.0.0".to_owned(),
+            fabric_version: "7.4.0".to_owned(),
             id: "alpha".to_owned(),
             metadata: Metadata {
                 name: Some(name.to_owned()),
@@ -114,6 +115,8 @@ mod tests {
                 shape: ArtboardShape::Rect,
             },
             background: Background::default(),
+            globals: Default::default(),
+            scene: Default::default(),
             palette: BTreeMap::new(),
             type_tokens: BTreeMap::new(),
             assets: Vec::new(),

@@ -386,7 +386,7 @@ mod tests {
 
     fn document(settings: &str) -> yunari_model::document::ThemeDocument {
         parse_document(&format!(
-            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
+            r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":200,"height":200}},
                 "nodes":[{{"id":"c","kind":{{"type":"chart","content":{{"family":"line","settings":{settings}}}}},
                 "transform":{{"width":200,"height":200}}}}]}}"##
         ))

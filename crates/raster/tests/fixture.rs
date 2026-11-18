@@ -9,7 +9,7 @@ use std::path::Path;
 use yunari_golden::{GoldenConfig, assert_golden};
 
 const FIXTURE: &str = r##"{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "3.0.0",
   "id": "fixture",
   "metadata": { "name": "Fixture", "themeLanguage": "en" },
   "artboard": { "width": 320, "height": 180, "shape": "rect" },

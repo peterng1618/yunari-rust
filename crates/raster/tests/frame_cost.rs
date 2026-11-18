@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 const THEME: &str = r##"{
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "3.0.0",
   "id": "measure",
   "metadata": { "name": "Measure", "themeLanguage": "en" },
   "artboard": { "width": 1920, "height": 1080, "shape": "rect" },

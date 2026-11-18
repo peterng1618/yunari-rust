@@ -395,7 +395,8 @@ pub(crate) fn test_document(id: &str) -> yunari_model::document::ThemeDocument {
         );
     }
     ThemeDocument {
-        schema_version: "1.0.0".to_owned(),
+        schema_version: "3.0.0".to_owned(),
+        fabric_version: "7.4.0".to_owned(),
         id: id.to_owned(),
         metadata: Metadata {
             name: Some(format!("Theme {id}")),
@@ -415,6 +416,8 @@ pub(crate) fn test_document(id: &str) -> yunari_model::document::ThemeDocument {
             })),
             media: None,
         },
+        globals: Default::default(),
+        scene: Default::default(),
         palette,
         type_tokens,
         assets: Vec::new(),

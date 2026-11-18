@@ -4,7 +4,7 @@ use yunari_model::validate::validate_document;
 
 fn base() -> ThemeDocument {
     parse_document(
-        r#"{"schemaVersion":"1.0.0","id":"theme_1",
+        r#"{"schemaVersion":"3.0.0","id":"theme_1",
             "artboard":{"width":800,"height":480},"nodes":[]}"#,
     )
     .expect("base document")

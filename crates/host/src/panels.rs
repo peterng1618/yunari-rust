@@ -414,6 +414,7 @@ mod tests {
             let library = Library::new(self.dir.join("themes"));
             let document = ThemeDocument {
                 schema_version: yunari_model::document::SCHEMA_VERSION.to_owned(),
+                fabric_version: "7.4.0".to_owned(),
                 id: "fixture".to_owned(),
                 metadata: Metadata {
                     theme_language: Some("en".to_owned()),
@@ -426,6 +427,8 @@ mod tests {
                     shape: ArtboardShape::Rect,
                 },
                 background: Background::default(),
+                globals: Default::default(),
+                scene: Default::default(),
                 palette: BTreeMap::new(),
                 type_tokens: BTreeMap::new(),
                 assets: Vec::new(),

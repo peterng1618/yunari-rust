@@ -876,7 +876,7 @@ mod tests {
     fn a_landscape_theme_is_contained_in_a_portrait_panel() {
         let raster = fit_into(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":480,"height":120},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":480,"height":120},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
                         "transform":{"x":0,"y":0,"width":240,"height":120},
                         "style":{"fill":{"value":"#ff0000"}}}]}"##,
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn a_quarter_turn_moves_the_picture_clockwise() {
         let drawn = list(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                 "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"x":0,"y":0,"width":5,"height":10},
                     "style":{"fill":{"value":"#00ff00"}}}]}"##,
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn a_square_panel_takes_any_angle_and_clips_its_disc() {
         let drawn = list(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                 "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"x":0,"y":0,"width":10,"height":10},
                     "style":{"fill":{"value":"#00ff00"}}}]}"##,
@@ -941,7 +941,7 @@ mod tests {
     fn a_filled_rectangle_covers_its_box_only() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"x":2,"y":2,"width":6,"height":6},
                     "style":{"fill":{"value":"#ff0000"}}}]}"##,
@@ -959,7 +959,7 @@ mod tests {
     fn an_ellipse_leaves_its_corner_unpainted() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                     "nodes":[{"id":"n","kind":{"type":"ellipse"},
                     "transform":{"x":0,"y":0,"width":10,"height":10},
                     "style":{"fill":{"value":"#00ff00"}}}]}"##,
@@ -976,7 +976,7 @@ mod tests {
     fn a_background_fills_the_board_behind_the_nodes() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "background":{"color":{"value":"#0000ff"}},"nodes":[]}"##,
             ),
             1.0,
@@ -990,7 +990,7 @@ mod tests {
     fn a_gradient_runs_along_its_axis() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":8,"height":8},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":8,"height":8},
                     "palette":{"p":{"name":"P","value":{"kind":"gradient","angle":0,
                     "stops":[{"offset":0,"color":"#000000"},{"offset":1,"color":"#ffffff"}]}}},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
@@ -1012,7 +1012,7 @@ mod tests {
     fn scale_doubles_the_frame() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":5,"height":5},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":5,"height":5},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"x":0,"y":0,"width":2,"height":2},
                     "style":{"fill":{"value":"#ffffff"}}}]}"##,
@@ -1030,7 +1030,7 @@ mod tests {
     fn a_transparent_paint_leaves_nothing() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"width":4,"height":4},
                     "style":{"fill":{"value":"rgba(255, 0, 0, 0)"}}}]}"##,
@@ -1046,7 +1046,7 @@ mod tests {
     fn straight_alpha_is_the_authored_colour() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":2,"height":2},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":2,"height":2},
                     "nodes":[{"id":"n","kind":{"type":"rectangle"},
                     "transform":{"width":2,"height":2},
                     "style":{"fill":{"value":"#ffffff"},"opacity":{"value":0.5}}}]}"##,
@@ -1062,7 +1062,7 @@ mod tests {
     fn a_text_node_paints_glyph_pixels_inside_its_box() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":120,"height":60},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":120,"height":60},
                     "typeTokens":{"body":{"family":"Inter"}},
                     "nodes":[{"id":"n","transform":{"x":0,"y":0,"width":120,"height":60},
                     "kind":{"type":"text","content":{"runs":[
@@ -1104,7 +1104,7 @@ mod tests {
         let dir = image_fixture("stretch", [255, 0, 0]);
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":8,"height":8},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":8,"height":8},
                     "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
                     "nodes":[{"id":"n","kind":{"type":"image",
                     "content":{"assetId":"pic","fit":"stretch"}},
@@ -1125,7 +1125,7 @@ mod tests {
         let dir = image_fixture("contain", [0, 0, 255]);
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":8,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":8,"height":4},
                     "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
                     "nodes":[{"id":"n","kind":{"type":"image",
                     "content":{"assetId":"pic","fit":"contain"}},
@@ -1147,7 +1147,7 @@ mod tests {
         let dir = image_fixture("mask", [0, 0, 0]);
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ff0000"}}},
                     "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
                     "nodes":[{"id":"n","kind":{"type":"image",
@@ -1167,7 +1167,7 @@ mod tests {
         let dir = image_fixture("backdrop", [0, 0, 255]);
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "background":{"media":{"assetId":"pic","bounds":"theme",
                     "color":{"value":"#000000"}}},
                     "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
@@ -1186,7 +1186,7 @@ mod tests {
         let dir = image_fixture("top-band", [0, 0, 255]);
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "background":{"mode":"advanced",
                     "media":{"assetId":"pic","bounds":"theme",
                     "color":{"value":"#ff0000"},
@@ -1207,7 +1207,7 @@ mod tests {
     fn a_glass_panel_frosts_what_is_painted_beneath_it() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":40,"height":40},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":40},
                     "background":{"color":{"value":"#000000"}},
                     "nodes":[
                     {"id":"behind","kind":{"type":"rectangle"},
@@ -1233,7 +1233,7 @@ mod tests {
     fn a_picture_with_no_source_draws_nothing() {
         let raster = render(
             &list(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":4,"height":4},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
                     "nodes":[{"id":"n","kind":{"type":"image",
                     "content":{"assetId":"pic","fit":"stretch"}},

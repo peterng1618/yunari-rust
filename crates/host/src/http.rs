@@ -1602,6 +1602,7 @@ mod tests {
     fn save_fixture_theme(app: &Shared, id: &str) {
         let document = yunari_model::document::ThemeDocument {
             schema_version: yunari_model::document::SCHEMA_VERSION.to_owned(),
+            fabric_version: "7.4.0".to_owned(),
             id: id.to_owned(),
             metadata: yunari_model::document::Metadata {
                 theme_language: Some("en".to_owned()),
@@ -1614,6 +1615,8 @@ mod tests {
                 shape: yunari_model::document::ArtboardShape::Rect,
             },
             background: yunari_model::document::Background::default(),
+            globals: Default::default(),
+            scene: Default::default(),
             palette: std::collections::BTreeMap::new(),
             type_tokens: std::collections::BTreeMap::new(),
             assets: Vec::new(),

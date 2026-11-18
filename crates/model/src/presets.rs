@@ -8,8 +8,9 @@ use serde_json::Value;
 
 use crate::document::{
     Artboard, ArtboardShape, Background, Binding, ContentFit, Metadata, Node, NodeKind,
-    Paint as PaintKind, PaletteEntry, StyleLiteral, StyleMap, StyleValue, TextAlign, TextContent,
-    TextOverflow, TextRun, ThemeDocument, Transform, TypeToken, TypeWeight, VerticalAlign,
+    Paint as PaintKind, PaletteEntry, SCHEMA_VERSION, StyleLiteral, StyleMap, StyleValue,
+    TextAlign, TextContent, TextOverflow, TextRun, ThemeDocument, Transform, TypeToken, TypeWeight,
+    VerticalAlign,
 };
 
 /// The tokens and artboard a new document shares: the three role tokens and
@@ -52,7 +53,8 @@ pub fn blank() -> ThemeDocument {
         );
     }
     ThemeDocument {
-        schema_version: "1.0.0".to_owned(),
+        schema_version: SCHEMA_VERSION.to_owned(),
+        fabric_version: "7.4.0".to_owned(),
         id: "untitled".to_owned(),
         metadata: Metadata {
             name: Some("Untitled".to_owned()),
@@ -72,6 +74,8 @@ pub fn blank() -> ThemeDocument {
             })),
             media: None,
         },
+        globals: Default::default(),
+        scene: Default::default(),
         palette,
         type_tokens,
         assets: Vec::new(),

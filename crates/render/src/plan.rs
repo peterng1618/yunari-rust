@@ -853,7 +853,7 @@ mod tests {
 
     fn one_node(kind: &str, style: &str, transform: &str) -> ThemeDocument {
         document(&format!(
-            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":100,"height":80}},
+            r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":100,"height":80}},
                 "nodes":[{{"id":"n1","kind":{kind},"transform":{transform},"style":{style}}}]}}"##
         ))
     }
@@ -862,7 +862,7 @@ mod tests {
     fn an_empty_document_paints_nothing() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},"nodes":[]}"##,
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},"nodes":[]}"##,
             ),
             &mut Fonts::new(),
         );
@@ -901,7 +901,7 @@ mod tests {
     fn a_group_offsets_its_children() {
         let (list, _) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},
                 "transform":{"x":10,"y":0,"width":10,"height":10},
                 "children":[{"id":"c","kind":{"type":"ellipse"},
@@ -918,7 +918,7 @@ mod tests {
     fn a_hidden_node_paints_nothing_including_its_children() {
         let (list, _) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},"visible":false,
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},"style":{"fill":{"value":"#00ff00"}}}]}]}"##,
@@ -932,7 +932,7 @@ mod tests {
     fn a_palette_reference_is_the_paint() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                 "palette":{"accent":{"name":"Accent","value":{"kind":"solid","color":"#0000ff"}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},"style":{"fill":{"ref":"palette.accent"}}}]}"##,
@@ -947,7 +947,7 @@ mod tests {
     fn an_undeclared_token_is_a_reason_not_a_paint() {
         let (list, issues) = build(
             &unvalidated(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},
                 "style":{"fill":{"ref":"palette.missing"}}}]}"##,
@@ -995,7 +995,7 @@ mod tests {
     fn opacity_multiplies_through_a_group() {
         let (list, _) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                 "nodes":[{"id":"g","kind":{"type":"group"},"style":{"opacity":{"value":0.5}},
                 "children":[{"id":"c","kind":{"type":"rectangle"},
                 "transform":{"width":2,"height":2},
@@ -1013,7 +1013,7 @@ mod tests {
     fn a_gradient_axis_spans_its_own_box() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":100},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":200,"height":100},
                 "palette":{"plate":{"name":"Plate","value":{"kind":"gradient","angle":90,
                 "stops":[{"offset":0,"color":"#000000"},{"offset":1,"color":"#ffffff"}]}}},
                 "nodes":[{"id":"n1","kind":{"type":"rectangle"},
@@ -1038,7 +1038,7 @@ mod tests {
     fn a_path_node_paints_its_authored_commands() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                     "nodes":[{"id":"n1","transform":{"width":20,"height":20},
                     "kind":{"type":"path","data":"M0 0 L10 0 L10 10 Z","strokeWidth":2},
                     "style":{"stroke":{"value":"#00ff00"}}}]}"##,
@@ -1061,7 +1061,7 @@ mod tests {
     fn unreadable_path_data_is_a_reason_not_a_shape() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":80},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":80},
                     "nodes":[{"id":"n1","transform":{"width":20,"height":20},
                     "kind":{"type":"path","data":"M0 0 L"},
                     "style":{"stroke":{"value":"#00ff00"},"strokeWidth":{"value":1}}}]}"##,
@@ -1077,7 +1077,7 @@ mod tests {
     fn a_gauge_node_paints_its_ring_under_the_node_transform() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":400,"height":400},
                     "nodes":[{"id":"g","transform":{"x":50,"y":60,"width":200,"height":200},
                     "kind":{"type":"chart","content":{"family":"gauge",
                     "settings":{"thickness":16}}}}]}"##,
@@ -1093,7 +1093,7 @@ mod tests {
     fn a_video_node_places_its_clip_in_the_geometry() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":400,"height":400},
                     "assets":[{"id":"clip","kind":"video","path":"assets/clip.mp4"}],
                     "nodes":[{"id":"v","transform":{"width":200,"height":200},
                     "kind":{"type":"video","content":{"assetId":"clip"}}}]}"##,
@@ -1112,7 +1112,7 @@ mod tests {
     fn a_glass_panel_blurs_before_it_fills() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":100,"height":100},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":100,"height":100},
                     "nodes":[
                     {"id":"behind","kind":{"type":"rectangle"},
                     "transform":{"width":100,"height":100},
@@ -1137,7 +1137,7 @@ mod tests {
     fn a_zero_glass_blur_draws_nothing() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                     "nodes":[{"id":"panel","kind":{"type":"rectangle"},
                     "transform":{"width":10,"height":10},
                     "glass":{"blurRadius":0},
@@ -1154,7 +1154,7 @@ mod tests {
     fn an_image_node_carries_its_asset_fit_and_box() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":400,"height":400},
                     "assets":[{"id":"logo","kind":"image","path":"assets/logo.png"}],
                     "nodes":[{"id":"i","transform":{"x":10,"y":20,"width":120,"height":80},
                     "kind":{"type":"image","content":{"assetId":"logo","fit":"cover"}}}]}"##,
@@ -1186,7 +1186,7 @@ mod tests {
     fn an_image_mask_resolves_its_palette_colour_and_node_opacity() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":400,"height":400},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":400,"height":400},
                     "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ff0000"}}},
                     "assets":[{"id":"icon","kind":"image","path":"assets/icon.png"}],
                     "nodes":[{"id":"i","transform":{"width":40,"height":40},
@@ -1207,7 +1207,7 @@ mod tests {
     fn a_literal_run_becomes_placed_text() {
         let (list, issues) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":450,"height":675},
                     "typeTokens":{"body":{"family":"Inter"}},
                     "nodes":[{"id":"n1","transform":{"x":10,"y":20,"width":200,"height":40},
                     "kind":{"type":"text","content":{"runs":[
@@ -1230,7 +1230,7 @@ mod tests {
     fn a_run_authored_size_wins_over_the_role_default() {
         let (list, _) = build(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":450,"height":675},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":450,"height":675},
                     "typeTokens":{"body":{"family":"Inter"}},
                     "nodes":[{"id":"n1","transform":{"width":200,"height":40},
                     "kind":{"type":"text","content":{"runs":[
@@ -1252,7 +1252,7 @@ mod tests {
         fn laid_out(spacing: &str) -> crate::text::TextLayout {
             let (list, issues) = build(
                 &document(&format!(
-                    r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":450,"height":675}},
+                    r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":450,"height":675}},
                         "typeTokens":{{"body":{{"family":"Inter"}}}},
                         "nodes":[{{"id":"n1","transform":{{"width":200,"height":100}},
                         "kind":{{"type":"text","content":{{"box":{{"width":200,"height":100}},
@@ -1280,7 +1280,7 @@ mod tests {
 
     fn value_run_document(binding: &str) -> ThemeDocument {
         document(&format!(
-            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":450,"height":675}},
+            r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":450,"height":675}},
                 "typeTokens":{{"body":{{"family":"Inter"}}}},
                 "nodes":[{{"id":"n1","transform":{{"width":200,"height":40}},
                 "kind":{{"type":"text","content":{{"runs":[
@@ -1361,7 +1361,7 @@ mod tests {
     fn a_chart_reads_every_binding_it_declares() {
         let (list, issues) = build_with(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":200,"height":200},
                     "nodes":[{"id":"p","transform":{"width":200,"height":200},
                     "kind":{"type":"chart","content":{"family":"pie",
                     "settings":{"innerRadiusPercent":0}}}}],
@@ -1385,7 +1385,7 @@ mod tests {
     fn a_chart_names_the_binding_nothing_read() {
         let (_, issues) = build_with(
             &document(
-                r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":200,"height":200},
                     "nodes":[{"id":"g","transform":{"width":200,"height":200},
                     "kind":{"type":"chart","content":{"family":"gauge","settings":{}}}}],
                     "bindings":{"g":[{"id":"a","semanticKey":"cpu.load"}]}}"##,

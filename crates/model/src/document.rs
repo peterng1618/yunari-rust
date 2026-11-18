@@ -4,19 +4,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::validate::{ValidationIssue, validate_document};
 
-pub const SCHEMA_VERSION: &str = "1.0.0";
-pub const SUPPORTED_SCHEMA_MAJOR: u64 = 1;
+pub const SCHEMA_VERSION: &str = "3.0.0";
+pub const SUPPORTED_SCHEMA_MAJOR: u64 = 3;
+
+/// Task 1 placeholders: the schema's `globals` and `scene` objects are carried
+/// as raw JSON until Task 2 types them. Values are never dropped, so a real
+/// schema-3 document round-trips; only their contents go unvalidated for now.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Globals(pub serde_json::Value);
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FabricScene(pub serde_json::Value);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThemeDocument {
     pub schema_version: String,
+    /// The Fabric version axis. Preserved as data; never used for dispatch.
+    #[serde(default)]
+    pub fabric_version: String,
     pub id: String,
     #[serde(default)]
     pub metadata: Metadata,
     pub artboard: Artboard,
     #[serde(default)]
     pub background: Background,
+    #[serde(default)]
+    pub globals: Globals,
+    #[serde(default)]
+    pub scene: FabricScene,
     #[serde(default)]
     pub palette: BTreeMap<String, PaletteEntry>,
     #[serde(default)]
@@ -757,7 +775,7 @@ mod tests {
     use super::*;
 
     const MINIMAL: &str = r#"{
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "3.0.0",
         "id": "theme_1",
         "artboard": { "width": 800, "height": 480 },
         "nodes": []
@@ -813,14 +831,14 @@ mod tests {
 
     #[test]
     fn accepts_minor_and_patch_within_supported_major() {
-        let json = MINIMAL.replace("\"1.0.0\"", "\"1.4.9\"");
+        let json = MINIMAL.replace("\"3.0.0\"", "\"3.4.9\"");
         assert!(parse_document(&json).is_ok());
     }
 
     #[test]
     fn refuses_newer_major() {
-        let json = MINIMAL.replace("\"1.0.0\"", "\"2.0.0\"");
-        let error = parse_document(&json).expect_err("major 2 is refused");
+        let json = MINIMAL.replace("\"3.0.0\"", "\"4.0.0\"");
+        let error = parse_document(&json).expect_err("major 4 is refused");
         let DocumentError::Invalid(issues) = error else {
             panic!("expected validation issues");
         };
@@ -829,7 +847,7 @@ mod tests {
 
     #[test]
     fn refuses_unparseable_schema_version() {
-        let json = MINIMAL.replace("\"1.0.0\"", "\"one\"");
+        let json = MINIMAL.replace("\"3.0.0\"", "\"one\"");
         let error = parse_document(&json).expect_err("non-semver is refused");
         let DocumentError::Invalid(issues) = error else {
             panic!("expected validation issues");

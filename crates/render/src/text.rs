@@ -636,7 +636,7 @@ mod tests {
 
     fn document_with_font(path: &str, format: &str) -> ThemeDocument {
         yunari_model::document::parse_document(&format!(
-            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":100,"height":100}},
+            r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":100,"height":100}},
                 "nodes":[],
                 "assets":[{{"id":"f","kind":"font","path":{path:?},"family":"Test Face",
                     "weight":400,"style":"normal","format":{format:?}}}]}}"##

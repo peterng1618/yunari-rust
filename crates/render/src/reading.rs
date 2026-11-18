@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn a_chart_only_binding_is_wanted() {
         let document = document(
-            r##"{"schemaVersion":"1.0.0","id":"chartonly","artboard":{"width":1920,"height":1080},
+            r##"{"schemaVersion":"3.0.0","id":"chartonly","artboard":{"width":1920,"height":1080},
                 "bindings":{"line":[{"id":"a","semanticKey":"cpu.clock"}]},
                 "nodes":[{"id":"line","transform":{"x":80,"y":80,"width":1600,"height":600},
                 "kind":{"type":"chart","content":{"family":"line","settings":{}}}}]}"##,

@@ -270,7 +270,7 @@ mod tests {
 
     fn document(settings: &str) -> ThemeDocument {
         parse_document(&format!(
-            r##"{{"schemaVersion":"1.0.0","id":"t","artboard":{{"width":200,"height":200}},
+            r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":200,"height":200}},
                 "palette":{{
                     "good":{{"name":"Good","value":{{"kind":"solid","color":"#00ff00"}}}},
                     "bad":{{"name":"Bad","value":{{"kind":"solid","color":"#ff0000"}}}}

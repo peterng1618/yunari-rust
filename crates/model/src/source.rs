@@ -13,8 +13,12 @@ use serde_json::{Map, Value, json};
 use crate::document::{SCHEMA_VERSION, ThemeDocument};
 
 /// Whether this JSON is the source app's envelope rather than this model's.
+///
+/// Schema 3 gives native documents top-level `globals` and `scene` too, so
+/// their presence alone no longer identifies a source file. A source envelope
+/// has no `nodes`: the native model always writes that field.
 pub fn looks_like_source(value: &Value) -> bool {
-    value.get("scene").is_some() || value.get("globals").is_some()
+    value.get("nodes").is_none() && (value.get("scene").is_some() || value.get("globals").is_some())
 }
 
 pub fn from_source_str(text: &str) -> Result<ThemeDocument, String> {
@@ -31,6 +35,10 @@ pub fn from_source_value(value: Value) -> Result<ThemeDocument, String> {
         .ok_or_else(|| "a theme envelope is an object".to_owned())?;
     let mut out = Map::new();
     out.insert("schemaVersion".to_owned(), json!(SCHEMA_VERSION));
+    // Preserve the Fabric version axis as data; never branch on it.
+    if let Some(fabric_version) = object.get("fabricVersion") {
+        out.insert("fabricVersion".to_owned(), fabric_version.clone());
+    }
     out.insert(
         "id".to_owned(),
         json!(field(object, "id").unwrap_or_default()),
@@ -50,6 +58,12 @@ pub fn from_source_value(value: Value) -> Result<ThemeDocument, String> {
     }
 
     let globals = object.get("globals").and_then(Value::as_object);
+    // Carry the raw schema-3 globals and scene through to the Task 1
+    // placeholders. The lifted palette/typeTokens/nodes below are a separate,
+    // lossy view; keeping these intact means nothing is dropped on a round trip.
+    if let Some(value) = object.get("globals") {
+        out.insert("globals".to_owned(), value.clone());
+    }
     let table = |name: &str| {
         globals
             .and_then(|globals| globals.get(name))
@@ -102,6 +116,9 @@ pub fn from_source_value(value: Value) -> Result<ThemeDocument, String> {
     }
 
     let scene = object.get("scene").and_then(Value::as_object);
+    if let Some(value) = object.get("scene") {
+        out.insert("scene".to_owned(), value.clone());
+    }
     let nodes = scene
         .and_then(|scene| scene.get("objects"))
         .or_else(|| object.get("nodes"))
@@ -531,6 +548,19 @@ mod tests {
             {"type": "Video", "id": "movie", "left": 0, "top": 0, "width": 10, "height": 10}
         ]}
     }"##;
+
+    #[test]
+    fn a_native_schema3_document_is_not_mistaken_for_a_source_envelope() {
+        // Native schema-3 documents also carry globals and scene. The nodes
+        // field is what distinguishes them from a source envelope.
+        let value: Value = serde_json::from_str(STORED).unwrap();
+        let mut native = value.clone();
+        native.as_object_mut().unwrap().insert(
+            "nodes".to_owned(),
+            serde_json::json!([{"id":"n1","kind":{"type":"group"}}]),
+        );
+        assert!(!looks_like_source(&native));
+    }
 
     #[test]
     fn a_stored_envelope_lifts_into_the_native_shape() {

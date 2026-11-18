@@ -803,7 +803,7 @@ mod tests {
 
     fn minimal() -> ThemeDocument {
         parse_document(
-            r#"{"schemaVersion":"1.0.0","id":"theme_1",
+            r#"{"schemaVersion":"3.0.0","id":"theme_1",
                 "artboard":{"width":800,"height":480},"nodes":[]}"#,
         )
         .expect("minimal document")
@@ -838,7 +838,7 @@ mod tests {
     #[test]
     fn glass_is_read_on_a_closed_shape() {
         let document = parse_document(
-            r#"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":10,"height":10},
+            r#"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":10,"height":10},
                 "nodes":[{"id":"p","kind":{"type":"rectangle"},
                 "transform":{"width":10,"height":10},
                 "glass":{"blurRadius":24,"sampling":"static"}}]}"#,
@@ -1044,7 +1044,7 @@ mod tests {
     #[test]
     fn refuses_a_document_nested_deeper_than_the_reader_allows() {
         let mut json = String::from(
-            r#"{"schemaVersion":"1.0.0","id":"theme_1","artboard":{"width":800,"height":480},"nodes":["#,
+            r#"{"schemaVersion":"3.0.0","id":"theme_1","artboard":{"width":800,"height":480},"nodes":["#,
         );
         for _ in 0..300 {
             json.push_str(r#"{"id":"n","kind":{"type":"group"},"children":["#);

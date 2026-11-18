@@ -652,7 +652,7 @@ mod tests {
 
     fn native_document() -> ThemeDocument {
         yunari_model::document::parse_document(
-            r#"{"schemaVersion":"1.0.0","id":"card","metadata":{"name":"Lab card"},
+            r#"{"schemaVersion":"3.0.0","id":"card","metadata":{"name":"Lab card"},
                 "artboard":{"width":1920,"height":1080},
                 "assets":[{"id":"photo","kind":"image","path":"assets/photo.png"}],
                 "nodes":[{"id":"card","kind":{"type":"group"},"children":[]}]}"#,

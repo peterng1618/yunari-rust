@@ -534,7 +534,7 @@ mod tests {
 
     fn document() -> ThemeDocument {
         parse_document(
-            r##"{"schemaVersion":"1.0.0","id":"t","artboard":{"width":200,"height":200},
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":200,"height":200},
                 "palette":{"good":{"name":"Good","value":{"kind":"solid","color":"#36b37e"}}}}"##,
         )
         .expect("fixture parses")
