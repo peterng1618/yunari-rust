@@ -288,6 +288,29 @@ fn body(
                 );
             }
         }
+        (7, Some(_)) => {
+            let settings = yunari_host::config::HostConfig::resolve(None, None, false).settings_dir();
+            let presets = yunari_host::path_presets::Store::at(settings).read();
+            if presets.presets.is_empty() {
+                content.push(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("No custom shape presets on this PC.")
+                        .into_any_element(),
+                );
+            }
+            for (index, preset) in presets.presets.iter().enumerate() {
+                content.push(
+                    div()
+                        .id(("settings-path-preset", index))
+                        .text_sm()
+                        .text_color(cx.theme().foreground)
+                        .child(preset.label.clone())
+                        .into_any_element(),
+                );
+            }
+        }
         (9, Some(settings)) => {
             for (id, set) in &settings.source_credentials {
                 let credential = id.clone();
