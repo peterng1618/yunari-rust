@@ -423,7 +423,7 @@ impl EditorWindow {
                         .absolute()
                         .inset_0()
                         .bg(cx.theme().background)
-                        .child(crate::ui::settings_mode::page(dialog, cx)),
+                        .child(crate::ui::settings_mode::page(self, dialog, cx)),
                 )
             })
     }

@@ -44,7 +44,11 @@ fn label_at(index: usize) -> &'static str {
 
 /// The Settings mode's surface. `dialog` is owned by the host that opened it;
 /// only the first page reuses that dialog's existing content.
-pub fn page(dialog: Option<&SettingsDialog>, cx: &mut Context<EditorWindow>) -> AnyElement {
+pub fn page(
+    this: &EditorWindow,
+    dialog: Option<&SettingsDialog>,
+    cx: &mut Context<EditorWindow>,
+) -> AnyElement {
     let selected = cx.update_default_global::<SettingsNav, _>(|nav, _| nav.selected);
     div()
         .id("settings-mode")
@@ -56,7 +60,7 @@ pub fn page(dialog: Option<&SettingsDialog>, cx: &mut Context<EditorWindow>) -> 
                 .flex()
                 .min_h(px(0.0))
                 .child(nav(cx, selected))
-                .child(body(dialog, cx, selected)),
+                .child(body(this, dialog, cx, selected)),
         )
         .into_any_element()
 }
@@ -109,6 +113,7 @@ fn nav(cx: &mut Context<EditorWindow>, selected: usize) -> impl IntoElement {
 }
 
 fn body(
+    this: &EditorWindow,
     dialog: Option<&SettingsDialog>,
     cx: &mut Context<EditorWindow>,
     selected: usize,
@@ -272,18 +277,34 @@ fn body(
                 .into_any_element(),
         ),
         (6, Some(_)) => {
-            // The source ships these five tokens. Editing the catalogue lives
-            // with the host's lens store and is not wired here yet.
-            for (index, token) in ["16:9", "19.5:9", "4:3", "1:1", "Circle"]
-                .iter()
-                .enumerate()
-            {
+            content.push(
+                Button::new("settings-add-preview-ratio")
+                    .label("Add ratio…")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.begin_field("preview-ratio.new", "preview ratio", "", cx)
+                    }))
+                    .into_any_element(),
+            );
+            for (index, token) in this.preview_ratios.iter().enumerate() {
+                let token = token.clone();
                 content.push(
                     div()
                         .id(("settings-preview-ratio", index))
+                        .flex()
+                        .items_center()
+                        .justify_between()
                         .text_sm()
                         .text_color(cx.theme().foreground)
-                        .child(*token)
+                        .child(token.clone())
+                        .child(
+                            Button::new(format!("settings-remove-ratio-{index}"))
+                                .ghost()
+                                .small()
+                                .label("Remove")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.remove_preview_ratio(&token, cx)
+                                })),
+                        )
                         .into_any_element(),
                 );
             }

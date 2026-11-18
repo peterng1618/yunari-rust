@@ -249,6 +249,54 @@ fn save_recents(library: &Library, recents: &[RecentTheme]) {
     }
 }
 
+/// The five ratio tokens the source ships until an author edits the list.
+const DEFAULT_PREVIEW_RATIOS: [&str; 5] = ["16:9", "19.5:9", "4:3", "1:1", "Circle"];
+
+fn preview_ratio_id(token: &str) -> Option<String> {
+    let text = token.trim();
+    if text.eq_ignore_ascii_case("circle") {
+        return Some("circle".to_owned());
+    }
+    let (width, height) = text.split_once(':')?;
+    let width: f64 = width.parse().ok()?;
+    let height: f64 = height.parse().ok()?;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    Some(format!("{:.6}", width / height))
+}
+
+fn preview_ratios_path() -> PathBuf {
+    yunari_host::config::HostConfig::resolve(None, None, false)
+        .settings_dir()
+        .join("preview-ratios.json")
+}
+
+fn load_preview_ratios() -> Vec<String> {
+    let Ok(bytes) = std::fs::read(preview_ratios_path()) else {
+        return DEFAULT_PREVIEW_RATIOS.iter().map(|token| (*token).to_owned()).collect();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return DEFAULT_PREVIEW_RATIOS.iter().map(|token| (*token).to_owned()).collect();
+    };
+    let Some(rows) = value.as_array() else {
+        return DEFAULT_PREVIEW_RATIOS.iter().map(|token| (*token).to_owned()).collect();
+    };
+    let mut seen = BTreeSet::new();
+    let tokens: Vec<String> = rows
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter_map(|token| preview_ratio_id(token).map(|id| (token.to_owned(), id)))
+        .filter(|(_, id)| seen.insert(id.clone()))
+        .map(|(token, _)| token)
+        .collect();
+    if tokens.is_empty() {
+        DEFAULT_PREVIEW_RATIOS.iter().map(|token| (*token).to_owned()).collect()
+    } else {
+        tokens
+    }
+}
+
 /// The action a guard is holding.
 #[derive(Clone, PartialEq, Eq)]
 enum Resume {
@@ -349,6 +397,9 @@ pub struct EditorWindow {
     library_catalogue: Vec<serde_json::Value>,
     library_mine: Vec<serde_json::Value>,
     library_catalogue_loaded: bool,
+    /// The display menu's ratio tokens, kept beside this PC's settings as the
+    /// source keeps them in browser storage.
+    preview_ratios: Vec<String>,
     /// The Themes mode's search box. The kit binds an `Input` to an entity, so
     /// the state is created with the first window that renders this editor.
     library_search: Option<Entity<InputState>>,
@@ -581,6 +632,7 @@ impl EditorWindow {
             library_catalogue: Vec::new(),
             library_mine: Vec::new(),
             library_catalogue_loaded: false,
+            preview_ratios: load_preview_ratios(),
             library_search: None,
             recents,
             status: None,
@@ -2224,6 +2276,41 @@ impl EditorWindow {
         }
     }
 
+    fn write_preview_ratios(&mut self, cx: &mut Context<Self>) {
+        let path = preview_ratios_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(bytes) = serde_json::to_vec_pretty(&self.preview_ratios) {
+            if let Err(error) = std::fs::write(&path, bytes) {
+                self.status = Some(Status::error(format!("Could not save ratios: {error}")));
+            }
+        }
+        cx.notify();
+    }
+
+    fn add_preview_ratio(&mut self, value: &str, cx: &mut Context<Self>) {
+        let Some(id) = preview_ratio_id(value) else {
+            self.status = Some(Status::error(
+                "A ratio needs width:height, or the word Circle.",
+            ));
+            cx.notify();
+            return;
+        };
+        if self.preview_ratios.iter().any(|token| preview_ratio_id(token).as_deref() == Some(id.as_str())) {
+            self.status = Some(Status::error("That shape is already in the list."));
+            cx.notify();
+            return;
+        }
+        self.preview_ratios.push(value.trim().to_owned());
+        self.write_preview_ratios(cx);
+    }
+
+    fn remove_preview_ratio(&mut self, value: &str, cx: &mut Context<Self>) {
+        self.preview_ratios.retain(|token| token != value);
+        self.write_preview_ratios(cx);
+    }
+
     fn begin_field(&mut self, key: &str, label: &str, value: &str, cx: &mut Context<Self>) {
         // A binding's key is chosen from what this host measures, so a typo
         // cannot become a permanently missing reading.
@@ -2256,15 +2343,19 @@ impl EditorWindow {
             return;
         };
         self.editing = Some(field);
-        self.apply_field(semantic_key);
+        self.apply_field(semantic_key, cx);
         cx.notify();
     }
 
-    fn apply_field(&mut self, value: &str) {
+    fn apply_field(&mut self, value: &str, cx: &mut Context<Self>) {
         let Some(key) = self.editing.take() else {
             return;
         };
         let mut outcome = Ok(());
+        if key == "preview-ratio.new" {
+            self.add_preview_ratio(value, cx);
+            return;
+        }
         if let Some(rest) = key.strip_prefix("palette.") {
             outcome = if rest == "new" {
                 let (name, colour) = value
@@ -3228,7 +3319,7 @@ impl EditorWindow {
                 match prompt.key(&keystroke.key, keystroke.key_char.as_deref()) {
                     Outcome::Pending => self.overlay = Some(Overlay::Field(prompt)),
                     Outcome::Cancel => self.editing = None,
-                    Outcome::Submit(value) => self.apply_field(&value),
+                    Outcome::Submit(value) => self.apply_field(&value, cx),
                 }
             }
             Overlay::Rename(mut prompt) => {
@@ -4387,7 +4478,7 @@ impl EditorWindow {
         match self.overlay.take() {
             Some(Overlay::SaveAs(prompt)) => self.save_as(&prompt.value),
             Some(Overlay::Rename(prompt)) => self.rename_node(&prompt.value),
-            Some(Overlay::Field(prompt)) => self.apply_field(&prompt.value),
+            Some(Overlay::Field(prompt)) => self.apply_field(&prompt.value, cx),
             Some(Overlay::Import(prompt)) => self.guard(Resume::Import(prompt.value), cx),
             Some(Overlay::ImportAsset(prompt)) => {
                 self.import_asset(&prompt.value);
