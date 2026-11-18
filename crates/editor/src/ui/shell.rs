@@ -459,21 +459,15 @@ impl EditorWindow {
         use gpui_kit::component::{ActiveTheme, h_flex, status_bar::StatusBar};
 
         let document = self.editor.document();
-        let name = document
-            .metadata
-            .name
-            .clone()
-            .unwrap_or_else(|| document.id.clone());
         let objects = crate::layers::count(document);
 
         // The source's order: how much is there, what is chosen, what is open.
         let mut left = h_flex()
             .gap_2()
             .child(format!("{objects} objects"))
-            .child(format!("{} selected", self.selection.len()))
-            .child(format!("Opened {name}"));
+            .child(format!("{} selected", self.selection.len()));
         if self.editor.is_dirty() {
-            left = left.child("unsaved changes");
+            left = left.child("Unsaved changes");
         }
 
         let mut right = h_flex().gap_2();

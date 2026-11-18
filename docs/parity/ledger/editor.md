@@ -375,3 +375,10 @@ The stage readout now opens the source's display/zoom menu (fit, selection,
 row reports that this build has no fullscreen API instead of pretending.
 Prompts have a Cancel control, and canvas menu rows carry accessible names.
 
+
+The second review pass also closed: layer rows carry accessible level/selection
+names, a bound-key column and the Background row; the Add pane uses the source
+group names and library links; Theme settings shows Theme, Artboard and
+Credits; Paint tokens shows its count; the status bar drops the invented
+"Opened" reading and matches the source's "Unsaved changes" copy.
+

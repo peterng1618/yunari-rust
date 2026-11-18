@@ -437,29 +437,27 @@ pub struct EditorWindow {
 /// Everything the product can insert, grouped as the source's Add pane groups
 /// them. The pane and the empty-canvas context menu both read this, so a
 /// right-click cannot offer a poorer list than the pane one gesture away.
-pub(super) const INSERT_GROUPS: [(&str, &[Command]); 4] = [
+pub(super) const INSERT_GROUPS: [(&str, &[Command]); 5] = [
     (
         "Text",
-        &[
-            Command::AddText,
-            Command::AddVerticalText,
-            Command::TypographyPreset,
-        ],
+        &[Command::AddText, Command::AddVerticalText],
     ),
     (
-        "Shapes",
+        "Basic Shape",
         &[
             Command::AddRectangle,
             Command::AddEllipse,
             Command::AddLine,
-            Command::AddPath,
-            Command::AddPathPreset,
             Command::AddArc,
             Command::AddWedge,
         ],
     ),
     (
-        "Charts",
+        "Custom Shape",
+        &[Command::AddPath, Command::AddPathPreset],
+    ),
+    (
+        "Chart",
         &[
             Command::AddGauge,
             Command::AddLineChart,
@@ -469,7 +467,7 @@ pub(super) const INSERT_GROUPS: [(&str, &[Command]); 4] = [
             Command::AddPolarBar,
         ],
     ),
-    ("Media", &[Command::AddImage]),
+    ("Card", &[]),
 ];
 
 /// One row of the canvas menu: a command, or a restack the registry does not
@@ -2627,8 +2625,44 @@ impl EditorWindow {
     /// The left pane's Theme settings slot: metadata, artboard and background.
     fn document_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut sections = inspector::document_sections(self.editor.document());
-        sections.retain(|section| section.title != "Palette");
-        let children = self.section_children(sections, cx);
+        sections.retain(|section| section.title == "Theme" || section.title == "Artboard");
+        let mut children = self.section_children(sections, cx);
+        let credits = self
+            .library
+            .read(&self.editor.document().id)
+            .ok()
+            .and_then(|stored| stored.credits)
+            .map(|credits| credits.entries)
+            .unwrap_or_default();
+        if !credits.is_empty() {
+            children.push(
+                div()
+                    .px_3()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Credits")
+                    .into_any_element(),
+            );
+            for (index, entry) in credits.iter().enumerate() {
+                children.push(
+                    div()
+                        .id(("document-credit", index))
+                        .px_3()
+                        .py_1()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().text_color(cx.theme().foreground).child(entry.title.clone()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} · {}", entry.kind, entry.license)),
+                        )
+                        .into_any_element(),
+                );
+            }
+        }
         self.scrolling_pane("document-body", Some("Theme settings"), children, cx)
     }
 
@@ -2640,13 +2674,14 @@ impl EditorWindow {
             cx.theme().input,
         );
         let palette = self.editor.document().palette.clone();
+        let token_count = palette.len();
         let mut children = vec![
             div()
                 .px_3()
                 .pt_2()
                 .text_xs()
                 .text_color(muted)
-                .child("Palette")
+                .child(format!("Paint tokens · {token_count}"))
                 .into_any_element(),
         ];
         for (index, (id, entry)) in palette.into_iter().enumerate() {
@@ -2795,7 +2830,7 @@ impl EditorWindow {
             h_flex,
         };
 
-        const GROUPS: [(&str, &[Command]); 4] = INSERT_GROUPS;
+        const GROUPS: [(&str, &[Command]); 5] = INSERT_GROUPS;
 
         let (foreground, muted) = (cx.theme().foreground, cx.theme().muted_foreground);
         let mut children: Vec<AnyElement> = Vec::new();
@@ -2833,6 +2868,26 @@ impl EditorWindow {
                     .into_any_element(),
             );
         }
+        children.push(
+            div()
+                .id("add-browse-library")
+                .px_3()
+                .py_2()
+                .text_xs()
+                .text_color(muted)
+                .child("Browse widgets in the Library")
+                .into_any_element(),
+        );
+        children.push(
+            div()
+                .id("add-browse-shapes")
+                .px_3()
+                .py_1()
+                .text_xs()
+                .text_color(muted)
+                .child("Browse shapes in the Library")
+                .into_any_element(),
+        );
         self.scrolling_pane("add-body", Some("Add"), children, cx)
     }
 
@@ -3538,6 +3593,12 @@ impl EditorWindow {
                 let ink = if row.visible { foreground } else { muted };
                 div()
                     .id(("layer", index))
+                    .aria_label(format!(
+                        "{}, level {}{}",
+                        row.name,
+                        row.depth + 1,
+                        if row.selected { ", selected" } else { "" }
+                    ))
                     .on_drag(id.clone(), |name, _, _, cx| {
                         cx.new(|_| LayerDragPreview(name.clone()))
                     })
@@ -3592,6 +3653,7 @@ impl EditorWindow {
                             .child(row.name.clone()),
                     )
                     .child(div().text_xs().text_color(muted).child(row.role))
+                    .child(div().text_xs().text_color(muted).child(row.bound.clone()))
                     .child(
                         div()
                             .id(("eye", index))

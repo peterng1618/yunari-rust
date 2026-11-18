@@ -36,6 +36,7 @@ pub struct Row {
     pub visible: bool,
     pub locked: bool,
     pub selected: bool,
+    pub bound: String,
 }
 
 pub fn rows(
@@ -53,6 +54,26 @@ pub fn rows(
         expanded,
         &mut rows,
     );
+    for row in &mut rows {
+        row.bound = document
+            .bindings
+            .get(&row.id)
+            .and_then(|bindings| bindings.first())
+            .map(|binding| binding.semantic_key.clone())
+            .unwrap_or_default();
+    }
+    rows.push(Row {
+        id: "$background".to_owned(),
+        name: "Background".to_owned(),
+        depth: 0,
+        kind: "Background",
+        role: "Background",
+        has_children: false,
+        visible: true,
+        locked: false,
+        selected: selection.contains("$background"),
+        bound: String::new(),
+    });
     rows
 }
 
@@ -81,6 +102,7 @@ fn collect(
             visible,
             locked,
             selected: selection.contains(&node.id),
+            bound: String::new(),
         });
         if !node.children.is_empty() && expanded.contains(&node.id) {
             collect(
@@ -309,14 +331,14 @@ mod tests {
         let closed = rows(&document, &selection, &BTreeSet::new());
         assert_eq!(
             closed.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-            ["holder", "under"]
+            ["holder", "under", "$background"]
         );
         let mut expanded = BTreeSet::new();
         expanded.insert("holder".to_owned());
         let open = rows(&document, &selection, &expanded);
         assert_eq!(
             open.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-            ["holder", "child", "under"]
+            ["holder", "child", "under", "$background"]
         );
         assert_eq!(open[1].depth, 1);
     }
@@ -336,7 +358,7 @@ mod tests {
         );
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-            ["holder", "child", "under"]
+            ["holder", "child", "under", "$background"]
         );
         // A node cannot become its own descendant.
         assert!(!editor.move_node_to("holder", "child"));
