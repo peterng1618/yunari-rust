@@ -3933,6 +3933,72 @@ impl EditorWindow {
         self.menu_layer(at, px(200.0), px(rows * 26.0 + 16.0), entries, cx)
     }
 
+    /// Installs one catalogue row through the host's own install path. The
+    /// editor never fetches bytes itself and never holds a session token; the
+    /// row's own digest and size travel with the request.
+    fn install_library_item(
+        &mut self,
+        row: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(host) = self.host.clone() else {
+            self.status = Some(Status::error(
+                "The theme store needs the host running on this PC.",
+            ));
+            cx.notify();
+            return;
+        };
+        let text = |key: &str| {
+            row.get(key)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        };
+        let Some(request) = yunari_host::store_install::parse_request(&serde_json::json!({
+            "packageUrl": text("packageUrl").unwrap_or_default(),
+            "catalogueId": text("catalogueId").or_else(|| text("id")).unwrap_or_default(),
+            "kind": text("kind").unwrap_or_default(),
+            "version": text("version").unwrap_or_default(),
+            "sha256": text("sha256"),
+            "bytes": row.get("bytes").and_then(serde_json::Value::as_u64),
+        })) else {
+            self.status = Some(Status::error(
+                "That listing does not record everything an install needs.",
+            ));
+            cx.notify();
+            return;
+        };
+        self.status = Some(Status::ok("Installing…"));
+        cx.notify();
+        cx.spawn_in(window, async move |weak, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let fetcher = std::sync::Arc::clone(&host);
+                    let download: yunari_host::store_install::Download =
+                        std::sync::Arc::new(move |url: &str| {
+                            yunari_host::store_install::download(
+                                fetcher.account.origin.as_deref(),
+                                url,
+                                &fetcher.account.transport,
+                            )
+                        });
+                    yunari_host::store_install::install(&host, &request, &download)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                this.status = Some(match outcome {
+                    Ok(installed) => Status::ok(format!("Installed as {}.", installed.id)),
+                    Err(refusal) => Status::error(refusal.message),
+                });
+                this.refresh_library();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The catalogue answer names its rows `entries`, `items` or `themes`
     /// depending on which source answered. Reading all three keeps the page
     /// from showing an empty list for a valid answer.

@@ -362,7 +362,11 @@ fn action(
 /// One row per catalogue entry the host answered. A row names what it can;
 /// installing and collection consent are not wired to this list yet.
 fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<EditorWindow>) -> AnyElement {
-    use gpui_kit::component::ActiveTheme;
+    use gpui_kit::component::{
+        ActiveTheme,
+        Sizable,
+        button::{Button, ButtonVariants},
+    };
 
     if rows.is_empty() {
         return div()
@@ -376,6 +380,7 @@ fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<Edit
         .iter()
         .enumerate()
         .map(|(index, row)| {
+            let install_row = row.clone();
             let name = row
                 .get("name")
                 .and_then(serde_json::Value::as_str)
@@ -398,9 +403,24 @@ fn catalogue_rows(rows: &[serde_json::Value], empty: &str, cx: &mut Context<Edit
                 .child(name.to_owned())
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(kind.to_owned()),
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(kind.to_owned()),
+                        )
+                        .child(
+                            Button::new(format!("catalogue-install-{index}"))
+                                .ghost()
+                                .small()
+                                .label("Install")
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    this.install_library_item(&install_row, window, cx)
+                                })),
+                        ),
                 )
                 .into_any_element()
         })
