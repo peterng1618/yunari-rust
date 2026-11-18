@@ -4191,6 +4191,72 @@ impl EditorWindow {
                 )
                 .into_any_element(),
         );
+        if hosting.lan {
+            if let Some(host) = &self.host {
+                let port = host.bound_port.load(std::sync::atomic::Ordering::Relaxed);
+                let name = host.identity.name.clone();
+                let code = host
+                    .pairing
+                    .lock()
+                    .ok()
+                    .map(|mut pairing| pairing.current(yunari_host::http::now_ms()).code);
+                children.push(
+                    div()
+                        .text_xs()
+                        .text_color(ink)
+                        .child("Phone")
+                        .into_any_element(),
+                );
+                if let Some(address) = yunari_host::hosting::lan_address() {
+                    children.push(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("Phone address: https://{address}:{port}"))
+                            .into_any_element(),
+                    );
+                    children.push(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("Fallback http://{address}:{port}"))
+                            .into_any_element(),
+                    );
+                } else {
+                    children.push(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("The host could not find a network address.")
+                            .into_any_element(),
+                    );
+                }
+                children.push(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(format!("Also https://{name}:{port}, where your device resolves it."))
+                        .into_any_element(),
+                );
+                if let Some(code) = code {
+                    children.push(
+                        div()
+                            .text_xs()
+                            .text_color(ink)
+                            .child(format!("Pairing code: {code}"))
+                            .into_any_element(),
+                    );
+                }
+            } else {
+                children.push(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("The host is not running on this PC.")
+                        .into_any_element(),
+                );
+            }
+        }
         children.push(
             div()
                 .id("publish-close")

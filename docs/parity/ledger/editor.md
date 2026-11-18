@@ -48,9 +48,11 @@ the rail's active-slot press closes it, matching the source's rail press.
 - **Publish control.** The source header's right end is the accent "Assign to a
   display" chip plus its indicator. The port has the accent button, opening a
   surface that assigns the open theme to a stored display and flips the host's
-  LAN switch beside the source's warning. The pairing address/code and QR are
-  not printed: the source refuses to compose them locally, and the port has no
-  host answer to read yet. P4 (dialogs/modes).
+  LAN switch beside the source's warning. When a host is attached the surface
+  prints the host's own bound port, LAN address from the outbound interface,
+  host name and current pairing code. The QR symbol is not drawn: the kit has
+  no QR element and the code is printed beside the address as the source does
+  for devices with no camera. P4 (dialogs/modes).
 - **Toolbar coverage.** The rows now follow the source: New theme, New from
   template, Open library, Import theme / Save, Save as, Open display, Export
   theme, Export widget / Find assets. **Open recent** now sits after Open: the
@@ -251,7 +253,7 @@ installed has no local rows to show and says the catalogue is not loaded; the
 current source removed the old Local library / Online store halves, so they
 are not ported.
 
-Still to fold: collection cards
+Still to fold: the publish QR symbol, collection cards
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.
 
