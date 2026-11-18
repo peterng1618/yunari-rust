@@ -298,6 +298,9 @@ pub struct EditorWindow {
     expanded: BTreeSet<String>,
     /// The row a rename prompt is editing.
     renaming: Option<String>,
+    /// The row the Layers pane last focused, so arrow keys navigate the tree
+    /// instead of nudging canvas objects until the canvas takes focus again.
+    layer_focus: Option<String>,
     /// The inspector key a field prompt is editing.
     editing: Option<String>,
     overlay: Option<Overlay>,
@@ -550,6 +553,7 @@ impl EditorWindow {
             nudge_epoch: 0,
             expanded: BTreeSet::new(),
             renaming: None,
+            layer_focus: None,
             editing: None,
             overlay: None,
             themes: None,
@@ -2349,6 +2353,7 @@ impl EditorWindow {
     /// A click on a layers row: Ctrl toggles, Shift extends, a second click on
     /// the only selected row renames it, and a plain click selects.
     fn layer_click(&mut self, id: &str, modifiers: Modifiers, cx: &mut Context<Self>) {
+        self.layer_focus = Some(id.to_owned());
         if modifiers.control || modifiers.platform {
             self.selection.toggle(id);
         } else if modifiers.shift {
@@ -2372,6 +2377,79 @@ impl EditorWindow {
             self.selection.replace(id);
         }
         cx.notify();
+    }
+
+    /// Keyboard path through the Layers pane. Arrow keys walk the flattened
+    /// rows, a collapsed group opens on Right, an open one steps into it, and
+    /// Left closes it or steps out to its parent. Enter/F2 renames the row.
+    fn navigate_layers(&mut self, key: &str, shift: bool, cx: &mut Context<Self>) {
+        let Some(focused) = self.layer_focus.clone() else {
+            return;
+        };
+        let rows = layers::rows(self.editor.document(), &self.selection, &self.expanded);
+        let Some(at) = rows.iter().position(|row| row.id == focused) else {
+            self.layer_focus = None;
+            return;
+        };
+        let target = match key {
+            "arrowdown" => Some((at + 1).min(rows.len() - 1)),
+            "arrowup" => Some(at.saturating_sub(1)),
+            "home" => Some(0),
+            "end" => Some(rows.len() - 1),
+            _ => None,
+        };
+        if let Some(index) = target {
+            let id = rows[index].id.clone();
+            self.layer_focus = Some(id.clone());
+            if shift {
+                self.selection.toggle(&id);
+            } else {
+                self.selection.replace(id);
+            }
+            cx.notify();
+            return;
+        }
+        let row = &rows[at];
+        match key {
+            "arrowright" => {
+                if row.has_children && !self.expanded.contains(&row.id) {
+                    self.toggle_expanded(&row.id, cx);
+                } else if row.has_children && at + 1 < rows.len() {
+                    self.layer_focus = Some(rows[at + 1].id.clone());
+                    self.selection.replace(rows[at + 1].id.clone());
+                    cx.notify();
+                }
+            }
+            "arrowleft" => {
+                if row.has_children && self.expanded.contains(&row.id) {
+                    self.toggle_expanded(&row.id, cx);
+                } else {
+                    for parent in rows[..at].iter().rev() {
+                        if parent.depth < row.depth {
+                            self.layer_focus = Some(parent.id.clone());
+                            self.selection.replace(parent.id.clone());
+                            cx.notify();
+                            break;
+                        }
+                    }
+                }
+            }
+            "enter" | "f2" => {
+                let id = row.id.clone();
+                let name = selection::find(self.editor.document(), &id)
+                    .and_then(|node| node.name.clone())
+                    .unwrap_or_else(|| layers::kind_name(selection::find(self.editor.document(), &id).unwrap()).to_owned());
+                self.renaming = Some(id.clone());
+                self.selection.replace(id);
+                self.overlay = Some(Overlay::Rename(Prompt::new(
+                    "Rename layer",
+                    "A name; empty clears it",
+                    name,
+                )));
+                cx.notify();
+            }
+            _ => {}
+        }
     }
 
     fn rename_node(&mut self, value: &str) {
@@ -3200,6 +3278,22 @@ impl EditorWindow {
                 self.space_held = true;
                 return;
             }
+            if self.layer_focus.is_some()
+                && matches!(
+                    keystroke.key.as_str(),
+                    "arrowdown"
+                        | "arrowup"
+                        | "arrowleft"
+                        | "arrowright"
+                        | "home"
+                        | "end"
+                        | "enter"
+                        | "f2"
+                )
+            {
+                self.navigate_layers(&keystroke.key, keystroke.modifiers.shift, cx);
+                return;
+            }
             if self.nudge(&keystroke.key, keystroke.modifiers.shift, window, cx) {
                 return;
             }
@@ -3587,6 +3681,7 @@ impl EditorWindow {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.layer_focus = None;
                     if this.space_held {
                         this.pan_start(event.position);
                     } else {
@@ -3600,7 +3695,10 @@ impl EditorWindow {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, _, cx| this.canvas_context(event, cx)),
+                cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                    this.layer_focus = None;
+                    this.canvas_context(event, cx)
+                }),
             )
             .on_mouse_move(
                 cx.listener(|this, event: &MouseMoveEvent, _, cx| this.canvas_drag(event, cx)),

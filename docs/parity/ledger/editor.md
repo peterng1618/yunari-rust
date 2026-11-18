@@ -88,7 +88,11 @@ the rail's active-slot press closes it, matching the source's rail press.
 The app now embeds gpui-kit's full Lucide catalog (`AllAssets`) rather than the
 default bundle, because the source's dock marks (scissors, clipboard, group,
 arrow-to-line) are outside the default subset and drew empty.
-- **Layer rows** print raw ids instead of the source's kind column. P2.
+- **Layer rows** carry the kind column, visibility and lock controls, and now
+  have the source's keyboard path: a clicked row owns arrow/Home/End navigation
+  over the flattened tree, Right opens or enters a group, Left closes or steps
+  out, and Enter/F2 renames. Canvas pointer down hands focus back to the stage.
+  Drag reordering remains P2.
 - **Pane scrolling.** Resolved: the pane bodies use the kit's
   `ScrollableElement` scroll area, so the wheel and the scrollbar share one
   offset instead of the old row-count estimate.
