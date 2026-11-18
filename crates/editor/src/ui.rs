@@ -476,6 +476,7 @@ pub(super) const INSERT_GROUPS: [(&str, &[Command]); 4] = [
 enum CanvasMenuEntry {
     Command(Command),
     Restack(LayerMove),
+    Lock(bool),
 }
 
 impl CanvasMenuEntry {
@@ -486,24 +487,28 @@ impl CanvasMenuEntry {
             Self::Restack(LayerMove::Forward) => "Bring forward",
             Self::Restack(LayerMove::Backward) => "Send backward",
             Self::Restack(LayerMove::Back) => "Send to back",
+            Self::Lock(true) => "Lock",
+            Self::Lock(false) => "Unlock",
         }
     }
 }
 
 /// The canvas dock's rows: the registry's object commands, without the eight
 /// arrange actions, which the source keeps in the selection inspector.
-const DOCK_ACTIONS: [CanvasMenuEntry; 11] = [
+const DOCK_ACTIONS: [CanvasMenuEntry; 13] = [
     CanvasMenuEntry::Command(Command::Duplicate),
     CanvasMenuEntry::Command(Command::Copy),
     CanvasMenuEntry::Command(Command::Cut),
     CanvasMenuEntry::Command(Command::Paste),
-    CanvasMenuEntry::Command(Command::DeleteSelected),
-    CanvasMenuEntry::Command(Command::Group),
-    CanvasMenuEntry::Command(Command::Ungroup),
     CanvasMenuEntry::Restack(LayerMove::Front),
     CanvasMenuEntry::Restack(LayerMove::Forward),
     CanvasMenuEntry::Restack(LayerMove::Backward),
     CanvasMenuEntry::Restack(LayerMove::Back),
+    CanvasMenuEntry::Lock(true),
+    CanvasMenuEntry::Lock(false),
+    CanvasMenuEntry::Command(Command::Group),
+    CanvasMenuEntry::Command(Command::Ungroup),
+    CanvasMenuEntry::Command(Command::DeleteSelected),
 ];
 
 /// The dock's icon for a row. The full catalog is embedded, so the source's
@@ -522,6 +527,8 @@ fn dock_icon(entry: CanvasMenuEntry) -> gpui_kit::assets::IconName {
         CanvasMenuEntry::Restack(LayerMove::Forward) => Glyph::ArrowUp,
         CanvasMenuEntry::Restack(LayerMove::Backward) => Glyph::ArrowDown,
         CanvasMenuEntry::Restack(LayerMove::Back) => Glyph::ArrowDownToLine,
+        CanvasMenuEntry::Lock(true) => Glyph::Lock,
+        CanvasMenuEntry::Lock(false) => Glyph::LockOpen,
         _ => Glyph::Ellipsis,
     }
 }
@@ -539,6 +546,14 @@ fn run_canvas_entry(
         CanvasMenuEntry::Restack(step) => {
             if let Some(id) = this.selection.first().map(str::to_owned) {
                 this.editor.raise(&id, step);
+                this.refresh();
+                cx.notify();
+            }
+        }
+        CanvasMenuEntry::Lock(locked) => {
+            if let Some(id) = this.selection.first().map(str::to_owned)
+                && this.editor.set_locked(&id, locked)
+            {
                 this.refresh();
                 cx.notify();
             }
@@ -576,37 +591,21 @@ pub(super) const ARRANGE_ACTIONS: [Command; 8] = [
 ];
 
 /// The object menu's groups, in the source's registry order.
-const OBJECT_MENU: [&[CanvasMenuEntry]; 5] = [
-    &[
-        CanvasMenuEntry::Command(Command::Duplicate),
-        CanvasMenuEntry::Command(Command::Copy),
-        CanvasMenuEntry::Command(Command::Cut),
-        CanvasMenuEntry::Command(Command::Paste),
-        CanvasMenuEntry::Command(Command::DeleteSelected),
-    ],
-    &[
-        CanvasMenuEntry::Command(Command::Group),
-        CanvasMenuEntry::Command(Command::Ungroup),
-    ],
-    &[
-        CanvasMenuEntry::Restack(LayerMove::Front),
-        CanvasMenuEntry::Restack(LayerMove::Forward),
-        CanvasMenuEntry::Restack(LayerMove::Backward),
-        CanvasMenuEntry::Restack(LayerMove::Back),
-    ],
-    &[
-        CanvasMenuEntry::Command(Command::AlignLeft),
-        CanvasMenuEntry::Command(Command::AlignCenterX),
-        CanvasMenuEntry::Command(Command::AlignRight),
-        CanvasMenuEntry::Command(Command::AlignTop),
-        CanvasMenuEntry::Command(Command::AlignCenterY),
-        CanvasMenuEntry::Command(Command::AlignBottom),
-    ],
-    &[
-        CanvasMenuEntry::Command(Command::DistributeX),
-        CanvasMenuEntry::Command(Command::DistributeY),
-    ],
-];
+const OBJECT_MENU: [&[CanvasMenuEntry]; 1] = [&[
+    CanvasMenuEntry::Command(Command::Duplicate),
+    CanvasMenuEntry::Command(Command::Copy),
+    CanvasMenuEntry::Command(Command::Cut),
+    CanvasMenuEntry::Command(Command::Paste),
+    CanvasMenuEntry::Restack(LayerMove::Front),
+    CanvasMenuEntry::Restack(LayerMove::Forward),
+    CanvasMenuEntry::Restack(LayerMove::Backward),
+    CanvasMenuEntry::Restack(LayerMove::Back),
+    CanvasMenuEntry::Lock(true),
+    CanvasMenuEntry::Lock(false),
+    CanvasMenuEntry::Command(Command::Group),
+    CanvasMenuEntry::Command(Command::Ungroup),
+    CanvasMenuEntry::Command(Command::DeleteSelected),
+]];
 
 impl EditorWindow {
     fn new(library: Library, host: Option<Shared>, cx: &mut Context<Self>) -> Self {
@@ -5562,24 +5561,18 @@ mod tests {
                 "Copy",
                 "Cut",
                 "Paste",
-                "Delete",
-                "Group",
-                "Ungroup",
                 "Bring to front",
                 "Bring forward",
                 "Send backward",
                 "Send to back",
-                "Align L",
-                "Centre X",
-                "Align R",
-                "Align T",
-                "Centre Y",
-                "Align B",
-                "Space X",
-                "Space Y",
+                "Lock",
+                "Unlock",
+                "Group",
+                "Ungroup",
+                "Delete",
             ]
         );
-        assert!(matches!(OBJECT_MENU[2][0], CanvasMenuEntry::Restack(_)));
+        assert!(matches!(OBJECT_MENU[0][4], CanvasMenuEntry::Restack(_)));
     }
 
     #[test]

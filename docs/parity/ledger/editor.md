@@ -365,3 +365,7 @@ Finder rows now select first; a separate footer action applies the source's
 per-kind verb, and Escape clears the selection before it closes the dialog.
 The Close copy matches `uiCopy.assets.close`.
 
+The object context menu and canvas dock now use the source's flat registry
+order, including Lock and Unlock, and no longer repeat the inspector's arrange
+actions.
+
