@@ -209,9 +209,9 @@ pinned `1241866e5`) found:
   code or QR, and says so above. Its `http://{port}` line was a defect and was
   removed.
 - Settings is a two-group navigation (This PC, Editor) with one title and hint
-  per page; the port's Settings mode still points at one dialog.
-- Library is a two-half catalogue with nav groups, search, five facets, sort
-  and a density control; the port's Themes mode still lists stored themes.
+  per page; the port now draws that navigation and its backed pages.
+- Library is a catalogue with nav groups, search, five facets, sort, a density
+  control and an installed-state filter; the port's Themes mode draws those.
 - Asset Finder has six tabs (Colors, Fonts, Icons, Images, Videos, Wallpaper
   Engine), defaulting to Icons, with per-tab search and empty/key-required/
   error states. The port now draws that rail and separates its stock icons,
@@ -220,16 +220,17 @@ pinned `1241866e5`) found:
   says its library is local. Source chips switch rows on and off, and every row
   carries its source. Local picture rows show the file's own bytes as a small
   preview when the file can be read; stock rows fetch their own bytes on the
-  search thread and draw the same preview. Colors, Fonts and Videos still say they are not ported;
-  per-tab search, previews and the key-required/error states remain P4.
+  search thread and draw the same preview. Colors, Fonts and Videos still say
+  they are not ported; their per-tab search and key-required/error states
+  remain P4.
 - The source has no Widget picker, Typography, MCP or Path preset dialog. The
   port's versions of those are extra surfaces; widget insert lives in the
   source's library detail, type authoring in the Tokens pane, path presets in
   Settings, and MCP in a separate server.
 - Store is not its own mode: the shell's Store command now opens the Library
   at My submissions, and the port's old standalone store dialog and its
-  install/sign-in paths are gone. Catalogue install and collection consent are
-  still unported.
+  sign-in path are gone. Catalogue install uses the host path; collection
+  consent is still unported.
 
 These are P4 gaps, not claims of parity.
 
@@ -275,12 +276,11 @@ current source removed the old Local library / Online store halves, so they
 are not ported.
 
 The Collections and My submissions pages read the host's catalogue halves
-  once and list the rows the host answered. The publish surface also draws a QR symbol for the host's own pairing URL,
-beside the printed code for devices without a camera. Collection consent is
-still unported; an Install
-  press uses the host's own download, digest check and install path.
-and consent; the remaining Settings pages; and the host-reported publish
-address. These are P4, not claims of parity.
+once, list the rows the host answered and offer Install through the host's own
+download, digest check and install path. The publish surface draws the host's
+address, pairing code and QR symbol. Collection consent is still unported.
+
+These are P4 gaps, not claims of parity.
 
 ## Source-reading gate
 
