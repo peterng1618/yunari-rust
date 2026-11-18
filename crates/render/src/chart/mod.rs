@@ -439,6 +439,7 @@ fn text_style(style: &LabelStyle) -> TextStyle {
         italic: false,
         size: style.size,
         color: style.color,
+        ..TextStyle::default()
     }
 }
 

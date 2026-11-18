@@ -9201,6 +9201,7 @@ dependencies = [
  "serde",
  "serde_json",
  "svgtypes 0.16.2",
+ "unicode-segmentation",
  "wuff",
  "yunari-locale",
  "yunari-model",
