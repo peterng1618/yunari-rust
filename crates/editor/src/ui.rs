@@ -363,6 +363,9 @@ pub struct EditorWindow {
     gesture: Option<Gesture>,
     /// Lines the last drag step was pulled to, for painting.
     guides: Vec<snap::Guide>,
+    /// An acquired equal-spacing line, held while the pointer stays within
+    /// the source's wider release window.
+    spacing_hold: Option<(snap::Axis, f64)>,
     /// Bumped per arrow press so a stale idle timer ends nothing.
     nudge_epoch: u64,
     /// Group rows the layers panel is showing the children of.
@@ -629,6 +632,7 @@ impl EditorWindow {
             marquee: None,
             gesture: None,
             guides: Vec::new(),
+            spacing_hold: None,
             nudge_epoch: 0,
             expanded: BTreeSet::new(),
             renaming: None,
@@ -2024,6 +2028,7 @@ impl EditorWindow {
     /// replaces the selection and may be dragged, and empty canvas starts a
     /// marquee.
     fn canvas_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.spacing_hold = None;
         let Some(bounds) = self.canvas_bounds.get() else {
             return;
         };
@@ -2105,13 +2110,52 @@ impl EditorWindow {
                 let raw = (anchor.0 + scene.0 - start.0, anchor.1 + scene.1 - start.1);
                 let enabled = !event.modifiers.control;
                 let moving: Vec<String> = starts.iter().map(|(id, _)| id.clone()).collect();
-                let (snapped_x, snapped_y, found) = snap::snap_move(
+                let (mut snapped_x, mut snapped_y, mut found) = snap::snap_move(
                     self.editor.document(),
                     &moving,
                     raw,
                     self.viewport.scale,
                     enabled,
                 );
+                // A spacing acquisition is held through the wider release
+                // window (5px + 5px at this zoom). Beyond it the pointer owns
+                // the object again and a fresh acquisition can land elsewhere.
+                let release = 10.0 / self.viewport.scale.max(f32::MIN_POSITIVE);
+                let mut held_guides = Vec::new();
+                let mut still_held = Vec::new();
+                if let Some(hold) = self.spacing_hold.take() {
+                    let (axis, target) = hold;
+                    let raw_axis = match axis { snap::Axis::X => raw.0, snap::Axis::Y => raw.1 };
+                    if enabled && (raw_axis - target).abs() <= f64::from(release) {
+                        match axis {
+                            snap::Axis::X => snapped_x = target,
+                            snap::Axis::Y => snapped_y = target,
+                        }
+                        let board = &self.editor.document().artboard;
+                        held_guides.push(snap::Guide {
+                            axis,
+                            at: target,
+                            from: 0.0,
+                            to: match axis { snap::Axis::X => board.height, snap::Axis::Y => board.width },
+                            spacing: true,
+                        });
+                        still_held.push(hold);
+                    }
+                }
+                if still_held.is_empty() {
+                    self.spacing_hold = found
+                        .iter()
+                        .filter(|guide| guide.spacing)
+                        .map(|guide| (guide.axis, match guide.axis {
+                            snap::Axis::X => snapped_x,
+                            snap::Axis::Y => snapped_y,
+                        }))
+                        .next();
+                } else {
+                    self.spacing_hold = still_held.into_iter().next();
+                    found.clear();
+                }
+                found.extend(held_guides);
                 let (rounded_x, rounded_y) = transform::move_to(raw, raw, enabled);
                 let guided = |axis| found.iter().any(|guide| guide.axis == axis);
                 let x = if guided(snap::Axis::X) {
@@ -3031,6 +3075,7 @@ impl EditorWindow {
     fn canvas_up(&mut self, shift: bool, cx: &mut Context<Self>) {
         self.panning = None;
         if self.gesture.take().is_some() {
+            self.spacing_hold = None;
             self.guides.clear();
             self.editor.end_burst();
             self.refresh();

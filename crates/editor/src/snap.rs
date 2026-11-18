@@ -26,6 +26,8 @@ pub struct Guide {
     pub at: f64,
     pub from: f64,
     pub to: f64,
+    /// Whether this line came from equal spacing rather than an edge or centre.
+    pub spacing: bool,
 }
 
 /// Which kind of line won, so a boundary beats an edge and an edge a centre.
@@ -84,6 +86,7 @@ pub fn snap_move(
             at: line.at,
             from: 0.0,
             to: height,
+            spacing: false,
         });
     }
     let mut y = proposed.1;
@@ -99,6 +102,7 @@ pub fn snap_move(
             at: line.at,
             from: 0.0,
             to: width,
+            spacing: false,
         });
     }
     if let Some((shift, spacing_guides)) =
@@ -164,8 +168,8 @@ fn equal_spacing(
     Some((
         shift,
         vec![
-            Guide { axis, at: midpoint_before, from, to },
-            Guide { axis, at: midpoint_after, from, to },
+            Guide { axis, at: midpoint_before, from, to, spacing: true },
+            Guide { axis, at: midpoint_after, from, to, spacing: true },
         ],
     ))
 }
