@@ -1,6 +1,6 @@
 //! The stored-theme list Open shows, with the actions that manage it.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet}, sync::Arc};
 
 use gpui_kit::*;
 use yunari_library::{Library, ThemeEntry};
@@ -60,6 +60,20 @@ fn columns_for(width: f32, density: GridDensity) -> usize {
 }
 
 #[derive(Clone)]
+pub struct FacetOption {
+    pub id: String,
+    pub name: String,
+    pub count: usize,
+}
+
+#[derive(Clone)]
+pub struct Facet {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub options: Vec<FacetOption>,
+}
+
+#[derive(Clone)]
 pub struct LibraryDialog {
     pub entries: Vec<ThemeEntry>,
     pub query: String,
@@ -71,6 +85,110 @@ pub struct LibraryDialog {
     pub frames: BTreeMap<String, Arc<gpui_kit::Image>>,
     /// Each authored artboard's width/height, used to justify grid rows.
     pub ratios: BTreeMap<String, f32>,
+    /// The five facets, read off the stored documents rather than invented.
+    pub facets: Vec<Facet>,
+    /// One entry's values per facet, so filtering never re-reads a document.
+    pub entry_facets: BTreeMap<String, BTreeMap<&'static str, BTreeSet<String>>>,
+    pub chosen: BTreeMap<&'static str, BTreeSet<String>>,
+    pub active_facet: Option<&'static str>,
+}
+
+/// Adds one reading to a facet's option counts.
+fn count(map: &mut BTreeMap<String, (String, usize)>, id: String, name: String) {
+    match map.entry(id) {
+        std::collections::btree_map::Entry::Occupied(mut slot) => slot.get_mut().1 += 1,
+        std::collections::btree_map::Entry::Vacant(slot) => {
+            slot.insert((name, 1));
+        }
+    }
+}
+
+/// The source's five facets, read off the stored documents. An unreadable
+/// document contributes no values rather than inventing them.
+fn build_facets(
+    library: &Library,
+    entries: &[ThemeEntry],
+) -> (
+    Vec<Facet>,
+    BTreeMap<String, BTreeMap<&'static str, BTreeSet<String>>>,
+) {
+    let keys: [(&str, &str); 5] = [
+        ("author", "Author"),
+        ("colour-mode", "Color mode"),
+        ("sensors", "Sensors"),
+        ("shape", "Shape"),
+        ("style", "Style"),
+    ];
+    let mut counts: BTreeMap<&str, BTreeMap<String, (String, usize)>> =
+        keys.iter().map(|(id, _)| (*id, BTreeMap::new())).collect();
+    let mut per_entry = BTreeMap::new();
+    for entry in entries {
+        let Ok(stored) = library.read(&entry.id) else {
+            continue;
+        };
+        let document = &stored.document;
+        let mut values: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+        if let Some(author) = &entry.author {
+            if !author.is_empty() {
+                values.entry("author").or_default().insert(author.clone());
+                count(counts.get_mut("author").unwrap(), author.clone(), author.clone());
+            }
+        }
+        let tags = &document.metadata.tags;
+        for tag in tags {
+            let lower = tag.to_lowercase();
+            if lower == "light" || lower == "dark" {
+                values.entry("colour-mode").or_default().insert(lower.clone());
+                count(counts.get_mut("colour-mode").unwrap(), lower.clone(), tag.clone());
+            }
+            values.entry("style").or_default().insert(tag.clone());
+            count(counts.get_mut("style").unwrap(), tag.clone(), tag.clone());
+        }
+        for bindings in document.bindings.values() {
+            for binding in bindings {
+                let Some((family, _)) = binding.semantic_key.split_once('.') else {
+                    continue;
+                };
+                values.entry("sensors").or_default().insert(family.to_owned());
+                count(
+                    counts.get_mut("sensors").unwrap(),
+                    family.to_owned(),
+                    family.to_owned(),
+                );
+            }
+        }
+        let board = &document.artboard;
+        if board.height > 0.0 {
+            let ratio = board.width / board.height;
+            let orientation = if ratio > 1.2 { "landscape" } else { "portrait" };
+            values.entry("shape").or_default().insert(orientation.to_owned());
+            count(
+                counts.get_mut("shape").unwrap(),
+                orientation.to_owned(),
+                orientation.to_owned(),
+            );
+            let bucket = if ratio > 2.5 { "ultrawide" } else { "standard" };
+            values.entry("shape").or_default().insert(bucket.to_owned());
+            count(counts.get_mut("shape").unwrap(), bucket.to_owned(), bucket.to_owned());
+        }
+        per_entry.insert(entry.id.clone(), values);
+    }
+    let facets = keys
+        .iter()
+        .map(|(id, name)| Facet {
+            id,
+            name,
+            options: counts[id]
+                .iter()
+                .map(|(option_id, (option_name, count))| FacetOption {
+                    id: option_id.clone(),
+                    name: option_name.clone(),
+                    count: *count,
+                })
+                .collect(),
+        })
+        .collect();
+    (facets, per_entry)
 }
 
 impl LibraryDialog {
@@ -84,6 +202,7 @@ impl LibraryDialog {
                 frames.insert(entry.id.clone(), frame);
             }
         }
+        let (facets, entry_facets) = build_facets(library, &entries);
         Self {
             entries,
             query: String::new(),
@@ -91,6 +210,10 @@ impl LibraryDialog {
             density: GridDensity::Comfortable,
             frames,
             ratios,
+            facets,
+            entry_facets,
+            chosen: BTreeMap::new(),
+            active_facet: None,
         }
     }
 
@@ -103,6 +226,17 @@ impl LibraryDialog {
             .entries
             .iter()
             .filter(|entry| needle.is_empty() || entry.name.to_lowercase().contains(&needle))
+            .filter(|entry| {
+                self.chosen.iter().all(|(facet, wanted)| {
+                    if wanted.is_empty() {
+                        return true;
+                    }
+                    self.entry_facets
+                        .get(&entry.id)
+                        .and_then(|values| values.get(facet))
+                        .is_some_and(|values| wanted.iter().any(|id| values.contains(id)))
+                })
+            })
             .collect();
         match self.sort {
             ThemeSort::Name => rows.sort_by(|left, right| {
@@ -203,6 +337,31 @@ fn toolbar(
                 .child(Input::new(state)),
         );
     }
+    for facet in &dialog.facets {
+        let id = facet.id;
+        let active = dialog.active_facet == Some(id);
+        let chosen = dialog.chosen.get(id).is_some_and(|set| !set.is_empty());
+        row = row.child(
+            Button::new(format!("facet-{id}"))
+                .small()
+                .with_variant(if active || chosen {
+                    gpui_kit::component::button::ButtonVariant::Primary
+                } else {
+                    gpui_kit::component::button::ButtonVariant::Ghost
+                })
+                .label(format!("{} ▾", facet.name))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(themes) = &mut this.themes {
+                        themes.active_facet = if themes.active_facet == Some(id) {
+                            None
+                        } else {
+                            Some(id)
+                        };
+                    }
+                    cx.notify();
+                })),
+        );
+    }
     let sorts = [
         (ThemeSort::Name, "Name"),
         (ThemeSort::Updated, "Updated"),
@@ -246,7 +405,43 @@ fn toolbar(
                 })),
         );
     }
-    row
+    let mut root = div().flex().flex_col().gap_2().child(row);
+    if let Some(active) = dialog.active_facet {
+        if let Some(facet) = dialog.facets.iter().find(|facet| facet.id == active) {
+            let mut options = div().flex().flex_wrap().gap_2().px_2();
+            for option in &facet.options {
+                let facet_id = facet.id;
+                let option_id = option.id.clone();
+                let picked = dialog
+                    .chosen
+                    .get(facet_id)
+                    .is_some_and(|set| set.contains(&option_id));
+                options = options.child(
+                    Button::new(format!("facet-{facet_id}-{}", option.id))
+                        .small()
+                        .with_variant(if picked {
+                            gpui_kit::component::button::ButtonVariant::Primary
+                        } else {
+                            gpui_kit::component::button::ButtonVariant::Ghost
+                        })
+                        .label(format!("{}  ·  {}", option.name, option.count))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let Some(themes) = &mut this.themes {
+                                let set = themes.chosen.entry(facet_id).or_default();
+                                if set.contains(&option_id) {
+                                    set.remove(&option_id);
+                                } else {
+                                    set.insert(option_id.clone());
+                                }
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
+            root = root.child(options);
+        }
+    }
+    root
 }
 
 /// A theme's own thumbnail, written by the source when the theme was saved.
@@ -670,6 +865,7 @@ pub fn view(dialog: &LibraryDialog, cx: &mut Context<EditorWindow>) -> impl Into
 #[cfg(test)]
 mod tests {
     use super::{GridDensity, LibraryDialog, ThemeSort};
+    use std::collections::BTreeSet;
     use std::collections::BTreeMap;
     use yunari_library::ThemeEntry;
 
@@ -717,6 +913,33 @@ mod tests {
     }
 
     #[test]
+    fn a_facet_choice_narrows_the_listing() {
+        let mut entry_facets = BTreeMap::new();
+        let mut values = BTreeMap::new();
+        values.insert("author", BTreeSet::from(["Yunari".to_owned()]));
+        entry_facets.insert("a".to_owned(), values);
+        let mut dialog = LibraryDialog {
+            entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
+            query: String::new(),
+            sort: ThemeSort::Name,
+            density: GridDensity::Comfortable,
+            frames: BTreeMap::new(),
+            ratios: BTreeMap::new(),
+            facets: Vec::new(),
+            entry_facets,
+            chosen: BTreeMap::from([(
+                "author",
+                BTreeSet::from(["Yunari".to_owned()]),
+            )]),
+            active_facet: None,
+        };
+        assert_eq!(dialog.sorted().len(), 1);
+        assert_eq!(dialog.sorted()[0].id, "a");
+        dialog.chosen.clear();
+        assert_eq!(dialog.sorted().len(), 2);
+    }
+
+    #[test]
     fn the_search_narrows_the_listing_by_name() {
         let mut dialog = LibraryDialog {
             entries: vec![entry("Zulu", "z", 1), entry("alpha", "a", 3)],
@@ -725,6 +948,10 @@ mod tests {
             density: GridDensity::Comfortable,
             frames: BTreeMap::new(),
             ratios: BTreeMap::new(),
+            facets: Vec::new(),
+            entry_facets: BTreeMap::new(),
+            chosen: BTreeMap::new(),
+            active_facet: None,
         };
         let ids: Vec<_> = dialog.sorted().iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids, ["a"]);
@@ -741,6 +968,10 @@ mod tests {
             density: GridDensity::Comfortable,
             frames: BTreeMap::new(),
             ratios: BTreeMap::new(),
+            facets: Vec::new(),
+            entry_facets: BTreeMap::new(),
+            chosen: BTreeMap::new(),
+            active_facet: None,
         };
         assert_eq!(
             dialog

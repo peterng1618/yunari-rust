@@ -158,6 +158,8 @@ Evidence:
   menu sized to its rows. The seeded list was reverted after the shot.
 - `test-results/parity-shots/editor-port-publish.png` â€” 1280x875, the publish
   surface with four stored displays, the hosting switch and the warning.
+- `test-results/parity-shots/editor-port-library-facets.png` — 1920x1080,
+  the five facet triggers in source order beside search, sort and density.
 - `test-results/parity-shots/editor-port-asset-finder-tabs2.png` — 1280x875,
   the six-tab rail with Icons selected and per-tab empty copy.
 - `test-results/parity-shots/editor-port-library-toolbar.png` — 1920x1080,
@@ -230,8 +232,13 @@ The rest of the port stays on the pinned commitment. Concrete folding so far:
   whose column count is derived from the measured width. Local rows carry no
   catalogue counts, so Created/Downloads/Favorites leave their order alone.
 
+The five facets (Author, Color mode, Sensors, Shape, Style) are read off the
+stored documents and filter the listing. Counts come from the whole listing,
+as in the source. The port derives sensors from semantic-key families and
+shape from the artboard; a catalogue row would carry richer readings.
+
 Still to fold: Local library / Online store halves, type navigation, state
-filter, five facets; collection cards
+filter, collection cards
 and consent; the remaining Settings pages; and the host-reported publish
 address. These are P4, not claims of parity.
 
