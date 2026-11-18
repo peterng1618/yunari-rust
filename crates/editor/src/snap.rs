@@ -20,7 +20,7 @@ pub enum Axis {
 
 /// A line the drag was corrected to, as the source draws it: across the whole
 /// artboard, through the point it captured.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Guide {
     pub axis: Axis,
     pub at: f64,
@@ -28,6 +28,8 @@ pub struct Guide {
     pub to: f64,
     /// Whether this line came from equal spacing rather than an edge or centre.
     pub spacing: bool,
+    /// The interval a spacing guide marks, printed beside it in the source.
+    pub label: Option<String>,
 }
 
 /// Which kind of line won, so a boundary beats an edge and an edge a centre.
@@ -87,6 +89,7 @@ pub fn snap_move(
             from: 0.0,
             to: height,
             spacing: false,
+            label: None,
         });
     }
     let mut y = proposed.1;
@@ -103,6 +106,7 @@ pub fn snap_move(
             from: 0.0,
             to: width,
             spacing: false,
+            label: None,
         });
     }
     if let Some((shift, spacing_guides)) =
@@ -168,8 +172,8 @@ fn equal_spacing(
     Some((
         shift,
         vec![
-            Guide { axis, at: midpoint_before, from, to, spacing: true },
-            Guide { axis, at: midpoint_after, from, to, spacing: true },
+            Guide { axis, at: midpoint_before, from, to, spacing: true, label: Some(format!("{:.0}", gap_before.round())) },
+            Guide { axis, at: midpoint_after, from, to, spacing: true, label: Some(format!("{:.0}", gap_after.round())) },
         ],
     ))
 }

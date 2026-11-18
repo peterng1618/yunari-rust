@@ -1732,6 +1732,7 @@ impl EditorWindow {
         let mut tab = asset_finder::FinderTab::Icons;
         if let Some(Overlay::AssetFinder(dialog)) = &mut self.overlay {
             tab = dialog.tab;
+            dialog.queries.insert(tab, query.clone());
             dialog.busy = true;
             dialog.note = None;
         }
@@ -2180,6 +2181,7 @@ impl EditorWindow {
                             from: 0.0,
                             to: match axis { snap::Axis::X => board.height, snap::Axis::Y => board.width },
                             spacing: true,
+                            label: None,
                         });
                         still_held.push(hold);
                     }
@@ -2253,6 +2255,7 @@ impl EditorWindow {
                             from: 0.0,
                             to: match axis { snap::Axis::X => board.height, snap::Axis::Y => board.width },
                             spacing: true,
+                            label: None,
                         });
                         kept.push((axis, first_id.clone(), second_id.clone(), gap));
                     }
@@ -2487,6 +2490,15 @@ impl EditorWindow {
             return;
         };
         let mut outcome = Ok(());
+        if key == "facet.search" {
+            if let Some(themes) = &mut self.themes
+                && let Some(active) = themes.active_facet
+            {
+                themes.facet_queries.insert(active, value.to_owned());
+            }
+            cx.notify();
+            return;
+        }
         if key == "preview-ratio.new" {
             self.add_preview_ratio(value, cx);
             return;
@@ -2850,6 +2862,11 @@ impl EditorWindow {
                     Button::new(format!("add-{command:?}"))
                         .ghost()
                         .small()
+                        .w(px(104.0))
+                        .min_h(px(36.0))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .rounded_md()
                         .label(command.label())
                         .text_color(foreground)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -3593,6 +3610,7 @@ impl EditorWindow {
                 let ink = if row.visible { foreground } else { muted };
                 div()
                     .id(("layer", index))
+                    .role(Role::TreeItem)
                     .aria_label(format!(
                         "{}, level {}{}",
                         row.name,
@@ -3782,7 +3800,8 @@ impl EditorWindow {
                 MouseButton::Middle,
                 cx.listener(|this, _: &MouseUpEvent, _, _| this.panning = None),
             )
-            .child(
+            .child({
+                let paint_guides = guides.clone();
                 div()
                     .relative()
                     .size_full()
@@ -3820,7 +3839,7 @@ impl EditorWindow {
                                         border_style: BorderStyle::Solid,
                                     });
                                 }
-                                for guide in &guides {
+                                for guide in &paint_guides {
                                     paint_guide(guide, &view, bounds, window);
                                 }
                                 for (handle, (x, y)) in &handles {
@@ -3850,8 +3869,34 @@ impl EditorWindow {
                         )
                         .size_full(),
                     )
-                    .child(self.stage_overlay(cx)),
-            )
+                    .children(guides.iter().filter_map(|guide| {
+                        let label = guide.label.as_ref()?;
+                        let mid = (guide.from + guide.to) / 2.0;
+                        let (left, top) = match guide.axis {
+                            snap::Axis::X => (
+                                view.offset.0 + guide.at as f32 * view.scale,
+                                view.offset.1 + mid as f32 * view.scale,
+                            ),
+                            snap::Axis::Y => (
+                                view.offset.0 + mid as f32 * view.scale,
+                                view.offset.1 + guide.at as f32 * view.scale,
+                            ),
+                        };
+                        Some(
+                            div()
+                                .absolute()
+                                .left(px(left))
+                                .top(px(top))
+                                .px_1()
+                                .rounded_sm()
+                                .bg(cx.theme().popover)
+                                .text_xs()
+                                .text_color(cx.theme().foreground)
+                                .child(label.clone()),
+                        )
+                    }))
+                    .child(self.stage_overlay(cx))
+            })
     }
 
     /// The stage's floating controls: zoom in/out, the present scale, fit,
@@ -4113,17 +4158,37 @@ impl EditorWindow {
         let mut entries: Vec<AnyElement> = Vec::new();
         let row = |entry: CanvasMenuEntry, entries: &mut Vec<AnyElement>| {
             let label = entry.label();
+            let chord = match entry {
+                CanvasMenuEntry::Command(command) => command.shortcut(),
+                _ => "",
+            };
+            let destructive = matches!(entry, CanvasMenuEntry::Command(Command::DeleteSelected));
+            let spoken = if chord.is_empty() {
+                label.to_owned()
+            } else {
+                format!("{label}, {chord}")
+            };
             entries.push(
                 div()
                     .id(format!("canvas-menu-{label}"))
-                    .aria_label(label)
+                    .aria_label(spoken)
                     .px_3()
                     .py_0p5()
                     .text_sm()
-                    .text_color(foreground)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .text_color(if destructive { cx.theme().danger } else { foreground })
                     .cursor_pointer()
                     .hover(|this| this.bg(hover))
                     .child(label)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(chord.to_owned()),
+                    )
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.overlay = None;
                         run_canvas_entry(this, entry, window, cx);
@@ -5494,7 +5559,19 @@ fn text_node(document: &ThemeDocument) -> Node {
 /// A line of the snap, dashed 4 on and 4 off so it reads as a guide.
 fn paint_guide(guide: &snap::Guide, view: &Viewport, bounds: Bounds<Pixels>, window: &mut Window) {
     const DASH: f32 = 4.0;
-    let (from, to) = (guide.from as f32 * view.scale, guide.to as f32 * view.scale);
+    // The source runs a guide across the visible canvas, not only the
+    // artboard. Convert the viewport's own edges into scene coordinates.
+    let (from, to) = match guide.axis {
+        snap::Axis::X => (
+            -view.offset.0 / view.scale,
+            (f32::from(bounds.size.width) - view.offset.0) / view.scale,
+        ),
+        snap::Axis::Y => (
+            -view.offset.1 / view.scale,
+            (f32::from(bounds.size.height) - view.offset.1) / view.scale,
+        ),
+    };
+    let (from, to) = (from * view.scale, to * view.scale);
     let at = guide.at as f32 * view.scale;
     let mut walked = from;
     while walked < to {

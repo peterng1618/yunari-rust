@@ -6,7 +6,7 @@
 //! A stock search runs off the UI thread: a slow catalogue must not freeze the
 //! window it is answering into.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use gpui_kit::component::scroll::ScrollableElement;
@@ -47,7 +47,7 @@ pub struct Choice {
 }
 
 /// The source's finder rail, in its declared order. Icons is the opening tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FinderTab {
     Colors,
     Fonts,
@@ -84,6 +84,8 @@ pub struct AssetFinder {
     /// The row the footer acts on. A click selects first; the action is a
     /// separate press, as in the source.
     pub selected: Option<Choice>,
+    // Each tab keeps its own question, as the source tab views do.
+    pub queries: BTreeMap<FinderTab, String>,
     pub disabled: BTreeSet<String>,
     pub choices: Vec<Choice>,
     /// Rows a stock search returned. Replaced by each answer, so a stale page
@@ -178,6 +180,7 @@ impl AssetFinder {
         Self {
             tab: FinderTab::Icons,
             selected: None,
+            queries: BTreeMap::new(),
             disabled: BTreeSet::new(),
             choices,
             remote: Vec::new(),
@@ -338,6 +341,17 @@ pub fn search_for(
             Vec::new(),
             Some("Videos come from this PC's Videos folder.".to_owned()),
         ),
+    }
+}
+
+fn placeholder(tab: FinderTab) -> &'static str {
+    match tab {
+        FinderTab::Colors => "Search colors…",
+        FinderTab::Fonts => "Search fonts…",
+        FinderTab::Icons => "Search icons…",
+        FinderTab::Images => "Search photos…",
+        FinderTab::Videos => "Search videos…",
+        FinderTab::WallpaperEngine => "Search the Host…",
     }
 }
 
@@ -535,11 +549,12 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
                 }))
         })
         .collect();
-    let search_text = if dialog.query.value.is_empty() {
-        dialog.query.hint.clone()
-    } else {
-        dialog.query.value.clone()
-    };
+    let search_text = dialog
+        .queries
+        .get(&dialog.tab)
+        .filter(|query| !query.is_empty())
+        .cloned()
+        .unwrap_or_else(|| placeholder(dialog.tab).to_owned());
     let unported: Option<String> = match dialog.tab {
         FinderTab::Videos => None,
         FinderTab::Icons

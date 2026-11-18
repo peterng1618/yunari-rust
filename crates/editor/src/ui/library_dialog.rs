@@ -170,6 +170,7 @@ pub struct LibraryDialog {
     pub entry_facets: BTreeMap<String, BTreeMap<&'static str, BTreeSet<String>>>,
     pub chosen: BTreeMap<&'static str, BTreeSet<String>>,
     pub active_facet: Option<&'static str>,
+    pub facet_queries: BTreeMap<&'static str, String>,
 }
 
 /// Adds one reading to a facet's option counts.
@@ -295,6 +296,7 @@ impl LibraryDialog {
             entry_facets,
             chosen: BTreeMap::new(),
             active_facet: None,
+            facet_queries: BTreeMap::new(),
         }
     }
 
@@ -696,7 +698,33 @@ fn toolbar(
     if let Some(active) = dialog.active_facet {
         if let Some(facet) = dialog.facets.iter().find(|facet| facet.id == active) {
             let mut options = div().flex().flex_wrap().gap_2().px_2();
+            let needle = dialog
+                .facet_queries
+                .get(active)
+                .map(String::as_str)
+                .unwrap_or_default()
+                .to_lowercase();
+            options = options.child(
+                Button::new("facet-search")
+                    .small()
+                    .label(if needle.is_empty() {
+                        "Search this facet…".to_owned()
+                    } else {
+                        format!("Search: {needle}")
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.begin_field(
+                            "facet.search",
+                            "facet value",
+                            "",
+                            cx,
+                        )
+                    })),
+            );
             for option in &facet.options {
+                if !needle.is_empty() && !option.name.to_lowercase().contains(&needle) {
+                    continue;
+                }
                 let facet_id = facet.id;
                 let option_id = option.id.clone();
                 let picked = dialog
@@ -1218,6 +1246,7 @@ mod tests {
             entry_facets: BTreeMap::new(),
             chosen: BTreeMap::new(),
             active_facet: None,
+            facet_queries: BTreeMap::new(),
         };
         assert!(dialog.sorted().is_empty());
         dialog.state = LibraryState::OnThisPc;
@@ -1264,6 +1293,7 @@ mod tests {
                 BTreeSet::from(["Yunari".to_owned()]),
             )]),
             active_facet: None,
+            facet_queries: BTreeMap::new(),
         };
         assert_eq!(dialog.sorted().len(), 1);
         assert_eq!(dialog.sorted()[0].id, "a");
@@ -1286,6 +1316,7 @@ mod tests {
             entry_facets: BTreeMap::new(),
             chosen: BTreeMap::new(),
             active_facet: None,
+            facet_queries: BTreeMap::new(),
         };
         let ids: Vec<_> = dialog.sorted().iter().map(|row| row.id.as_str()).collect();
         assert_eq!(ids, ["a"]);
@@ -1308,6 +1339,7 @@ mod tests {
             entry_facets: BTreeMap::new(),
             chosen: BTreeMap::new(),
             active_facet: None,
+            facet_queries: BTreeMap::new(),
         };
         assert_eq!(
             dialog

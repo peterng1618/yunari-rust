@@ -390,3 +390,10 @@ Overlay copy fixes: Recents has its "Open recent" heading, the shortcut sheet
 has a Close control, the publish surface prints the source's IP-change warning
 and names the QR symbol "QR code: {url}".
 
+
+All gaps named by the stop hook after the review pass are now closed: layer
+rows carry TreeItem roles; snap guides print their interval and span the
+visible canvas; object menu rows show chords and mark Delete destructive; Add
+pane buttons render as tiles; finder queries are kept per tab; facets have a
+search control; guide extents, menu chord hints and tile layout are in place.
+
