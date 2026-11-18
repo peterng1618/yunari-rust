@@ -359,7 +359,11 @@ fn search_sources(
                     });
                 }
             }
-            Err(message) => notes.push(format!("{}: {message}", stock.label)),
+            Err(message) => notes.push(if message.contains("access key") {
+                "Add the key this tab needs in Connections, then search again.".to_owned()
+            } else {
+                format!("{}: {message}", stock.label)
+            }),
         }
     }
     (choices, (!notes.is_empty()).then(|| notes.join("\n")))
@@ -551,9 +555,7 @@ pub fn view(dialog: &AssetFinder, cx: &mut Context<EditorWindow>) -> impl IntoEl
     };
     let status = if dialog.busy {
         "Searching…".to_owned()
-    } else if let (Some(note), FinderTab::Images | FinderTab::WallpaperEngine) =
-        (&dialog.note, dialog.tab)
-    {
+    } else if let Some(note) = &dialog.note {
         note.clone()
     } else if dialog.searched {
         format!("{} stock rows", dialog.remote.len())
