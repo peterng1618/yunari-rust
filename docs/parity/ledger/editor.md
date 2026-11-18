@@ -222,7 +222,10 @@ pinned `1241866e5`) found:
   port's versions of those are extra surfaces; widget insert lives in the
   source's library detail, type authoring in the Tokens pane, path presets in
   Settings, and MCP in a separate server.
-- Store is a half of Library, not its own mode.
+- Store is not its own mode: the shell's Store command now opens the Library
+  at My submissions, and the port's old standalone store dialog and its
+  install/sign-in paths are gone. Catalogue install and collection consent are
+  still unported.
 
 These are P4 gaps, not claims of parity.
 
