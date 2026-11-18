@@ -311,6 +311,18 @@ fn is_semver_string(value: &str) -> bool {
 }
 
 fn validate_globals_and_scene(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
+    // A document with no globals at all is a legacy major-1 in-memory fixture,
+    // not a schema-3 theme. The bag rules apply once globals are present, but
+    // only to native themes: a source-lifted document keeps a partial `globals`
+    // bag beside its legacy view, and editor migration owns that path.
+    let has_globals =
+        !document.globals.palette.is_empty() || !document.globals.type_tokens.is_empty();
+    let has_legacy_view = !document.nodes.is_empty()
+        || !document.palette.is_empty()
+        || !document.type_tokens.is_empty();
+    if has_globals && !has_legacy_view {
+        validate_globals(document, issues);
+    }
     if document
         .scene
         .version
@@ -327,9 +339,57 @@ fn validate_globals_and_scene(document: &ThemeDocument, issues: &mut Vec<Validat
     }
 }
 
+fn validate_globals(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
+    // `$defs.paletteGroup` requires `none`, the transparent token that fills
+    // an unpainted surface. Its name and paint are pinned by the schema too.
+    match document.globals.palette.get("none") {
+        None => issues.push(issue(
+            "globals/palette/none",
+            "A palette declares the transparent token `none`.",
+        )),
+        Some(entry) => {
+            if entry.name != "None" {
+                issues.push(issue(
+                    "globals/palette/none/name",
+                    "The transparent token is named `None`.",
+                ));
+            }
+            if entry.value
+                != (Paint::Solid {
+                    color: "transparent".to_owned(),
+                })
+            {
+                issues.push(issue(
+                    "globals/palette/none/value",
+                    "The `none` token paints transparent.",
+                ));
+            }
+        }
+    }
+    // `$defs.typeTokenGroup` cannot state this without making every token one
+    // of the three roles; the schema leaves it as a runtime validator rule.
+    for role in ["heading", "body", "mono"] {
+        if !document.globals.type_tokens.contains_key(role) {
+            issues.push(issue(
+                format!("globals/typeTokens/{role}"),
+                "The three role tokens heading, body and mono must exist.",
+            ));
+        }
+    }
+}
+
 fn validate_fabric_object(object: &FabricObject, path: &str, issues: &mut Vec<ValidationIssue>) {
     for child in &object.children {
         validate_fabric_object(child, &format!("{path}/objects"), issues);
+    }
+    // `$defs.objectName`: a display name, when present, is 1..120 characters.
+    if let Some(name) = &object.name
+        && (name.is_empty() || name.chars().count() > 120)
+    {
+        issues.push(issue(
+            format!("{path}/{}/name", object.id),
+            "A Fabric object name is from 1 to 120 characters.",
+        ));
     }
     let Some(glass) = &object.yunari_glass else {
         return;
@@ -1006,6 +1066,24 @@ mod tests {
     #[test]
     fn accepts_minimal_document() {
         assert!(validate_document(&minimal()).is_ok());
+    }
+
+    /// A source-lifted document keeps a partial `globals` bag alongside its
+    /// legacy top-level view. Schema-3 globals rules belong to native themes;
+    /// applying them here rejects an editor-saved theme on reopen.
+    #[test]
+    fn a_source_lifted_document_keeps_its_partial_globals_unchecked() {
+        let mut document = minimal();
+        let entry = PaletteEntry {
+            name: "Backdrop".into(),
+            value: Paint::Solid {
+                color: "#0c0e13".into(),
+            },
+        };
+        document.globals.palette.insert("bg".into(), entry.clone());
+        document.palette.insert("bg".into(), entry);
+        document.nodes.push(group("plate", vec![]));
+        assert_eq!(validate_document(&document), Ok(()));
     }
 
     #[test]

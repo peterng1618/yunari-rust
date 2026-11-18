@@ -27,8 +27,9 @@ pub struct Globals {
 pub struct FabricScene {
     /// The schema requires a `scene` with a version. Legacy source envelopes
     /// and packages may omit it (or write `null`); absence is kept as `None`
-    /// rather than dropping the rest of the scene.
-    #[serde(default)]
+    /// rather than dropping the rest of the scene. `None` is omitted on write:
+    /// the schema's `version` property is a string, never null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
     pub objects: Vec<FabricObject>,
@@ -44,11 +45,17 @@ pub struct FabricScene {
 pub struct FabricObject {
     #[serde(default)]
     pub id: String,
-    #[serde(default)]
+    /// Every optional Fabric field is omitted, not nulled, on write: the
+    /// schema types these properties as string/object and refuses null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, rename = "type")]
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
     pub object_type: Option<String>,
-    #[serde(default, rename = "yunariGlass")]
+    #[serde(
+        default,
+        rename = "yunariGlass",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub yunari_glass: Option<GlassTreatment>,
     #[serde(default, rename = "objects")]
     pub children: Vec<FabricObject>,
@@ -104,24 +111,24 @@ pub struct PaletteEntry {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Metadata {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// The language this theme's text is written in, as a BCP 47 tag.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme_language: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remix_of: Option<Remix>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
 }
 
@@ -165,9 +172,9 @@ pub enum ArtboardShape {
 pub struct Background {
     #[serde(default)]
     pub mode: BackgroundMode,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<StyleValue>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<BackgroundMedia>,
 }
 
@@ -183,7 +190,7 @@ pub enum BackgroundMode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackgroundMedia {
     pub asset_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<StyleValue>,
     /// The box the media is clipped to. Required: a picture with no box has no
     /// placement, and the format refuses it rather than guessing one.
@@ -198,9 +205,9 @@ pub struct BackgroundMedia {
     pub flip_x: bool,
     #[serde(default)]
     pub flip_y: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_frame: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub composition: Option<BackgroundComposition>,
 }
 
@@ -221,9 +228,9 @@ pub enum BackgroundBounds {
 pub struct BackgroundComposition {
     #[serde(default)]
     pub anchor: BackgroundAnchor,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extent: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fade: Option<f64>,
 }
 
@@ -286,9 +293,9 @@ pub struct GradientStop {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TypeToken {
     pub family: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight: Option<TypeWeight>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face: Option<Face>,
 }
 
@@ -313,24 +320,24 @@ pub struct AssetReference {
     pub id: String,
     pub kind: AssetKind,
     pub path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<AssetLicense>,
     // A font asset declares the face it registers, so a run reaches it by
     // family and weight without trusting the file name. Refused on any other
     // kind, and required on a font.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight: Option<TypeWeight>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<FontStyle>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<FontFormat>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<String>,
 }
 
@@ -376,11 +383,11 @@ pub enum AssetKind {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssetLicense {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<String>,
 }
 
@@ -388,7 +395,7 @@ pub struct AssetLicense {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Node {
     pub id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub kind: NodeKind,
     #[serde(default)]
@@ -400,7 +407,7 @@ pub struct Node {
     #[serde(default)]
     pub style: StyleMap,
     /// A frosted backdrop: the panel samples what is painted beneath it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glass: Option<GlassTreatment>,
     #[serde(default)]
     pub children: Vec<Node>,
@@ -412,7 +419,7 @@ pub struct Node {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlassTreatment {
     pub blur_radius: f64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampling: Option<GlassSampling>,
 }
 
@@ -507,7 +514,7 @@ pub enum NodeKind {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TextContent {
     pub runs: Vec<TextRun>,
-    #[serde(default, rename = "box")]
+    #[serde(default, rename = "box", skip_serializing_if = "Option::is_none")]
     pub box_: Option<TextBox>,
     #[serde(default)]
     pub overflow: TextOverflow,
@@ -568,9 +575,9 @@ pub enum TextRun {
     },
     Value {
         binding_id: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         precision: Option<u8>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         unit_display: Option<UnitDisplay>,
         type_token: String,
         #[serde(default)]
@@ -583,21 +590,21 @@ pub enum TextRun {
 pub struct Binding {
     pub id: String,
     pub semantic_key: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision: Option<u8>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_display: Option<UnitDisplay>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_scale: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_zone: Option<String>,
 }
 
@@ -640,7 +647,7 @@ pub struct ImageContent {
     pub asset_id: String,
     #[serde(default)]
     pub fit: ImageFit,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monochrome: Option<StyleValue>,
 }
 
@@ -788,6 +795,18 @@ pub fn parse_document(json: &str) -> Result<ThemeDocument, DocumentError> {
         });
     }
     let raw: serde_json::Value = serde_json::from_str(json)?;
+    // `$defs.fabricScene` requires `objects`. The typed field defaults to an
+    // empty array so legacy envelopes still parse, but a document that
+    // declares a scene must declare its object list too.
+    if let Some(scene) = raw.get("scene")
+        && scene.is_object()
+        && scene.get("objects").is_none()
+    {
+        issues.push(ValidationIssue {
+            path: "scene/objects".into(),
+            message: "A scene declares its objects, even when the list is empty.".into(),
+        });
+    }
     for (index, node) in raw
         .get("nodes")
         .and_then(|nodes| nodes.as_array())

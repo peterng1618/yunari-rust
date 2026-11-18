@@ -80,7 +80,9 @@ const POPULATED_SCHEMA3: &str = r##"{
             "text": { "name": "Text", "value": { "kind": "solid", "color": "#ecf5ff" } }
         },
         "typeTokens": {
-            "body": { "family": "Segoe UI", "weight": 400 }
+            "heading": { "family": "Segoe UI", "weight": 600 },
+            "body": { "family": "Segoe UI", "weight": 400 },
+            "mono": { "family": "Consolas", "weight": 400 }
         }
     },
     "scene": {
@@ -190,4 +192,87 @@ fn parses_a_real_installed_theme() {
         doc.nodes.is_empty(),
         "real Fabric objects are not folded into major-1 nodes"
     );
+}
+
+/// Validates written output against the authoritative schema. Both paths come
+/// from the environment so the suite stays offline and this crate never keeps
+/// a second copy of the schema.
+#[test]
+fn written_real_theme_satisfies_the_authoritative_schema() {
+    let (Ok(theme_path), Ok(schema_path)) = (
+        std::env::var("YUNARI_TEST_THEME"),
+        std::env::var("YUNARI_TEST_SCHEMA"),
+    ) else {
+        eprintln!(
+            "SKIP: YUNARI_TEST_THEME and YUNARI_TEST_SCHEMA are both required for schema validation"
+        );
+        return;
+    };
+    let json = std::fs::read_to_string(&theme_path)
+        .unwrap_or_else(|error| panic!("could not read {theme_path}: {error}"));
+    let schema = std::fs::read_to_string(&schema_path)
+        .unwrap_or_else(|error| panic!("could not read {schema_path}: {error}"));
+    let document = parse_document(&json).expect("real theme parses");
+    let written = write_document(&document).expect("real theme writes");
+    let instance: serde_json::Value = serde_json::from_str(&written).expect("written JSON");
+    let schema: serde_json::Value = serde_json::from_str(&schema).expect("schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("valid schema");
+    let errors: Vec<String> = validator
+        .iter_errors(&instance)
+        .map(|error| format!("{}: {}", error.instance_path, error))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "written theme violates the authoritative schema ({} errors):\n{}",
+        errors.len(),
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn refuses_a_theme_missing_the_transparent_token_or_a_role_token() {
+    let no_none = POPULATED_SCHEMA3.replace(
+        "\"none\": { \"name\": \"None\", \"value\": { \"kind\": \"solid\", \"color\": \"transparent\" } },",
+        "",
+    );
+    let DocumentError::Invalid(issues) =
+        parse_document(&no_none).expect_err("the none token is required")
+    else {
+        panic!("expected validation issues");
+    };
+    assert!(issues.iter().any(|i| i.path == "globals/palette/none"));
+
+    let no_mono = POPULATED_SCHEMA3.replace(
+        ",\n            \"mono\": { \"family\": \"Consolas\", \"weight\": 400 }",
+        "",
+    );
+    let error = parse_document(&no_mono).expect_err("all three role tokens are required");
+    assert!(error.to_string().contains("globals/typeTokens/mono"));
+}
+
+#[test]
+fn refuses_a_scene_without_an_objects_list() {
+    let no_objects = POPULATED_SCHEMA3.replace(
+        "\"objects\": [\n            { \"type\": \"Rect\", \"id\": \"rule\", \"left\": 0, \"top\": 0, \"width\": 10, \"height\": 10 },\n            { \"type\": \"Group\", \"id\": \"group\", \"objects\": [\n                { \"type\": \"Circle\", \"id\": \"dot\", \"left\": 2, \"top\": 2 }\n            ] }\n        ]",
+        "\"objects\": []",
+    );
+    // An empty objects list is valid; a missing key is not.
+    parse_document(&no_objects).expect("empty objects list parses");
+    let missing = POPULATED_SCHEMA3.replace("\"objects\": [", "\"unused\": [");
+    let DocumentError::Invalid(issues) =
+        parse_document(&missing).expect_err("a scene must declare objects")
+    else {
+        panic!("expected validation issues");
+    };
+    assert!(issues.iter().any(|i| i.path == "scene/objects"));
+}
+
+#[test]
+fn refuses_a_fabric_object_name_over_120_characters() {
+    let long_name = "x".repeat(121);
+    let json = POPULATED_SCHEMA3.replace(
+        "\"type\": \"Rect\", \"id\": \"rule\"",
+        &format!("\"type\": \"Rect\", \"id\": \"rule\", \"name\": \"{long_name}\""),
+    );
+    parse_document(&json).expect_err("a Fabric object name is at most 120 characters");
 }
