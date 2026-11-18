@@ -1710,7 +1710,9 @@ impl EditorWindow {
     /// freeze the window, and the answer lands in the finder only if it is
     /// still open.
     fn search_stock_assets(&mut self, query: String, cx: &mut Context<Self>) {
+        let mut tab = asset_finder::FinderTab::Icons;
         if let Some(Overlay::AssetFinder(dialog)) = &mut self.overlay {
+            tab = dialog.tab;
             dialog.busy = true;
             dialog.note = None;
         }
@@ -1721,7 +1723,9 @@ impl EditorWindow {
         cx.spawn(async move |this, cx| {
             let (rows, note) = cx
                 .background_executor()
-                .spawn(async move { asset_finder::search_pictures(&query, credential.as_deref()) })
+                .spawn(async move {
+                    asset_finder::search_for(tab, &query, credential.as_deref())
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if let Some(Overlay::AssetFinder(dialog)) = &mut this.overlay {

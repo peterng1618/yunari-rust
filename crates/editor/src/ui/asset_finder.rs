@@ -230,9 +230,40 @@ fn local_pictures() -> Vec<PathBuf> {
 /// Asks every picture source. One source that cannot answer is a sentence
 /// beside the others' rows, never an empty finder.
 pub fn search_pictures(query: &str, credential: Option<&str>) -> (Vec<Choice>, Option<String>) {
+    search_sources(query, credential, &PICTURE_SOURCES)
+}
+
+/// The sources a tab may ask. Icons and images share one host search, but the
+/// finder keeps each tab's answer to itself so switching back restores its
+/// rows. Wallpaper Engine's local library has no remote search here.
+pub fn search_for(
+    tab: FinderTab,
+    query: &str,
+    credential: Option<&str>,
+) -> (Vec<Choice>, Option<String>) {
+    match tab {
+        FinderTab::Icons => search_sources(
+            query,
+            credential,
+            &["lucide", "lineicons", "fontawesome-free"],
+        ),
+        FinderTab::Images => search_sources(query, credential, &["unsplash"]),
+        FinderTab::WallpaperEngine => (
+            Vec::new(),
+            Some("Wallpaper Engine searches this PC's library, not a remote source.".to_owned()),
+        ),
+        _ => (Vec::new(), None),
+    }
+}
+
+fn search_sources(
+    query: &str,
+    credential: Option<&str>,
+    sources: &[&str],
+) -> (Vec<Choice>, Option<String>) {
     let mut choices = Vec::new();
     let mut notes = Vec::new();
-    for id in PICTURE_SOURCES {
+    for id in sources {
         let Some(stock) = yunari_host::assets::stock(id) else {
             continue;
         };
