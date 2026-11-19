@@ -7,6 +7,7 @@ pub mod background;
 pub mod chart;
 mod color;
 mod display_list;
+pub mod fabric;
 mod format;
 pub mod history;
 pub mod icons;

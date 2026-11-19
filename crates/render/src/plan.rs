@@ -6,8 +6,8 @@
 //! with a reason, never a guess.
 
 use yunari_model::document::{
-    ChartFamily, Node, NodeKind, StyleMap, StyleValue, TextAlign, TextContent, TextOverflow,
-    TextRun, ThemeDocument, TypeWeight, VerticalAlign,
+    ChartFamily, Node, NodeKind, StyleLiteral, StyleMap, StyleValue, TextAlign, TextContent,
+    TextOverflow, TextRun, ThemeDocument, TypeWeight, VerticalAlign,
 };
 
 use crate::affine::Affine;
@@ -51,7 +51,7 @@ pub enum IssueCode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum PaintSpec {
+pub(crate) enum PaintSpec {
     Solid(Color),
     Gradient {
         angle: f32,
@@ -102,8 +102,7 @@ pub fn build_with_history(
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
-    let background = resolve_background(document, width, height, &mut issues);
-    let backdrop = resolve_backdrop(document, &mut issues);
+    let (background, backdrop) = page_surface(document, width, height, &mut issues);
     let mut list = DisplayList {
         width,
         height,
@@ -127,6 +126,20 @@ pub fn build_with_history(
         );
     }
     (list, issues)
+}
+
+/// The page's fill and picture, shared by the node and Fabric planners so a
+/// background resolves the same way whichever authored scene owns the ops.
+pub(crate) fn page_surface(
+    document: &ThemeDocument,
+    width: f32,
+    height: f32,
+    issues: &mut Vec<PlanIssue>,
+) -> (Option<Paint>, Option<crate::Backdrop>) {
+    (
+        resolve_background(document, width, height, issues),
+        resolve_backdrop(document, issues),
+    )
 }
 
 /// The page's picture, when the theme declares one. A simple background keeps
@@ -679,7 +692,7 @@ fn weight_of(weight: Option<&TypeWeight>) -> u16 {
 /// A gradient's axis across its own box, in the canvas's y-down space, where
 /// the stored angle is `90 - cssDegrees`: 0 runs left to right and 90 runs
 /// bottom to top.
-fn place_paint(spec: PaintSpec, width: f32, height: f32, opacity: f32) -> Paint {
+pub(crate) fn place_paint(spec: PaintSpec, width: f32, height: f32, opacity: f32) -> Paint {
     match spec {
         PaintSpec::Solid(color) => Paint::Solid(scale_alpha(color, opacity)),
         PaintSpec::Gradient { angle, stops } => {
@@ -803,6 +816,59 @@ fn resolve_paint(
             }
         }
     }
+}
+
+/// Resolve a Fabric object's paint: a CSS colour string, or a `palette.id`
+/// reference into the document's global tokens. One resolver for both planners.
+pub(crate) fn resolve_object_paint(
+    document: &ThemeDocument,
+    text: &str,
+    node_id: Option<&str>,
+    path: &str,
+    issues: &mut Vec<PlanIssue>,
+) -> Option<PaintSpec> {
+    // Schema-3 documents own their tokens in `globals`; the legacy `palette`
+    // bag is the fallback the model's resolver already defines.
+    if let Some(yunari_model::validate::StyleRefTarget::Palette(paint)) =
+        yunari_model::validate::resolve_style_ref(document, text)
+    {
+        return match paint {
+            yunari_model::document::Paint::Solid { color } => {
+                parse_paint_string(color, node_id, path, issues)
+            }
+            yunari_model::document::Paint::Gradient { angle, stops } => {
+                let stops = stops
+                    .iter()
+                    .filter_map(|stop| {
+                        let PaintSpec::Solid(color) =
+                            parse_paint_string(&stop.color, node_id, path, issues)?
+                        else {
+                            return None;
+                        };
+                        Some(GradientStop {
+                            offset: stop.offset as f32,
+                            color,
+                        })
+                    })
+                    .collect();
+                Some(PaintSpec::Gradient {
+                    angle: *angle as f32,
+                    stops,
+                })
+            }
+        };
+    } else if text.starts_with("palette.") {
+        issues.push(PlanIssue {
+            code: IssueCode::UnresolvedGlobal,
+            node_id: node_id.map(ToOwned::to_owned),
+            detail: format!("{text} is not declared."),
+        });
+        return None;
+    }
+    let value = StyleValue::Literal(StyleLiteral {
+        value: serde_json::Value::String(text.to_owned()),
+    });
+    resolve_paint(document, &value, node_id, path, issues)
 }
 
 fn parse_paint_string(
