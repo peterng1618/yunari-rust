@@ -15,10 +15,10 @@ use std::time::Instant;
 
 use base64::Engine as _;
 use serde_json::{json, Map, Value};
-use yunari_model::document::{Binding, ThemeDocument};
+use yunari_model::document::ThemeDocument;
 use yunari_providers::sample::{Reading, Status};
 use yunari_providers::units::UnitPreferences;
-use yunari_render::{Fonts, IssueCode, PlanIssue, Readings};
+use yunari_render::{DisplayList, Fonts, IssueCode, PlanIssue, Readings, Shape};
 
 use crate::{fit_raster_into, render_with_charts, ChartSamples, Images};
 
@@ -231,10 +231,10 @@ fn frame(
         list.backdrop = None;
     }
 
-    // Charts read the same binding scale/offset as text. `fabric::build` applies
-    // it to value runs itself; the samples handed to the chart backend need the
-    // same transform, from the one binding owner, or a chart shows raw units.
-    let samples_by_key = transform_samples(&session.document, &readings, &series);
+    // Charts read the same binding scale/offset as text. `fabric::build`
+    // applies it to value runs itself; the chart backend must see its own
+    // object's transform, not the first binding that shares a semantic key.
+    let samples_by_key = transform_samples(&session.document, &mut list, &readings, &series);
     let samples = ChartSamples {
         readings: &samples_by_key.0,
         series: &samples_by_key.1,
@@ -394,46 +394,53 @@ fn parse_frame(
     Ok((by_key, Readings::new(wire), series, issues))
 }
 
-/// Apply a binding's authored scale/offset to a raw figure, the one rule text
-/// and chart marks share. `fabric::build` does this for value runs; this helper
-/// does the same for the samples the chart backend consumes.
+/// Apply each chart object's own binding transform to the samples the chart
+/// backend consumes. `fabric::build` already transforms text value runs using
+/// the binding owned by each run's object; a global lookup by semantic key
+/// would give every chart the first owner's scale/offset and disagree with the
+/// text on the same key. The chart op carries its object id, so its bindings
+/// are looked up under that id and its sample keys are made unique per owner.
 fn transform_samples(
     document: &ThemeDocument,
+    list: &mut DisplayList,
     readings: &ReadingsById,
     series: &SeriesById,
 ) -> (ReadingsById, SeriesById) {
-    let scale_of = |key: &str| -> Option<&Binding> {
-        document
-            .bindings
-            .values()
-            .flatten()
-            .find(|binding| binding.semantic_key == key)
-    };
-    let transform = |key: &str, value: f64| -> f64 {
-        match scale_of(key) {
-            Some(binding) => {
-                value * binding.scale.unwrap_or(1.0) + binding.offset.unwrap_or(0.0)
-            }
-            None => value,
-        }
-    };
+    let mut scaled_readings: ReadingsById = HashMap::new();
+    let mut scaled_series: SeriesById = HashMap::new();
 
-    let scaled_readings: ReadingsById = readings
-        .iter()
-        .map(|(key, value)| (key.clone(), value.map(|value| transform(key, value))))
-        .collect();
-    let scaled_series: SeriesById = series
-        .iter()
-        .map(|(key, values)| {
-            (
-                key.clone(),
-                values
-                    .iter()
-                    .map(|(at, value)| (*at, transform(key, *value)))
-                    .collect(),
-            )
-        })
-        .collect();
+    for op in &mut list.ops {
+        let Shape::Chart { id, bindings, .. } = &mut op.shape else {
+            continue;
+        };
+        let owners = document.bindings.get(id);
+        for key in bindings.iter_mut() {
+            let binding = owners
+                .and_then(|bindings| bindings.iter().find(|binding| binding.semantic_key == *key));
+            let (scale, offset) = binding
+                .map(|binding| (binding.scale.unwrap_or(1.0), binding.offset.unwrap_or(0.0)))
+                .unwrap_or((1.0, 0.0));
+            let transform = |value: f64| value * scale + offset;
+            // A key unique to this owner lets two charts on the same semantic
+            // key carry different transforms without one overwriting the other.
+            let unique = format!("{id}\u{0}{key}");
+            if let Some(value) = readings.get(key).copied().flatten() {
+                scaled_readings.insert(unique.clone(), Some(transform(value)));
+            } else {
+                scaled_readings.insert(unique.clone(), None);
+            }
+            if let Some(values) = series.get(key) {
+                scaled_series.insert(
+                    unique.clone(),
+                    values
+                        .iter()
+                        .map(|(at, value)| (*at, transform(*value)))
+                        .collect(),
+                );
+            }
+            *key = unique;
+        }
+    }
     (scaled_readings, scaled_series)
 }
 

@@ -59,6 +59,45 @@ const SCALED_THEME: &str = r##"{
   }
 }"##;
 
+/// Two gauges share `cpu.load` but own different transforms: `left` uses
+/// scale:1,offset:0 and `right` uses scale:2,offset:1. Each chart must use its
+/// own object's binding, not the first one found for the key.
+const CONFLICTING_THEME: &str = r##"{
+  "schemaVersion":"3.0.0",
+  "id":"conflict",
+  "artboard":{"width":120,"height":40},
+  "scene":{"version":"7.4.0","objects":[
+    {"id":"left","type":"YunariChart","family":"gauge",
+     "settings":{"track":{"kind":"solid","color":"#223047"},
+                 "progress":{"kind":"solid","color":"#00b8d9"}},
+     "left":0,"top":0,"width":40,"height":40,"originX":"left","originY":"top"},
+    {"id":"right","type":"YunariChart","family":"gauge",
+     "settings":{"track":{"kind":"solid","color":"#223047"},
+                 "progress":{"kind":"solid","color":"#ff0000"}},
+     "left":60,"top":0,"width":40,"height":40,"originX":"left","originY":"top"}
+  ]},
+  "bindings":{
+    "left":[{"id":"a","semanticKey":"cpu.load"}],
+    "right":[{"id":"a","semanticKey":"cpu.load","scale":2,"offset":1}]
+  }
+}"##;
+
+/// One gauge at a known transform and colour, used as the reference half of
+/// the conflicting theme. `id`, `left`, `scale`/`offset` and `colour` are the
+/// only differences.
+fn single_gauge_theme(id: &str, scale_offset: &str, color: &str, left: u32) -> String {
+    format!(
+        r##"{{"schemaVersion":"3.0.0","id":"conflict","artboard":{{"width":120,"height":40}},
+          "scene":{{"version":"7.4.0","objects":[
+            {{"id":"{id}","type":"YunariChart","family":"gauge",
+             "settings":{{"track":{{"kind":"solid","color":"#223047"}},
+                         "progress":{{"kind":"solid","color":"{color}"}}}},
+             "left":{left},"top":0,"width":40,"height":40,
+             "originX":"left","originY":"top"}}]}},
+          "bindings":{{"{id}":[{{"id":"a","semanticKey":"cpu.load"{scale_offset}}}]}}}}"##
+    )
+}
+
 fn open(id: &str, theme: &str, format: &str) -> String {
     serde_json::json!({
         "type": "open",
@@ -489,4 +528,81 @@ fn asset_paths_cannot_escape_the_theme_dir() {
         "the refusal names the reason: {response}"
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn charts_with_the_same_key_use_their_own_binding_transform() {
+    // Raw 10: the left gauge (no transform) shows 10/100; the right gauge
+    // (scale:2, offset:1) shows 21/100. First-match-wins would paint both as 10.
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open_with_geometry("d", CONFLICTING_THEME, "png", 120, 40)).unwrap(),
+    );
+    let both = reply(
+        &mut state,
+        serde_json::json!({
+            "type":"frame","id":"d",
+            "readings":[{"semantic_key":"cpu.load","value":10.0,"status":"ok"}],
+            "series":{}
+        }),
+    );
+    let both_pixels = image::load_from_memory_with_format(&bytes(&both), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8()
+        .as_raw()
+        .to_vec();
+
+    let reference = |theme: &str| -> Vec<u8> {
+        let mut state = Sessions::new();
+        reply(
+            &mut state,
+            serde_json::from_str(&open_with_geometry("r", theme, "png", 120, 40)).unwrap(),
+        );
+        let response = reply(
+            &mut state,
+            serde_json::json!({
+                "type":"frame","id":"r",
+                "readings":[{"semantic_key":"cpu.load","value":10.0,"status":"ok"}],
+                "series":{}
+            }),
+        );
+        image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+            .expect("a PNG frame")
+            .to_rgba8()
+            .as_raw()
+            .to_vec()
+    };
+
+    let left = reference(&single_gauge_theme("left", "", "#00b8d9", 0));
+    let right = reference(&single_gauge_theme(
+        "right",
+        ",\"scale\":2,\"offset\":1",
+        "#ff0000",
+        60,
+    ));
+
+    // Each 40x40 half must equal its own reference. A global first-match
+    // transform makes the right half equal a raw-10 gauge instead.
+    let width = 120usize * 4;
+    let left_half = |pixels: &[u8]| -> Vec<u8> {
+        (0..40)
+            .flat_map(|y| pixels[y * width..y * width + 40 * 4].iter().copied())
+            .collect()
+    };
+    let right_half = |pixels: &[u8]| -> Vec<u8> {
+        (0..40)
+            .flat_map(|y| pixels[y * width + 60 * 4..(y + 1) * width].iter().copied())
+            .collect()
+    };
+    assert_eq!(
+        left_half(&both_pixels),
+        left_half(&left),
+        "left gauge owns scale 1"
+    );
+    assert_eq!(
+        right_half(&both_pixels),
+        right_half(&right),
+        "right gauge owns scale 2, offset 1"
+    );
 }
