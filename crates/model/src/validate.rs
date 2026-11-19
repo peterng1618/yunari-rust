@@ -4,7 +4,8 @@ use std::fmt;
 use crate::document::{
     Artboard, ArtboardShape, AssetKind, AssetReference, Background, BackgroundMode, Binding,
     ChartFamily, FabricObject, GlassTreatment, Metadata, Node, NodeKind, Paint,
-    SUPPORTED_SCHEMA_MAJOR, StyleMap, StyleValue, ThemeDocument, TypeToken,
+    SUPPORTED_SCHEMA_MAJOR, StyleMap, StyleValue, ThemeDocument, TypeToken, TypeWeight,
+    major_version,
 };
 
 pub const MAX_ARTBOARD_DIMENSION: f64 = 16384.0;
@@ -101,7 +102,7 @@ pub fn asset_path_refusal(path: &str, kind: AssetKind) -> Option<&'static str> {
 pub fn validate_document(document: &ThemeDocument) -> Result<(), Vec<ValidationIssue>> {
     let mut issues = Vec::new();
 
-    validate_schema_version(&document.schema_version, &mut issues);
+    validate_schema_version(document, &mut issues);
     if !is_stable_id(&document.id) {
         issues.push(issue("id", "An id must match [A-Za-z0-9_-]{1,64}."));
     }
@@ -132,6 +133,14 @@ pub fn validate_for_save(document: &ThemeDocument) -> Result<(), Vec<ValidationI
         Ok(()) => Vec::new(),
         Err(issues) => issues,
     };
+    if major_version(&document.schema_version) != Some(SUPPORTED_SCHEMA_MAJOR)
+        || !document.globals.type_presets.is_empty()
+    {
+        issues.push(issue(
+            "schemaVersion",
+            format!("A saved theme uses schema major {SUPPORTED_SCHEMA_MAJOR} without legacy typePresets."),
+        ));
+    }
     if document.metadata.theme_language.is_none() {
         issues.push(issue(
             "metadata/themeLanguage",
@@ -153,7 +162,8 @@ fn issue(path: impl Into<String>, message: impl Into<String>) -> ValidationIssue
     }
 }
 
-fn validate_schema_version(version: &str, issues: &mut Vec<ValidationIssue>) {
+fn validate_schema_version(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) {
+    let version = &document.schema_version;
     let parts: Vec<&str> = version.split('.').collect();
     if parts.len() != 3
         || parts
@@ -167,6 +177,12 @@ fn validate_schema_version(version: &str, issues: &mut Vec<ValidationIssue>) {
         return;
     }
     let major = parts[0].parse::<u64>().ok();
+    // Major 2 is read for installed themes that still carry the legacy
+    // `typePresets` bag. It is never written: `validate_for_save` and
+    // `write_document` hold writes to the current major.
+    if major == Some(2) && !document.globals.type_presets.is_empty() {
+        return;
+    }
     if major != Some(SUPPORTED_SCHEMA_MAJOR) {
         issues.push(issue(
             "schemaVersion",
@@ -275,6 +291,34 @@ fn validate_tokens(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>) 
             }
         }
     }
+    for (id, preset) in &document.globals.type_presets {
+        let path = format!("globals/typePresets/{id}");
+        if !is_stable_id(id) {
+            issues.push(issue(&path, "A type preset id must match [A-Za-z0-9_-]{1,64}."));
+        }
+        if preset.name.is_empty() || preset.value.family.is_empty() {
+            issues.push(issue(&path, "A legacy preset needs a name and a face."));
+        }
+        if !preset.value.size.is_finite() || preset.value.size <= 0.0 {
+            issues.push(issue(format!("{path}/size"), "A preset size must be positive and finite."));
+        }
+        if !preset.value.line_height.is_finite() || preset.value.line_height <= 0.0 {
+            issues.push(issue(format!("{path}/lineHeight"), "A preset leading must be positive and finite."));
+        }
+        if let Some(spacing) = preset.value.letter_spacing
+            && !spacing.is_finite()
+        {
+            issues.push(issue(format!("{path}/letterSpacing"), "A preset tracking must be finite."));
+        }
+        if let Some(TypeWeight::Number(weight)) = &preset.value.weight
+            && !weight.is_finite()
+        {
+            issues.push(issue(format!("{path}/weight"), "A preset weight must be finite."));
+        }
+        if !matches!(preset.value.trio_role.as_str(), "heading" | "body" | "mono") {
+            issues.push(issue(format!("{path}/trioRole"), "A preset trio role is heading, body or mono."));
+        }
+    }
 }
 
 fn validate_paint(paint: &Paint, path: &str, issues: &mut Vec<ValidationIssue>) {
@@ -315,8 +359,9 @@ fn validate_globals_and_scene(document: &ThemeDocument, issues: &mut Vec<Validat
     // not a schema-3 theme. The bag rules apply once globals are present, but
     // only to native themes: a source-lifted document keeps a partial `globals`
     // bag beside its legacy view, and editor migration owns that path.
-    let has_globals =
-        !document.globals.palette.is_empty() || !document.globals.type_tokens.is_empty();
+    let has_globals = !document.globals.palette.is_empty()
+        || !document.globals.type_tokens.is_empty()
+        || !document.globals.type_presets.is_empty();
     let has_legacy_view = !document.nodes.is_empty()
         || !document.palette.is_empty()
         || !document.type_tokens.is_empty();
@@ -365,6 +410,18 @@ fn validate_globals(document: &ThemeDocument, issues: &mut Vec<ValidationIssue>)
                 ));
             }
         }
+    }
+    // Installed schema-2 themes carry `typePresets` instead of the current
+    // `typeTokens` trio. They are read as legacy data; a current document
+    // must declare the three roles and must not carry the old bag.
+    if !document.globals.type_presets.is_empty() {
+        if major_version(&document.schema_version) != Some(2) {
+            issues.push(issue(
+                "globals/typePresets",
+                "Only a schema-2 theme declares legacy typePresets.",
+            ));
+        }
+        return;
     }
     // `$defs.typeTokenGroup` cannot state this without making every token one
     // of the three roles; the schema leaves it as a runtime validator rule.

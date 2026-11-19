@@ -3,7 +3,8 @@
 //! with their palette, type tokens and Fabric scene retained as typed data.
 
 use yunari_model::document::{
-    DocumentError, SCHEMA_VERSION, SUPPORTED_SCHEMA_MAJOR, parse_document, write_document,
+    DocumentError, SCHEMA_VERSION, SUPPORTED_SCHEMA_MAJOR, TypeWeight, parse_document,
+    write_document,
 };
 
 /// A minimal document carrying every field the schema marks as required.
@@ -54,6 +55,86 @@ fn refuses_schema_major_one_without_migrating() {
         panic!("expected a version validation error, got {error:?}");
     };
     assert!(issues.iter().any(|issue| issue.path == "schemaVersion"));
+}
+
+/// A reduced copy of the legacy global bag carried by two installed 2.0.0
+/// themes: a `name` and a `value` with face, size, weight, leading, optional
+/// tracking and a trio role. It is read as data, never converted to a
+/// schema-3 `typeTokens` token.
+const LEGACY_V2_PRESETS: &str = r##"{
+    "schemaVersion": "2.0.0",
+    "fabricVersion": "7.4.0",
+    "id": "legacy_v2",
+    "metadata": { "name": "Legacy v2", "themeLanguage": "en" },
+    "artboard": { "width": 1920, "height": 480 },
+    "background": { "color": { "ref": "palette.none" } },
+    "globals": {
+        "palette": {
+            "none": { "name": "None", "value": { "kind": "solid", "color": "transparent" } }
+        },
+        "typePresets": {
+            "20-400": { "name": "Caption", "value": {
+                "family": "Segoe UI, sans-serif", "size": 20, "weight": "400",
+                "lineHeight": 1.18, "trioRole": "body" } },
+            "17-400": { "name": "Overline", "value": {
+                "family": "Segoe UI, sans-serif", "size": 17, "weight": "400",
+                "letterSpacing": 6, "lineHeight": 1.18, "trioRole": "body" } }
+        }
+    },
+    "scene": { "version": "7.4.0", "objects": [] }
+}"##;
+
+#[test]
+fn reads_installed_legacy_type_presets_as_typed_data() {
+    let doc = parse_document(LEGACY_V2_PRESETS).expect("the installed legacy bag parses");
+    assert_eq!(doc.schema_version, "2.0.0");
+    assert_eq!(doc.globals.type_presets.len(), 2);
+    let caption = &doc.globals.type_presets["20-400"];
+    assert_eq!(caption.name, "Caption");
+    assert_eq!(caption.value.family, "Segoe UI, sans-serif");
+    assert_eq!(caption.value.size, 20.0);
+    assert_eq!(caption.value.weight, Some(TypeWeight::Name("400".to_owned())));
+    assert_eq!(caption.value.line_height, 1.18);
+    assert_eq!(caption.value.letter_spacing, None);
+    assert_eq!(caption.value.trio_role, "body");
+    assert_eq!(doc.globals.type_presets["17-400"].value.letter_spacing, Some(6.0));
+}
+
+#[test]
+fn reads_a_legacy_text_run_preset_reference() {
+    let run: serde_json::Value = serde_json::from_str(
+        r#"{"kind":"literal","text":"YUNARI","typePreset":"typePresets.36-500","style":{}}"#,
+    )
+    .expect("legacy run JSON");
+    let content: yunari_model::document::TextContent = serde_json::from_value(serde_json::json!({
+        "box": { "width": 460, "height": 40.68 },
+        "runs": [run]
+    }))
+    .expect("the installed legacy run shape deserializes");
+    let yunari_model::document::TextRun::Literal { type_token, .. } = &content.runs[0] else {
+        panic!("expected a literal run");
+    };
+    assert_eq!(type_token, "typePresets.36-500");
+}
+
+#[test]
+fn refuses_a_malformed_legacy_type_preset() {
+    let json = LEGACY_V2_PRESETS.replace(
+        "\"family\": \"Segoe UI, sans-serif\", \"size\": 20",
+        "\"family\": 20, \"size\": 20",
+    );
+    let error = parse_document(&json).expect_err("a numeric family is malformed");
+    assert!(
+        error.to_string().contains("expected a string"),
+        "the typed bag refused the wrong family shape: {error}"
+    );
+}
+
+#[test]
+fn refuses_legacy_type_presets_in_schema3() {
+    let json = LEGACY_V2_PRESETS.replace("\"2.0.0\"", "\"3.0.0\"");
+    let error = parse_document(&json).expect_err("schema 3 does not declare typePresets");
+    assert!(error.to_string().contains("typePresets"), "{error}");
 }
 
 #[test]

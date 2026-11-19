@@ -17,6 +17,38 @@ pub struct Globals {
     pub palette: BTreeMap<String, PaletteEntry>,
     #[serde(default)]
     pub type_tokens: BTreeMap<String, TypeToken>,
+    /// The pre-schema-3 typography bag carried by installed 2.0.0 themes.
+    /// Read and preserved as data; a schema-3 document must declare
+    /// `typeTokens` instead, and a write never emits this field.
+    #[serde(
+        default,
+        rename = "typePresets",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub type_presets: BTreeMap<String, LegacyTypePreset>,
+}
+
+/// One installed-theme legacy preset: a named face and the author's size,
+/// weight, leading, optional tracking and trio role. This is a read-only
+/// record of what the old bag held, not a schema-3 `TypeToken`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LegacyTypePreset {
+    pub name: String,
+    pub value: LegacyTypePresetValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LegacyTypePresetValue {
+    pub family: String,
+    pub size: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<TypeWeight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter_spacing: Option<f64>,
+    pub line_height: f64,
+    pub trio_role: String,
 }
 
 /// Fabric JSON, retained as scene data. `version` is the Fabric version axis,
@@ -569,6 +601,9 @@ pub enum VerticalAlign {
 pub enum TextRun {
     Literal {
         text: String,
+        /// Installed schema-2 runs name this field `typePreset`; the value is
+        /// kept verbatim as the reference it is, never rewritten on read.
+        #[serde(alias = "typePreset")]
         type_token: String,
         #[serde(default)]
         style: StyleMap,
@@ -579,6 +614,7 @@ pub enum TextRun {
         precision: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         unit_display: Option<UnitDisplay>,
+        #[serde(alias = "typePreset")]
         type_token: String,
         #[serde(default)]
         style: StyleMap,
@@ -827,7 +863,19 @@ pub fn parse_document(json: &str) -> Result<ThemeDocument, DocumentError> {
 
 pub fn write_document(document: &ThemeDocument) -> Result<String, DocumentError> {
     validate_document(document).map_err(DocumentError::Invalid)?;
+    if major_version(&document.schema_version) != Some(SUPPORTED_SCHEMA_MAJOR)
+        || !document.globals.type_presets.is_empty()
+    {
+        return Err(DocumentError::Invalid(vec![ValidationIssue {
+            path: "schemaVersion".to_owned(),
+            message: format!("A theme is written as schema major {SUPPORTED_SCHEMA_MAJOR} without legacy typePresets."),
+        }]));
+    }
     Ok(serde_json::to_string_pretty(document)?)
+}
+
+pub(crate) fn major_version(version: &str) -> Option<u64> {
+    version.split('.').next()?.parse().ok()
 }
 
 #[cfg(test)]

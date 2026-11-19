@@ -35,6 +35,10 @@ impl Color {
 /// a colour at all.
 pub fn parse_color(text: &str) -> Option<Color> {
     let text = text.trim();
+    if text.eq_ignore_ascii_case("transparent") {
+        // CSS `transparent` is transparent black, not an unreadable paint.
+        return Some(Color::BLACK.with_alpha(0));
+    }
     if let Some(hex) = text.strip_prefix('#') {
         return parse_hex(hex);
     }
@@ -131,6 +135,18 @@ mod tests {
             Some(Color::rgb(1, 2, 3).with_alpha(128))
         );
         assert_eq!(parse_color("rgb(100% 0% 0%)"), Some(Color::rgb(255, 0, 0)));
+    }
+
+    #[test]
+    fn reads_the_css_transparent_keyword_as_transparent_black() {
+        assert_eq!(
+            parse_color("transparent"),
+            Some(Color::BLACK.with_alpha(0))
+        );
+        assert_eq!(
+            parse_color(" TRANSPARENT "),
+            Some(Color::BLACK.with_alpha(0))
+        );
     }
 
     #[test]
