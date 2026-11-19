@@ -42,8 +42,7 @@ pub fn build(
     let settings = request.settings;
     let names: Vec<String> = request
         .document
-        .bindings
-        .get(request.node_id)
+        .and_then(|document| document.bindings.get(request.node_id))
         .map(|bindings| {
             bindings
                 .iter()
@@ -295,7 +294,7 @@ mod tests {
         };
         let readings = readings_of(&document, reading);
         let request = ChartRequest {
-            document: &document,
+            document: Some(&document),
             node_id: &node.id,
             width: 200.0,
             height: 200.0,

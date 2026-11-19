@@ -280,7 +280,7 @@ fn walk(
             let values = chart_values(document, &node.id, readings, issues);
             let series = chart_series(document, &node.id, &content.settings.0, history, now_ms);
             let request = crate::chart::ChartRequest {
-                document,
+                document: Some(document),
                 node_id: &node.id,
                 width: box_width,
                 height: box_height,

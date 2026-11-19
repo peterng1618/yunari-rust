@@ -12,7 +12,7 @@ use yunari_model::document::{
 use yunari_providers::units::UnitPreferences;
 
 use crate::affine::Affine;
-use crate::display_list::{DisplayList, Op, Paint, Shape, Stroke};
+use crate::display_list::{ChartFamily, DisplayList, Op, Paint, Shape, Stroke};
 use crate::plan::{
     IssueCode, PaintSpec, PlanIssue, ResolvedStyle, page_surface, place_paint,
     resolve_object_paint, run_style_for,
@@ -745,7 +745,50 @@ fn object_ops(
                 None,
             ));
         }
-        // Charts and any other unhandled type are reported by the caller.
+        "YunariChart" => {
+            // The family and raw settings bag are authored on the Fabric object;
+            // the backend owns their meaning, as it does for major-1 charts.
+            let family = match text(object, "family").and_then(|name| match name {
+                "gauge" => Some(ChartFamily::Gauge),
+                "line" => Some(ChartFamily::Line),
+                "bar" => Some(ChartFamily::Bar),
+                "pie" => Some(ChartFamily::Pie),
+                "radar" => Some(ChartFamily::Radar),
+                "polarBar" => Some(ChartFamily::PolarBar),
+                _ => None,
+            }) {
+                Some(family) => family,
+                None => {
+                    issues.push(PlanIssue {
+                        code: IssueCode::UnsupportedContent,
+                        node_id: Some(object.id.clone()),
+                        detail: "A chart object has no known family.".into(),
+                    });
+                    return None;
+                }
+            };
+            let settings = object.data.get("settings").cloned().unwrap_or_default();
+            let bindings = document
+                .bindings
+                .get(&object.id)
+                .map(|bindings| {
+                    bindings
+                        .iter()
+                        .map(|binding| binding.semantic_key.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            return Some((
+                Shape::Chart {
+                    family,
+                    settings,
+                    bindings,
+                },
+                None,
+                None,
+            ));
+        }
+        // Any other unhandled type is reported by the caller.
         _ => return None,
     };
 

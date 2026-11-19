@@ -456,7 +456,7 @@ mod tests {
         };
         let readings = readings_of(&document, reading);
         let request = ChartRequest {
-            document: &document,
+            document: Some(&document),
             node_id: &node.id,
             width: 200.0,
             height: 200.0,
@@ -522,7 +522,7 @@ mod tests {
         };
         let readings = [Some(50.0), Some(100.0)];
         let request = ChartRequest {
-            document: &document,
+            document: Some(&document),
             node_id: &node.id,
             width: 200.0,
             height: 200.0,

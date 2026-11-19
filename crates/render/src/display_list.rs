@@ -114,7 +114,9 @@ pub enum Shape {
     },
     /// A chart a backend draws from its own settings and readings. The settings
     /// are the authored JSON bag; the renderer's chart rules decide which keys
-    /// are meaningful, so no backend gets a second chart vocabulary.
+    /// are meaningful, so no backend gets a second chart vocabulary. The
+    /// bindings are semantic keys: the backend reads this frame's readings and
+    /// window samples by key, with the same scale and offset the planner owns.
     Chart {
         family: ChartFamily,
         settings: serde_json::Value,

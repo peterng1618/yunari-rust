@@ -10,13 +10,15 @@ use tiny_skia::{
     Transform,
 };
 
+mod chart;
 mod images;
+pub use chart::ChartSamples;
 pub use images::{Decoded, Images};
 
 use yunari_render::text::{
     ShapeBuffer, SwashCache, TextColor, TextLayout, TextMetrics, TextSegment, TextShaping, attrs,
 };
-use yunari_render::{Affine, Color, DisplayList, Fonts, Paint, PathCommand, Shape};
+use yunari_render::{Affine, Color, DisplayList, Fonts, Op, Paint, PathCommand, PlanIssue, Shape};
 
 /// A rendered frame in straight (not premultiplied) RGBA8.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,19 +36,63 @@ pub struct Raster {
 pub fn render(
     list: &DisplayList,
     scale: f32,
+    fonts: Option<&mut Fonts>,
+    images: Option<&mut Images>,
+) -> Raster {
+    render_with_charts(list, scale, fonts, images, None, &ChartSamples::empty()).0
+}
+
+/// Render with the readings and window samples charts need, returning the
+/// reasons a mark or a paint could not be drawn. A chart op with no samples
+/// still draws the structure its settings describe, never a fabricated zero.
+pub fn render_with_charts(
+    list: &DisplayList,
+    scale: f32,
     mut fonts: Option<&mut Fonts>,
     mut images: Option<&mut Images>,
-) -> Raster {
+    document: Option<&yunari_model::document::ThemeDocument>,
+    samples: &ChartSamples<'_>,
+) -> (Raster, Vec<PlanIssue>) {
+    let mut issues = Vec::new();
+    // Expanded chart marks are painted through the same paths as any other
+    // op, so they sit in z-order exactly where the chart op sat.
+    let mut ops: Vec<Op> = Vec::with_capacity(list.ops.len());
+    for op in &list.ops {
+        if let Shape::Chart {
+            family,
+            settings,
+            bindings,
+        } = &op.shape
+        {
+            ops.extend(chart::expand(
+                *family,
+                settings,
+                bindings,
+                list.width,
+                list.height,
+                op.transform,
+                document,
+                samples,
+                fonts.as_deref_mut(),
+                &mut issues,
+            ));
+        } else {
+            ops.push(op.clone());
+        }
+    }
     let width = (list.width * scale).round().max(0.0) as u32;
     let height = (list.height * scale).round().max(0.0) as u32;
     let mut pixmap = match Pixmap::new(width, height) {
         Some(pixmap) => pixmap,
         None => {
-            return Raster {
-                width: 0,
-                height: 0,
-                rgba: Vec::new(),
-            };
+            return (
+                Raster {
+                    width: 0,
+                    height: 0,
+                    rgba: Vec::new(),
+                },
+                issues,
+            );
         }
     };
 
@@ -71,7 +117,7 @@ pub fn render(
         draw_backdrop(&mut pixmap, asset, list, backdrop, scale);
     }
 
-    for op in &list.ops {
+    for op in &ops {
         if let Shape::Text(layout) = &op.shape {
             if let Some(fonts) = fonts.as_deref_mut() {
                 draw_text(&mut pixmap, layout, op.transform, scale, fonts);
@@ -136,11 +182,14 @@ pub fn render(
         }
     }
 
-    Raster {
-        width,
-        height,
-        rgba: straight_rgba(&pixmap),
-    }
+    (
+        Raster {
+            width,
+            height,
+            rgba: straight_rgba(&pixmap),
+        },
+        issues,
+    )
 }
 
 /// Paint a laid-out paragraph. Each segment is shaped at device scale into its

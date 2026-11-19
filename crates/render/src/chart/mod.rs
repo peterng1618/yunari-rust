@@ -25,7 +25,11 @@ use crate::text::{
 
 /// What a chart family is asked to draw.
 pub struct ChartRequest<'a> {
-    pub document: &'a ThemeDocument,
+    /// The document a paint `ref`, radar name or threshold band resolves
+    /// against. `None` when a backend has only the op and its own settings;
+    /// families then use their declared defaults and report an absence for a
+    /// paint that references a document it cannot see.
+    pub document: Option<&'a ThemeDocument>,
     pub node_id: &'a str,
     /// The node's box, in artboard units.
     pub width: f32,
@@ -132,7 +136,7 @@ fn mix(from: Color, to: Color, t: f32) -> Color {
 /// paint names something the document does not declare, and no colour is
 /// substituted for it.
 pub fn chart_fill(
-    document: &ThemeDocument,
+    document: Option<&ThemeDocument>,
     value: Option<&serde_json::Value>,
     node_id: &str,
     path: &str,
@@ -229,16 +233,16 @@ fn normalize(mut stops: Vec<(f32, Color)>) -> Vec<(f32, Color)> {
     stops
 }
 
-fn palette_color(document: &ThemeDocument, reference: &str) -> Option<Color> {
+fn palette_color(document: Option<&ThemeDocument>, reference: &str) -> Option<Color> {
     match palette_paint(document, reference)? {
         ChartFill::Solid(color) => Some(color),
         _ => None,
     }
 }
 
-fn palette_paint(document: &ThemeDocument, reference: &str) -> Option<ChartFill> {
+fn palette_paint(document: Option<&ThemeDocument>, reference: &str) -> Option<ChartFill> {
     let id = reference.strip_prefix("palette.")?;
-    let entry = document.palette.get(id)?;
+    let entry = document?.palette.get(id)?;
     match &entry.value {
         yunari_model::document::Paint::Solid { color } => parse_color(color).map(ChartFill::Solid),
         yunari_model::document::Paint::Gradient { stops, .. } => {
@@ -552,7 +556,7 @@ mod tests {
         )
         .expect("bands parse");
         let mut issues = Vec::new();
-        let fill = chart_fill(&document(), Some(&value), "c", "progress", &mut issues);
+        let fill = chart_fill(Some(&document()), Some(&value), "c", "progress", &mut issues);
         assert_eq!(fill, None, "an unresolved band refuses the fill");
     }
 }
