@@ -6,7 +6,7 @@
 
 use std::io::{BufRead, BufWriter, Write};
 
-use yunari_render_raster::sidecar::{Sessions, handle_line};
+use yunari_render_raster::sidecar::{handle_line, Sessions};
 
 fn main() {
     let mut state = Sessions::new();

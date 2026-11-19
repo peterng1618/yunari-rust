@@ -10,16 +10,17 @@
 //! Chromium without showing a broken panel.
 
 use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use base64::Engine as _;
-use serde_json::{Map, Value, json};
-use yunari_model::document::ThemeDocument;
+use serde_json::{json, Map, Value};
+use yunari_model::document::{Binding, ThemeDocument};
 use yunari_providers::sample::{Reading, Status};
 use yunari_providers::units::UnitPreferences;
 use yunari_render::{Fonts, IssueCode, PlanIssue, Readings};
 
-use crate::{ChartSamples, Images, render_with_charts};
+use crate::{fit_raster_into, render_with_charts, ChartSamples, Images};
 
 type ReadingsById = HashMap<String, Option<f64>>;
 type SeriesById = HashMap<String, Vec<(u64, f64)>>;
@@ -112,6 +113,40 @@ fn u32_field(object: &Map<String, Value>, name: &str) -> Result<u32, ProtocolErr
         .ok_or_else(|| fail(format!("A request needs an unsigned integer {name:?}.")))
 }
 
+fn opening_dir(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
+    let Some(dir) = object.get("theme_dir").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let path = Path::new(dir);
+    if !path.is_absolute() {
+        return Err(fail("theme_dir must be an absolute path."));
+    }
+    Ok(Some(path.to_path_buf()))
+}
+
+/// A resolved asset path must still live under the theme's own directory. The
+/// model already refuses literal `..` segments; this guards the join at the
+/// trust boundary against a link inside the theme that points back out, so a
+/// session can never read bytes the host did not hand it.
+fn safe_asset_path(base: Option<&Path>, asset: &str) -> Option<PathBuf> {
+    let base = base?;
+    let resolved = base.join(asset);
+    let canonical_base = std::fs::canonicalize(base).ok()?;
+    let canonical = std::fs::canonicalize(&resolved).ok()?;
+    canonical
+        .strip_prefix(canonical_base)
+        .ok()
+        .filter(|rest| {
+            !rest.components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        })
+        .map(|_| resolved)
+}
+
 fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, ProtocolError> {
     let id = id(object)?;
     let theme_json = field(object, "theme_json")?;
@@ -125,14 +160,30 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
 
     let document = yunari_model::document::parse_document(theme_json)
         .map_err(|error| fail(format!("Refused theme: {error}")))?;
+    let base = opening_dir(object)?;
+
+    // Refuse any asset that resolves outside the theme dir before a frame is
+    // ever painted: a portable theme must not be able to read its way out.
+    if let Some(dir) = base.as_deref() {
+        for asset in &document.assets {
+            if safe_asset_path(Some(dir), &asset.path).is_none() {
+                return Err(fail(format!(
+                    "Asset {:?} escapes the theme directory.",
+                    asset.path
+                )));
+            }
+        }
+    }
+
     let mut fonts = Fonts::new();
     // Theme faces are read from the theme's own directory. The host names that
     // directory; every other path stays closed to a session.
-    let base = object.get("theme_dir").and_then(Value::as_str);
     fonts.load_faces(&document, |asset| {
-        base.and_then(|dir| std::fs::read(std::path::Path::new(dir).join(asset)).ok())
+        safe_asset_path(base.as_deref(), asset).and_then(|path| std::fs::read(path).ok())
     });
-    let images = match base {
+    let images = match base.as_deref() {
+        // Images::at resolves paths against `base`; the guard above proved each
+        // declared asset stays inside it.
         Some(dir) => Images::at(dir),
         None => Images::empty(),
     };
@@ -163,20 +214,11 @@ fn frame(
         .get_mut(&id)
         .ok_or_else(|| fail(format!("No open session for {id:?}.")))?;
 
-    let (readings, series, mut issues) = parse_frame(object, &session.document)?;
+    let (readings, wire, series, mut issues) = parse_frame(object, &session.document)?;
     let (mut list, build_issues) = yunari_render::fabric::build(
         &session.document,
         &mut session.fonts,
-        &Readings::new(readings.iter().map(|(key, value)| Reading {
-            semantic_key: key.clone(),
-            status: if value.is_some() {
-                Status::Ok
-            } else {
-                Status::Missing
-            },
-            value: *value,
-            ..Reading::missing(key, "no sample this frame")
-        })),
+        &wire,
         &UnitPreferences::default(),
     );
     issues.extend(build_issues);
@@ -189,12 +231,16 @@ fn frame(
         list.backdrop = None;
     }
 
+    // Charts read the same binding scale/offset as text. `fabric::build` applies
+    // it to value runs itself; the samples handed to the chart backend need the
+    // same transform, from the one binding owner, or a chart shows raw units.
+    let samples_by_key = transform_samples(&session.document, &readings, &series);
     let samples = ChartSamples {
-        readings: &readings,
-        series: &series,
+        readings: &samples_by_key.0,
+        series: &samples_by_key.1,
     };
     let started = Instant::now();
-    let (raster, chart_issues) = render_with_charts(
+    let (source, chart_issues) = render_with_charts(
         &list,
         1.0,
         Some(&mut session.fonts),
@@ -205,10 +251,17 @@ fn frame(
     issues.extend(chart_issues);
     let raster_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let picture = image::RgbaImage::from_raw(raster.width, raster.height, raster.rgba)
+    // The device consumes a frame at its own geometry. Fit the painted artboard
+    // into it; the frame we report is the frame we encoded.
+    let fitted = fit_raster_into(&source, session.width, session.height, 0, false)
+        .map_err(|error| fail(format!("Could not fit the frame: {error}")))?;
+    let picture = image::RgbaImage::from_raw(fitted.width, fitted.height, fitted.rgba)
         .ok_or_else(|| fail("The frame does not fill the panel."))?;
     let mut bytes = Vec::new();
-    match session.format {
+    // An overlay must keep its alpha: a JPEG has none, so a video panel would
+    // composite a black rectangle. The session's format applies only to stills.
+    let format = if overlay { Format::Png } else { session.format };
+    match format {
         Format::Png => picture
             .write_to(
                 &mut std::io::Cursor::new(&mut bytes),
@@ -227,8 +280,8 @@ fn frame(
     }
     Ok(response(
         &id,
-        session.width,
-        session.height,
+        fitted.width,
+        fitted.height,
         base64::engine::general_purpose::STANDARD.encode(bytes),
         raster_ms,
         &issues,
@@ -236,13 +289,13 @@ fn frame(
 }
 
 /// Build the frame's reading and series maps from the wire snapshot. Values are
-/// already scaled and offset by the host: the sidecar applies none of its own.
-/// A value no binding names becomes an `UnmappedKey` issue, never a fabricated
-/// zero; a bound key with no sample stays absent with a `MissingReading` reason.
+/// raw measurements; the document's bindings own scale/offset (applied to text
+/// by `fabric::build` and to chart samples by `transform_samples`). A value no
+/// binding names becomes an `UnmappedKey` issue, never a fabricated zero.
 fn parse_frame(
     object: &Map<String, Value>,
     document: &ThemeDocument,
-) -> Result<(ReadingsById, SeriesById, Vec<PlanIssue>), ProtocolError> {
+) -> Result<(ReadingsById, Readings, SeriesById, Vec<PlanIssue>), ProtocolError> {
     let wanted = yunari_render::reading::wanted_keys(document);
     let entries = object
         .get("readings")
@@ -251,6 +304,7 @@ fn parse_frame(
         .unwrap_or(&[]);
 
     let mut by_key: ReadingsById = HashMap::new();
+    let mut wire: Vec<Reading> = Vec::new();
     let mut issues: Vec<PlanIssue> = Vec::new();
     for entry in entries {
         let map = entry
@@ -276,6 +330,22 @@ fn parse_frame(
             .then_some(value)
             .flatten()
             .filter(|value| value.is_finite());
+        let reason = map
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        wire.push(Reading {
+            semantic_key: key.clone(),
+            status,
+            value,
+            unit: map.get("unit").and_then(Value::as_str).map(str::to_owned),
+            text: map.get("text").and_then(Value::as_str).map(str::to_owned),
+            instant: map
+                .get("instant")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            message: reason,
+        });
         by_key.insert(key, value);
     }
 
@@ -317,10 +387,67 @@ fn parse_frame(
                 node_id: None,
                 detail: format!("No reading for {key}."),
             });
+            wire.push(Reading::missing(key, "no reading this frame"));
             by_key.insert(key.clone(), None);
         }
     }
-    Ok((by_key, series, issues))
+    Ok((by_key, Readings::new(wire), series, issues))
+}
+
+/// Apply a binding's authored scale/offset to a raw figure, the one rule text
+/// and chart marks share. `fabric::build` does this for value runs; this helper
+/// does the same for the samples the chart backend consumes.
+fn transform_samples(
+    document: &ThemeDocument,
+    readings: &ReadingsById,
+    series: &SeriesById,
+) -> (ReadingsById, SeriesById) {
+    let scale_of = |key: &str| -> Option<&Binding> {
+        document
+            .bindings
+            .values()
+            .flatten()
+            .find(|binding| binding.semantic_key == key)
+    };
+    let transform = |key: &str, value: f64| -> f64 {
+        match scale_of(key) {
+            Some(binding) => {
+                value * binding.scale.unwrap_or(1.0) + binding.offset.unwrap_or(0.0)
+            }
+            None => value,
+        }
+    };
+
+    let scaled_readings: ReadingsById = readings
+        .iter()
+        .map(|(key, value)| (key.clone(), value.map(|value| transform(key, value))))
+        .collect();
+    let scaled_series: SeriesById = series
+        .iter()
+        .map(|(key, values)| {
+            (
+                key.clone(),
+                values
+                    .iter()
+                    .map(|(at, value)| (*at, transform(key, *value)))
+                    .collect(),
+            )
+        })
+        .collect();
+    (scaled_readings, scaled_series)
+}
+
+/// The renderer-core issue vocabulary is kebab-case; a Rust debug name is not
+/// a wire value the host can switch on.
+fn issue_code(code: IssueCode) -> &'static str {
+    match code {
+        IssueCode::UnmappedKey => "unmapped-key",
+        IssueCode::UnresolvedGlobal => "unresolved-global",
+        IssueCode::UnsupportedUnit => "unsupported-unit",
+        IssueCode::MissingReading => "missing-reading",
+        IssueCode::UnreadablePaint => "unreadable-paint",
+        IssueCode::UnsupportedContent => "unsupported-content",
+    }
 }
 
 fn close(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, ProtocolError> {
@@ -343,7 +470,7 @@ fn response(
         .iter()
         .map(|issue| {
             json!({
-                "code": format!("{:?}", issue.code),
+                "code": issue_code(issue.code),
                 "node_id": issue.node_id,
                 "detail": issue.detail,
             })

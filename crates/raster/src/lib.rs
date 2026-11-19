@@ -834,6 +834,22 @@ pub fn fit_into(
     fonts: Option<&mut Fonts>,
     images: Option<&mut Images>,
 ) -> Result<Raster, String> {
+    let source = render(list, 1.0, fonts, images);
+    fit_raster_into(&source, width, height, rotation, round)
+}
+
+/// Fit an already-rendered frame into a device's own pixel box.
+///
+/// The sidecar paints charts through `render_with_charts`, which `render` here
+/// cannot do: extracting the fit keeps that frame intact. The picture is
+/// contained and centred, not cropped, with the device's turn applied last.
+pub fn fit_raster_into(
+    source: &Raster,
+    width: u32,
+    height: u32,
+    rotation: u16,
+    round: bool,
+) -> Result<Raster, String> {
     if round {
         if rotation > 359 {
             return Err(format!(
@@ -845,7 +861,6 @@ pub fn fit_into(
             "The panel turns its picture by quarter turns only; {rotation}° is not one."
         ));
     }
-    let source = render(list, 1.0, fonts, images);
     if source.width == 0 || source.height == 0 || width == 0 || height == 0 {
         return Ok(Raster {
             width,
@@ -856,7 +871,7 @@ pub fn fit_into(
     let pixels = Decoded {
         width: source.width,
         height: source.height,
-        rgba: source.rgba,
+        rgba: source.rgba.clone(),
     };
     let mut pixmap = match Pixmap::new(width, height) {
         Some(pixmap) => pixmap,

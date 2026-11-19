@@ -5,7 +5,7 @@
 //! response that encodes pixels is decoded and inspected here.
 
 use base64::Engine;
-use yunari_render_raster::sidecar::{Sessions, handle_line};
+use yunari_render_raster::sidecar::{handle_line, Sessions};
 
 const THEME: &str = r##"{
   "schemaVersion":"3.0.0",
@@ -35,6 +35,30 @@ const CHART_THEME: &str = r##"{
   "bindings":{"gauge":[{"id":"a","semanticKey":"cpu.load"}]}
 }"##;
 
+/// A gauge and a text value bound to the same key with `scale:2,offset:1`, so
+/// text and chart marks must both show the transformed value.
+const SCALED_THEME: &str = r##"{
+  "schemaVersion":"3.0.0",
+  "id":"scaled",
+  "artboard":{"width":120,"height":120},
+  "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ffffff"}}},
+  "typeTokens":{"body":{"family":"Inter","weight":400}},
+  "scene":{"version":"7.4.0","objects":[
+    {"id":"label","type":"Textbox","left":0,"top":0,"width":120,"height":30,
+     "originX":"left","originY":"top","fontSize":20,"fill":"#ffffff",
+     "yunariText":{"runs":[{"kind":"value","bindingId":"b",
+        "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}},
+    {"id":"gauge","type":"YunariChart","family":"gauge",
+     "settings":{"track":{"kind":"solid","color":"#223047"},
+                 "progress":{"kind":"solid","color":"#00b8d9"}},
+     "left":0,"top":30,"width":120,"height":90,"originX":"left","originY":"top"}
+  ]},
+  "bindings":{
+    "label":[{"id":"b","semanticKey":"cpu.load","scale":2,"offset":1}],
+    "gauge":[{"id":"b","semanticKey":"cpu.load","scale":2,"offset":1}]
+  }
+}"##;
+
 fn open(id: &str, theme: &str, format: &str) -> String {
     serde_json::json!({
         "type": "open",
@@ -42,6 +66,18 @@ fn open(id: &str, theme: &str, format: &str) -> String {
         "theme_json": theme,
         "width": 40,
         "height": if theme == CHART_THEME { 40 } else { 20 },
+        "format": format
+    })
+    .to_string()
+}
+
+fn open_with_geometry(id: &str, theme: &str, format: &str, width: u32, height: u32) -> String {
+    serde_json::json!({
+        "type": "open",
+        "id": id,
+        "theme_json": theme,
+        "width": width,
+        "height": height,
         "format": format
     })
     .to_string()
@@ -123,7 +159,7 @@ fn chart_samples_change_the_picture_and_a_missing_reading_is_an_issue() {
         &mut state,
         serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
     );
-    assert!(codes(&empty).contains(&"MissingReading"), "{empty}");
+    assert!(codes(&empty).contains(&"missing-reading"), "{empty}");
 
     let sampled = reply(
         &mut state,
@@ -133,7 +169,7 @@ fn chart_samples_change_the_picture_and_a_missing_reading_is_an_issue() {
             "series":{"cpu.load":[10.0,20.0,30.0]}
         }),
     );
-    assert!(!codes(&sampled).contains(&"MissingReading"), "{sampled}");
+    assert!(!codes(&sampled).contains(&"missing-reading"), "{sampled}");
     assert_ne!(bytes(&sampled), bytes(&empty), "a value mark was painted");
 }
 
@@ -158,7 +194,7 @@ fn an_unmapped_key_stays_absent_without_a_fabricated_zero() {
         }),
     );
     assert!(
-        codes(&with_unmapped).contains(&"UnmappedKey"),
+        codes(&with_unmapped).contains(&"unmapped-key"),
         "{with_unmapped}"
     );
     assert_eq!(
@@ -268,4 +304,189 @@ fn shutdown_ends_the_loop_without_a_response_line() {
         handle_line(&mut state, r#"{"type":"shutdown"}"#).expect("shutdown is valid"),
         None
     );
+}
+
+// ---- Review fixes -------------------------------------------------------
+
+#[test]
+fn overlay_is_always_png_even_for_a_jpeg_session() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open("d1", THEME, "jpeg")).unwrap(),
+    );
+    let overlay = reply(
+        &mut state,
+        serde_json::json!({"type":"overlay","id":"d1","readings":[],"series":{}}),
+    );
+    assert_eq!(overlay["ok"], true);
+    // A JPEG has no alpha: decoding the overlay bytes as a PNG must work.
+    let picture = image::load_from_memory_with_format(&bytes(&overlay), image::ImageFormat::Png)
+        .expect("overlay bytes are a PNG even on a jpeg session");
+    let rgba = picture.to_rgba8();
+    let at = (10 * rgba.width() as usize + 35) * 4;
+    assert_eq!(rgba.as_raw()[at + 3], 0, "the board's paint is gone");
+}
+
+#[test]
+fn response_geometry_matches_the_encoded_pixels() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open_with_geometry("d1", THEME, "png", 80, 40)).unwrap(),
+    );
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+    );
+    assert_eq!(response["width"], 80);
+    assert_eq!(response["height"], 40);
+    let picture = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame");
+    assert_eq!(
+        (picture.width(), picture.height()),
+        (80, 40),
+        "the declared geometry is the encoded geometry"
+    );
+}
+
+/// The raw value 10 with scale:2, offset:1 must display as 21 (text) and drive
+/// the gauge as 21 of 100. A binding is the single owner of that transform.
+#[test]
+fn binding_scale_and_offset_apply_to_both_text_and_chart_marks() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open_with_geometry("d1", SCALED_THEME, "png", 120, 120)).unwrap(),
+    );
+
+    // The same document without the binding transform: a raw 21 there must
+    // paint what a raw 10 paints under scale:2, offset:1.
+    let plain_theme = SCALED_THEME.replace(",\"scale\":2,\"offset\":1", "");
+    let frame = |theme: &str, value: f64, series: serde_json::Value| {
+        let mut state = Sessions::new();
+        reply(
+            &mut state,
+            serde_json::from_str(&open_with_geometry("d", theme, "png", 120, 120)).unwrap(),
+        );
+        reply(
+            &mut state,
+            serde_json::json!({
+                "type":"frame","id":"d",
+                "readings":[{"semantic_key":"cpu.load","value":value,"status":"ok"}],
+                "series":series
+            }),
+        )
+    };
+
+    let scaled = frame(
+        SCALED_THEME,
+        10.0,
+        serde_json::json!({"cpu.load":[10.0,11.0]}),
+    );
+    let expected = frame(
+        &plain_theme,
+        21.0,
+        serde_json::json!({"cpu.load":[21.0,23.0]}),
+    );
+    // Both the text run and the chart read the one binding transform, so the
+    // raw value under scale/offset equals the pre-scaled value without it.
+    assert_eq!(
+        bytes(&scaled),
+        bytes(&expected),
+        "raw 10 with scale 2/offset 1 must paint like pre-scaled 21"
+    );
+}
+
+#[test]
+fn issue_codes_use_renderer_core_kebab_case() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open("d1", THEME, "png")).unwrap(),
+    );
+    let response = reply(
+        &mut state,
+        serde_json::json!({
+            "type":"frame","id":"d1",
+            "readings":[{"semantic_key":"nobody.listens","value":0.0,"status":"ok"}],
+            "series":{}
+        }),
+    );
+    assert!(codes(&response).contains(&"unmapped-key"), "{response}");
+    assert!(
+        response["issues"].as_array().unwrap().iter().all(|issue| {
+            let code = issue["code"].as_str().unwrap();
+            !code.contains(char::is_uppercase)
+        }),
+        "all codes are kebab-case"
+    );
+}
+
+#[test]
+fn reading_status_and_reason_are_preserved() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open_with_geometry("d1", SCALED_THEME, "png", 120, 120)).unwrap(),
+    );
+    let response = reply(
+        &mut state,
+        serde_json::json!({
+            "type":"frame","id":"d1",
+            "readings":[{"semantic_key":"cpu.load","value":42.0,"status":"error",
+                         "message":"the sensor is asleep"}],
+            "series":{}
+        }),
+    );
+    assert!(
+        response["issues"].as_array().unwrap().iter().any(|issue| {
+            issue["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("the sensor is asleep"))
+        }),
+        "the incoming reason is carried, not replaced: {response}"
+    );
+}
+
+#[test]
+fn asset_paths_cannot_escape_the_theme_dir() {
+    let mut state = Sessions::new();
+    let dir = std::env::temp_dir().join(format!("yunari-sidecar-assets-{}", std::process::id()));
+    let theme_dir = dir.join("theme");
+    let assets_dir = theme_dir.join("assets");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&assets_dir).expect("a theme dir with assets");
+
+    // The path string passes the model's own `assets/` rule, but the file it
+    // names is a link pointing outside the theme dir. A resolved path must stay
+    // under theme_dir or the session must refuse it.
+    let outside = dir.join("secret.png");
+    std::fs::write(&outside, b"outside").expect("a file outside the theme dir");
+    let link = assets_dir.join("pic.png");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&outside, &link).expect("a file link");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).expect("a file link");
+
+    let theme = r##"{"schemaVersion":"3.0.0","id":"esc","artboard":{"width":10,"height":10},
+        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+        "scene":{"version":"7.4.0","objects":[]}}"##;
+    let request = serde_json::json!({
+        "type":"open","id":"d1","theme_json":theme,
+        "width":10,"height":10,"format":"png",
+        "theme_dir": theme_dir.to_string_lossy()
+    });
+    let error = handle_line(&mut state, &request.to_string())
+        .expect_err("an asset that resolves outside the theme dir is refused");
+    let response: serde_json::Value =
+        serde_json::from_str(&error.to_response_line()).expect("an error response");
+    assert_eq!(response["ok"], false);
+    assert!(
+        response["error"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("escap") || detail.contains("outside")),
+        "the refusal names the reason: {response}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }
