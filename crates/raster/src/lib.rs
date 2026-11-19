@@ -12,6 +12,7 @@ use tiny_skia::{
 
 mod chart;
 mod images;
+pub mod sidecar;
 pub use chart::ChartSamples;
 pub use images::{Decoded, Images};
 

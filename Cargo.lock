@@ -9371,6 +9371,7 @@ dependencies = [
 name = "yunari-render-raster"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "image",
  "resvg 0.45.1",
  "serde_json",

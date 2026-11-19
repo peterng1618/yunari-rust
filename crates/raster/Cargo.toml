@@ -6,13 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = "0.22"
 image.workspace = true
 resvg = "0.45"
 serde_json.workspace = true
 tiny-skia = "0.11"
 yunari-model.workspace = true
+yunari-providers.workspace = true
 yunari-render.workspace = true
 
 [dev-dependencies]
 yunari-golden.workspace = true
-yunari-providers.workspace = true
