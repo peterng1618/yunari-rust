@@ -90,15 +90,20 @@ fn text<'a>(object: &'a FabricObject, key: &str) -> Option<&'a str> {
     object.data.get(key).and_then(Value::as_str)
 }
 
-/// Fabric treats a zero scale as unset, not as a flatten.
-fn scale_of(value: f64) -> f64 {
-    if value == 0.0 { 1.0 } else { value }
-}
-
 fn scaled_size(object: &FabricObject, dimension: &str, scale_key: &str) -> f32 {
     let size = number(object, dimension).unwrap_or(0.0);
-    let scale = scale_of(number(object, scale_key).unwrap_or(1.0));
+    let scale = number(object, scale_key).unwrap_or(1.0);
     (size * scale) as f32
+}
+
+/// Fabric's `visible` is a boolean on the object; absent means shown. A hidden
+/// object paints nothing, and nothing under it paints either.
+fn visible(object: &FabricObject) -> bool {
+    object
+        .data
+        .get("visible")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 /// How far the object's leading edge sits from its `left`/`top` anchor. Fabric
@@ -128,8 +133,8 @@ fn centre(object: &FabricObject) -> (f32, f32) {
 
 fn scale_affine(object: &FabricObject) -> Affine {
     Affine::scale(
-        scale_of(number(object, "scaleX").unwrap_or(1.0)) as f32,
-        scale_of(number(object, "scaleY").unwrap_or(1.0)) as f32,
+        number(object, "scaleX").unwrap_or(1.0) as f32,
+        number(object, "scaleY").unwrap_or(1.0) as f32,
     )
 }
 
@@ -141,8 +146,8 @@ fn shape_matrix(object: &FabricObject) -> Affine {
     let height = number(object, "height").unwrap_or(0.0) as f32;
     let (cx, cy) = centre(object);
     Affine::translate(-width / 2.0, -height / 2.0)
-        .then(Affine::rotate(number(object, "angle").unwrap_or(0.0) as f32))
         .then(scale_affine(object))
+        .then(Affine::rotate(number(object, "angle").unwrap_or(0.0) as f32))
         .then(Affine::translate(cx, cy))
 }
 
@@ -151,8 +156,8 @@ fn shape_matrix(object: &FabricObject) -> Affine {
 /// box of its own. Composing this once maps every child into parent space.
 fn group_matrix(object: &FabricObject) -> Affine {
     let (cx, cy) = centre(object);
-    Affine::rotate(number(object, "angle").unwrap_or(0.0) as f32)
-        .then(scale_affine(object))
+    scale_affine(object)
+        .then(Affine::rotate(number(object, "angle").unwrap_or(0.0) as f32))
         .then(Affine::translate(cx, cy))
 }
 
@@ -164,6 +169,9 @@ fn emit(
     list: &mut DisplayList,
     issues: &mut Vec<PlanIssue>,
 ) {
+    if !visible(object) {
+        return;
+    }
     let kind = object.object_type.as_deref().unwrap_or("");
     let is_group = kind == "Group" || (!object.children.is_empty() && kind.is_empty());
     let object_opacity = opacity * object_opacity(object);

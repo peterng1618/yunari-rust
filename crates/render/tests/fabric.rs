@@ -259,3 +259,96 @@ fn walk_visits_roots_first_then_groups_recursively() {
         .collect();
     assert_eq!(ids, ["r", "g", "e", "inner", "p"]);
 }
+
+#[test]
+fn a_hidden_group_and_its_children_paint_nothing() {
+    let doc = document(
+        r##"
+        {"type":"Rect","id":"shown","left":0,"top":0,"width":10,"height":10,
+         "originX":"left","originY":"top","fill":"#ff0000"},
+        {"type":"Group","id":"hidden-group","visible":false,"left":0,"top":0,
+         "width":20,"height":20,"originX":"left","originY":"top","objects":[
+            {"type":"Rect","id":"hidden-child","left":5,"top":5,"width":8,"height":6,
+             "originX":"left","originY":"top","fill":"#00ff00"},
+            {"type":"Group","id":"hidden-grandchild","visible":true,"objects":[
+                {"type":"Ellipse","id":"also-hidden","left":0,"top":0,"width":2,"height":2,
+                 "originX":"left","originY":"top","fill":"#0000ff"}]}]}
+        "##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1, "only the visible root rect paints");
+    assert_eq!(
+        list.ops[0].shape,
+        Shape::Rect {
+            width: 10.0,
+            height: 10.0,
+            corner_radius: 0.0
+        }
+    );
+}
+
+#[test]
+fn a_hidden_leaf_paints_nothing() {
+    let doc = document(
+        r##"{"type":"Rect","id":"hidden","visible":false,"left":0,"top":0,
+             "width":10,"height":10,"originX":"left","originY":"top","fill":"#ff0000"}"##,
+        "",
+    );
+    let (list, _) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(list.ops.is_empty());
+}
+
+#[test]
+fn non_uniform_scale_then_angle_matches_fabric_order() {
+    // Fabric composes scale before rotation: a point sees scale, then rotation,
+    // then the centre translation. For a 40x20 box at centre (100,50) with
+    // scaleX 2 and angle 90, corner (0,0) lands at (110,10).
+    let doc = document(
+        r##"{"type":"Rect","id":"r","left":100,"top":50,"width":40,"height":20,
+            "originX":"center","originY":"center","scaleX":2,"scaleY":1,"angle":90,
+            "fill":"#00ff00"}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    close(list.ops[0].transform.apply(0.0, 0.0), (110.0, 10.0));
+}
+
+#[test]
+fn a_zero_scale_flattens_instead_of_being_rewritten_to_one() {
+    let doc = document(
+        r##"{"type":"Rect","id":"flat","left":100,"top":50,"width":40,"height":20,
+            "originX":"left","originY":"top","scaleX":0,"fill":"#00ff00"}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    // scaleX 0 collapses the width axis: every x maps to the centre's x=100,
+    // while the y axis is untouched. The op is flat, not silently unscaled.
+    close(list.ops[0].transform.apply(0.0, 0.0), (100.0, 50.0));
+    close(list.ops[0].transform.apply(40.0, 20.0), (100.0, 70.0));
+}
