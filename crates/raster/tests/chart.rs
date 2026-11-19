@@ -28,12 +28,49 @@ fn chart_list(
         ops: vec![Op {
             transform: Affine::IDENTITY,
             shape: Shape::Chart {
+                id: "chart".to_owned(),
                 family,
                 settings,
                 bindings: bindings
                     .iter()
                     .map(|key| (*key).to_owned())
                     .collect(),
+                width: 120.0,
+                height: 120.0,
+                opacity: 1.0,
+            },
+            fill: None,
+            stroke: None,
+        }],
+    }
+}
+
+fn chart_list_on_artboard(
+    family: ChartFamily,
+    settings: serde_json::Value,
+    bindings: &[&str],
+    id: &str,
+    size: (f32, f32),
+    opacity: f32,
+) -> DisplayList {
+    DisplayList {
+        width: 480.0,
+        height: 270.0,
+        background: None,
+        backdrop: None,
+        ops: vec![Op {
+            transform: Affine::translate(20.0, 30.0),
+            shape: Shape::Chart {
+                id: id.to_owned(),
+                family,
+                settings,
+                bindings: bindings
+                    .iter()
+                    .map(|key| (*key).to_owned())
+                    .collect(),
+                width: size.0,
+                height: size.1,
+                opacity,
             },
             fill: None,
             stroke: None,
@@ -343,10 +380,195 @@ fn a_chart_op_without_a_document_still_draws_its_track() {
         1.0,
         Some(&mut Fonts::new()),
         None,
-        Some(&document()),
+        None,
         &samples,
     );
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert_eq!(issues[0].code, yunari_render::IssueCode::MissingReading);
     assert!(painted(&raster) > 400, "the renderer's own default track is drawn");
+}
+
+#[test]
+fn a_chart_uses_its_own_box_and_object_id_not_the_artboard() {
+    let list = chart_list_on_artboard(
+        ChartFamily::Gauge,
+        serde_json::json!({
+            "thickness": 6,
+            "track": {"kind": "solid", "color": "#223047"},
+            "progress": {"kind": "solid", "color": "#00b8d9"}
+        }),
+        &["cpu.load"],
+        "object-chart",
+        (60.0, 60.0),
+        1.0,
+    );
+    let (readings, series) = fixed_samples(&["cpu.load"], &[Some(42.0)], &[]);
+    let (raster, issues) = draw(&list, &readings, &series);
+    assert!(issues.iter().all(|issue| issue.node_id.as_deref() != Some("chart")), "{issues:?}");
+    // The ring fits in the 60×60 box at (20,30); nothing reaches the far side
+    // of the 480×270 artboard, which a wrongly artboard-sized ring would do.
+    assert_eq!(pixel(&raster, 460, 250)[3], 0);
+    assert!(painted(&raster) < 60 * 60, "the ring stays inside its own box");
+    assert!(painted(&raster) > 200, "a ring is painted");
+}
+
+#[test]
+fn authored_chart_opacity_fades_the_marks() {
+    let settings = serde_json::json!({
+        "thickness": 12,
+        "track": {"kind": "solid", "color": "#223047"},
+        "progress": {"kind": "solid", "color": "#00b8d9"}
+    });
+    let opaque = chart_list(ChartFamily::Gauge, settings.clone(), &["cpu.load"]);
+    let faint = chart_list_on_artboard(
+        ChartFamily::Gauge,
+        settings,
+        &["cpu.load"],
+        "chart",
+        (120.0, 120.0),
+        0.5,
+    );
+    // Put the faint chart at the same place so pixels compare directly.
+    let mut faint = faint;
+    faint.ops[0].transform = Affine::IDENTITY;
+    faint.width = 120.0;
+    faint.height = 120.0;
+    let (readings, series) = fixed_samples(&["cpu.load"], &[Some(42.0)], &[]);
+    let (full, _) = draw(&opaque, &readings, &series);
+    let (half, _) = draw(&faint, &readings, &series);
+    let full_opaque = full.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] == 255).count();
+    let half_opaque = half.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] == 255).count();
+    assert!(half_opaque < full_opaque / 2, "half opacity leaves few fully solid pixels: {half_opaque} vs {full_opaque}");
+}
+
+#[test]
+fn a_radar_chart_uses_its_real_object_id_for_binding_names() {
+    // The document names a radar id that is not the synthetic "chart" used by
+    // the other fixtures. If the request still used "chart", radar::build
+    // would find no binding names and draw no frame at all.
+    let doc = parse_document(
+        r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":120,"height":120},
+            "scene":{"version":"7.4.0","objects":[
+              {"id":"radar-7","type":"YunariChart","family":"radar","settings":{},
+               "left":0,"top":0,"width":120,"height":120}]},
+            "bindings":{"radar-7":[
+              {"id":"a","semanticKey":"cpu.load"},
+              {"id":"b","semanticKey":"gpu.load"},
+              {"id":"c","semanticKey":"ram.used"},
+              {"id":"d","semanticKey":"disk.used"}
+            ]}}"##,
+    )
+    .expect("radar fixture parses");
+    let list = chart_list_on_artboard(
+        ChartFamily::Radar,
+        serde_json::json!({
+            "min": 0, "max": 100, "splitNumber": 3, "showAxes": true,
+            "stroke": {"kind": "solid", "color": "#00b8d9"}
+        }),
+        &["cpu.load", "gpu.load", "ram.used", "disk.used"],
+        "radar-7",
+        (120.0, 120.0),
+        1.0,
+    );
+    let (readings, series) = fixed_samples(
+        &["cpu.load", "gpu.load", "ram.used", "disk.used"],
+        &[Some(80.0), Some(60.0), Some(40.0), Some(20.0)],
+        &[],
+    );
+    let samples = ChartSamples {
+        readings: &readings,
+        series: &series,
+    };
+    let (raster, issues) = render_with_charts(
+        &list,
+        1.0,
+        Some(&mut Fonts::new()),
+        None,
+        Some(&doc),
+        &samples,
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert!(painted(&raster) > 500, "a frame is drawn for the real id");
+}
+
+#[test]
+fn a_wrongly_typed_required_setting_reports_an_issue_and_draws_nothing() {
+    let list = chart_list(
+        ChartFamily::Gauge,
+        serde_json::json!({
+            "thickness": "thick",
+            "track": {"kind": "solid", "color": "#223047"},
+            "progress": {"kind": "solid", "color": "#00b8d9"}
+        }),
+        &["cpu.load"],
+    );
+    let (readings, series) = fixed_samples(&["cpu.load"], &[Some(42.0)], &[]);
+    let (raster, issues) = draw(&list, &readings, &series);
+    assert!(issues.iter().any(|issue| {
+        issue.code == yunari_render::IssueCode::UnsupportedContent
+            && issue.detail.contains("thickness")
+    }), "{issues:?}");
+    assert_all_clear(&raster);
+}
+
+#[test]
+fn a_nonfinite_required_setting_reports_an_issue_and_draws_nothing() {
+    let list = chart_list(
+        ChartFamily::Gauge,
+        serde_json::json!({
+            "startAngle": null,
+            "track": {"kind": "solid", "color": "#223047"},
+            "progress": {"kind": "solid", "color": "#00b8d9"}
+        }),
+        &["cpu.load"],
+    );
+    let (readings, series) = fixed_samples(&["cpu.load"], &[Some(42.0)], &[]);
+    let (raster, issues) = draw(&list, &readings, &series);
+    assert!(issues.iter().any(|issue| issue.detail.contains("startAngle")), "{issues:?}");
+    assert_all_clear(&raster);
+}
+
+#[test]
+fn a_chart_paint_ref_resolves_against_globals_not_only_the_legacy_palette() {
+    let doc = parse_document(
+        r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":120,"height":120},
+            "scene":{"version":"7.4.0","objects":[
+              {"id":"chart","type":"YunariChart","family":"gauge","settings":{},
+               "left":0,"top":0,"width":120,"height":120}]},
+            "globals":{"palette":{"none":{"name":"None","value":{"kind":"solid","color":"transparent"}},
+              "track":{"name":"Track","value":{"kind":"solid","color":"#223047"}}},
+              "typeTokens":{
+                "heading":{"family":"Segoe UI"},
+                "body":{"family":"Segoe UI"},
+                "mono":{"family":"Consolas"}}},
+            "bindings":{"chart":[{"id":"a","semanticKey":"cpu.load"}]}}"##,
+    )
+    .expect("schema-3 globals fixture parses");
+    let list = chart_list(
+        ChartFamily::Gauge,
+        serde_json::json!({
+            "thickness": 12,
+            "track": {"ref": "palette.track"},
+            "progress": {"kind": "solid", "color": "#00b8d9"}
+        }),
+        &["cpu.load"],
+    );
+    let (readings, series) = fixed_samples(&["cpu.load"], &[Some(42.0)], &[]);
+    let samples = ChartSamples {
+        readings: &readings,
+        series: &series,
+    };
+    let (raster, issues) = render_with_charts(
+        &list,
+        1.0,
+        Some(&mut Fonts::new()),
+        None,
+        Some(&doc),
+        &samples,
+    );
+    assert!(
+        !issues.iter().any(|issue| issue.code == yunari_render::IssueCode::UnresolvedGlobal),
+        "{issues:?}"
+    );
+    assert!(painted(&raster) > 400);
 }

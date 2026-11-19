@@ -1104,3 +1104,59 @@ fn a_path_with_one_open_subpath_refuses_glass_even_when_it_ends_with_z() {
         "{issues:?}"
     );
 }
+
+#[test]
+fn a_fabric_chart_carries_family_id_box_bindings_and_opacity() {
+    let doc = document(
+        r##"{"type":"YunariChart","id":"chart-7","family":"polarBar",
+            "left":40,"top":60,"width":120,"height":80,
+            "originX":"left","originY":"top","opacity":0.5,
+            "settings":{"startAngle":90}}"##,
+        r##","bindings":{"chart-7":[{"id":"a","semanticKey":"cpu.load"}]}"##,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Shape::Chart {
+        id,
+        family,
+        settings,
+        bindings,
+        width,
+        height,
+        opacity,
+    } = &list.ops[0].shape else {
+        panic!("expected a chart op");
+    };
+    assert_eq!(id, "chart-7");
+    assert_eq!(*family, yunari_render::ChartFamily::PolarBar);
+    assert_eq!(settings["startAngle"], 90);
+    assert_eq!(bindings, &["cpu.load".to_owned()]);
+    assert_eq!((*width, *height), (120.0, 80.0));
+    assert_eq!(*opacity, 0.5);
+    close(list.ops[0].transform.apply(0.0, 0.0), (40.0, 60.0));
+}
+
+#[test]
+fn an_unknown_fabric_chart_family_reports_an_issue() {
+    let doc = document(
+        r##"{"type":"YunariChart","id":"chart-x","family":"bubble",
+            "left":0,"top":0,"width":20,"height":20}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(list.ops.is_empty(), "no guessed chart is drawn");
+    assert!(issues.iter().any(|issue| {
+        issue.code == IssueCode::UnsupportedContent
+            && issue.node_id.as_deref() == Some("chart-x")
+    }), "{issues:?}");
+}

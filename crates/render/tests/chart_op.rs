@@ -7,9 +7,13 @@ fn chart_op(family: ChartFamily) -> Op {
     Op {
         transform: Affine::IDENTITY,
         shape: Shape::Chart {
+            id: "c".to_owned(),
             family,
             settings: serde_json::json!({ "min": 0, "max": 100 }),
             bindings: vec!["cpu".to_owned(), "gpu".to_owned()],
+            width: 120.0,
+            height: 60.0,
+            opacity: 1.0,
         },
         fill: Some(Paint::Solid(yunari_render::Color::rgb(20, 30, 40))),
         stroke: Some(Stroke {

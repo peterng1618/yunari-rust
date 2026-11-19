@@ -39,12 +39,23 @@ pub fn render(
     fonts: Option<&mut Fonts>,
     images: Option<&mut Images>,
 ) -> Raster {
-    render_with_charts(list, scale, fonts, images, None, &ChartSamples::empty()).0
+    render_with_charts(
+        list,
+        scale,
+        fonts,
+        images,
+        None,
+        &ChartSamples::empty(),
+    )
+    .0
 }
 
 /// Render with the readings and window samples charts need, returning the
 /// reasons a mark or a paint could not be drawn. A chart op with no samples
 /// still draws the structure its settings describe, never a fabricated zero.
+///
+/// The document supplies paint references and binding names; a backend with no
+/// document can only draw settings that carry their own colours.
 pub fn render_with_charts(
     list: &DisplayList,
     scale: f32,
@@ -59,17 +70,23 @@ pub fn render_with_charts(
     let mut ops: Vec<Op> = Vec::with_capacity(list.ops.len());
     for op in &list.ops {
         if let Shape::Chart {
+            id,
             family,
             settings,
             bindings,
+            width,
+            height,
+            opacity,
         } = &op.shape
         {
             ops.extend(chart::expand(
+                id,
                 *family,
                 settings,
                 bindings,
-                list.width,
-                list.height,
+                *width,
+                *height,
+                *opacity,
                 op.transform,
                 document,
                 samples,

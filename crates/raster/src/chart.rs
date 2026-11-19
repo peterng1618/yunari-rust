@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use yunari_model::document::ThemeDocument;
-use yunari_render::chart::{ChartRequest, bar, gauge, line, pie, polar_bar, radar};
+use yunari_render::chart::{ChartRequest, bar, gauge, line, pie, polar_bar, radar, validate_settings};
 use yunari_render::{Affine, ChartFamily, Fonts, IssueCode, Op, PlanIssue};
 
 /// One frame's readings and recorded window samples, by semantic key.
@@ -35,11 +35,13 @@ impl ChartSamples<'_> {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn expand(
+    id: &str,
     family: ChartFamily,
     settings: &serde_json::Value,
     bindings: &[String],
     width: f32,
     height: f32,
+    opacity: f32,
     transform: Affine,
     document: Option<&ThemeDocument>,
     samples: &ChartSamples<'_>,
@@ -52,11 +54,14 @@ pub(crate) fn expand(
     let Some(settings) = settings.as_object() else {
         issues.push(PlanIssue {
             code: IssueCode::UnsupportedContent,
-            node_id: Some("chart".to_owned()),
+            node_id: Some(id.to_owned()),
             detail: "Chart settings are not an object.".into(),
         });
         return Vec::new();
     };
+    if !validate_settings(family, settings, id, issues) {
+        return Vec::new();
+    }
 
     // A missing reading is an absence, not a zero. The backend has no node id
     // here, so the semantic key names the reason.
@@ -67,7 +72,7 @@ pub(crate) fn expand(
             _ => {
                 issues.push(PlanIssue {
                     code: IssueCode::MissingReading,
-                    node_id: Some(key.clone()),
+                    node_id: Some(id.to_owned()),
                     detail: format!("No reading for {key}."),
                 });
                 None
@@ -90,12 +95,12 @@ pub(crate) fn expand(
 
     let request = ChartRequest {
         document,
-        node_id: "chart",
+        node_id: id,
         width,
         height,
         readings: &readings,
         series: &series,
-        opacity: 1.0,
+        opacity,
         settings,
     };
     // A backend without fonts still draws every family's geometry; only the

@@ -114,13 +114,19 @@ pub enum Shape {
     },
     /// A chart a backend draws from its own settings and readings. The settings
     /// are the authored JSON bag; the renderer's chart rules decide which keys
-    /// are meaningful, so no backend gets a second chart vocabulary. The
-    /// bindings are semantic keys: the backend reads this frame's readings and
-    /// window samples by key, with the same scale and offset the planner owns.
+    /// are meaningful, so no backend gets a second chart vocabulary. `id` is
+    /// the scene object's id, which owns its bindings and names its issues.
+    /// `width`/`height` are the chart's own box in artboard units and `opacity`
+    /// is the composed authored opacity, so geometry is never sized from the
+    /// whole artboard or drawn at full strength by mistake.
     Chart {
+        id: String,
         family: ChartFamily,
         settings: serde_json::Value,
         bindings: Vec<String>,
+        width: f32,
+        height: f32,
+        opacity: f32,
     },
 }
 

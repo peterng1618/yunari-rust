@@ -241,9 +241,14 @@ fn palette_color(document: Option<&ThemeDocument>, reference: &str) -> Option<Co
 }
 
 fn palette_paint(document: Option<&ThemeDocument>, reference: &str) -> Option<ChartFill> {
-    let id = reference.strip_prefix("palette.")?;
-    let entry = document?.palette.get(id)?;
-    match &entry.value {
+    // One resolver for style references: a schema-3 theme owns palette entries
+    // under globals; the top-level bag is the legacy view. Reading only the
+    // latter silently refused every real theme's chart paint.
+    let target = yunari_model::validate::resolve_style_ref(document?, reference)?;
+    let yunari_model::validate::StyleRefTarget::Palette(paint) = target else {
+        return None;
+    };
+    match paint {
         yunari_model::document::Paint::Solid { color } => parse_color(color).map(ChartFill::Solid),
         yunari_model::document::Paint::Gradient { stops, .. } => {
             Some(ChartFill::Gradient(normalize(
@@ -287,6 +292,125 @@ pub fn text<'a>(
     key: &str,
 ) -> Option<&'a str> {
     settings.get(key).and_then(|value| value.as_str())
+}
+
+/// Refuse a settings bag whose present values are not the types the family
+/// reads. A field left out is authorable and the family's own default applies;
+/// a field written with the wrong type must never silently become that default,
+/// because the mark would then say something the author did not write.
+pub fn validate_settings(
+    family: crate::ChartFamily,
+    settings: &serde_json::Map<String, serde_json::Value>,
+    node_id: &str,
+    issues: &mut Vec<crate::PlanIssue>,
+) -> bool {
+    let numbers = match family {
+        crate::ChartFamily::Gauge => &[
+            "startAngle",
+            "endAngle",
+            "min",
+            "max",
+            "thickness",
+            "segmentDivisor",
+            "segmentSpacingPercent",
+            "gradientSegments",
+        ][..],
+        crate::ChartFamily::Line => &[
+            "lineWidth",
+            "markerSize",
+            "windowSeconds",
+            "maxPoints",
+            "min",
+            "max",
+        ][..],
+        crate::ChartFamily::Bar => &[
+            "min",
+            "max",
+            "barWidth",
+            "categoryGapPercent",
+            "cornerRadius",
+            "trackCornerRadius",
+            "segmentDivisor",
+            "segmentSpacingPercent",
+        ][..],
+        crate::ChartFamily::Pie => &[
+            "startAngle",
+            "endAngle",
+            "innerRadiusPercent",
+            "outerRadiusPercent",
+            "padAngle",
+            "cornerRadius",
+            "segmentDivisor",
+            "segmentSpacingPercent",
+        ][..],
+        crate::ChartFamily::Radar => &[
+            "min",
+            "max",
+            "splitNumber",
+            "lineWidth",
+            "markerSize",
+        ][..],
+        crate::ChartFamily::PolarBar => &[
+            "startAngle",
+            "innerRadiusPercent",
+            "outerRadiusPercent",
+            "min",
+            "max",
+            "barWidth",
+            "categoryGapPercent",
+            "cornerRadius",
+            "trackCornerRadius",
+        ][..],
+    };
+    let booleans: &[&str] = match family {
+        crate::ChartFamily::Gauge => &["roundCap"],
+        crate::ChartFamily::Line => &["showMarkers", "showAxes"],
+        crate::ChartFamily::Bar | crate::ChartFamily::PolarBar => &["showAxes"],
+        crate::ChartFamily::Pie => &[],
+        crate::ChartFamily::Radar => &["showMarkers", "showAxes"],
+    };
+    let strings: &[&str] = match family {
+        crate::ChartFamily::Line => &["interpolation", "dash", "sampling"],
+        crate::ChartFamily::Bar => &["orientation", "segmentFill"],
+        crate::ChartFamily::Pie => &[],
+        crate::ChartFamily::Radar => &["shape"],
+        crate::ChartFamily::Gauge | crate::ChartFamily::PolarBar => &[],
+    };
+
+    let mut valid = true;
+    for key in numbers {
+        if let Some(value) = settings.get(*key)
+            && (!value.is_number() || !value.as_f64().is_some_and(f64::is_finite))
+        {
+            issues.push(unreadable_setting(node_id, key));
+            valid = false;
+        }
+    }
+    for key in booleans {
+        if let Some(value) = settings.get(*key)
+            && !value.is_boolean()
+        {
+            issues.push(unreadable_setting(node_id, key));
+            valid = false;
+        }
+    }
+    for key in strings {
+        if let Some(value) = settings.get(*key)
+            && !value.is_string()
+        {
+            issues.push(unreadable_setting(node_id, key));
+            valid = false;
+        }
+    }
+    valid
+}
+
+fn unreadable_setting(node_id: &str, key: &str) -> crate::PlanIssue {
+    crate::PlanIssue {
+        code: crate::IssueCode::UnsupportedContent,
+        node_id: Some(node_id.to_owned()),
+        detail: format!("settings/{key}: this setting cannot be read."),
+    }
 }
 
 /// A band of the ring or bar a value fills, in the chart's own measure.

@@ -780,9 +780,13 @@ fn object_ops(
                 .unwrap_or_default();
             return Some((
                 Shape::Chart {
+                    id: object.id.clone(),
                     family,
                     settings,
                     bindings,
+                    width,
+                    height,
+                    opacity,
                 },
                 None,
                 None,

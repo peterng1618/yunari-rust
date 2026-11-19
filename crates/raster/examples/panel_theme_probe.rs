@@ -42,7 +42,21 @@ fn run() -> Result<(), String> {
     let refusals = fonts.load_faces(&document, |asset| std::fs::read(base.join(asset)).ok());
     println!("font refusals: {refusals:?}");
 
-    let (list, issues) = yunari_render::build(&document, &mut fonts);
+    // Schema-3 themes own their geometry in Fabric scene objects. The legacy
+    // planner reads major-1 nodes and would turn a scene-only theme into an
+    // empty list, hiding every chart instead of painting it.
+    let readings = yunari_render::Readings::new(
+        yunari_render::reading::wanted_keys(&document)
+            .into_iter()
+            .map(|key| yunari_providers::sample::Reading::missing(key, "no provider in the probe")),
+    );
+    let preferences = yunari_providers::units::UnitPreferences::default();
+    let (list, issues) = yunari_render::fabric::build(
+        &document,
+        &mut fonts,
+        &readings,
+        &preferences,
+    );
     println!(
         "display list: {} ops, {}×{} (artboard {}×{})",
         list.ops.len(),
@@ -61,8 +75,27 @@ fn run() -> Result<(), String> {
         ));
     }
 
+    // The probe has no live sensors: a missing reading stays missing, and the
+    // chart families draw their structure without inventing a value.
+    let mut chart_readings = std::collections::HashMap::new();
+    for key in yunari_render::reading::wanted_keys(&document) {
+        chart_readings.insert(key, None);
+    }
+    let chart_series = std::collections::HashMap::new();
+    let samples = yunari_render_raster::ChartSamples {
+        readings: &chart_readings,
+        series: &chart_series,
+    };
     let mut images = yunari_render_raster::Images::at(base);
-    let raster = yunari_render_raster::render(&list, 1.0, Some(&mut fonts), Some(&mut images));
+    let (raster, render_issues) = yunari_render_raster::render_with_charts(
+        &list,
+        1.0,
+        Some(&mut fonts),
+        Some(&mut images),
+        Some(&document),
+        &samples,
+    );
+    println!("render issues ({}): {render_issues:?}", render_issues.len());
     println!(
         "raster: {}×{}, RGBA {} bytes ({} pixels)",
         raster.width,
