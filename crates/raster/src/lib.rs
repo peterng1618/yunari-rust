@@ -350,7 +350,10 @@ fn shape_bounds(shape: &Shape) -> Option<((f32, f32), (f32, f32))> {
             (min.0.is_finite() && max.0.is_finite()).then_some((min, max))
         }
         Shape::Line { length } => Some(((0.0, 0.0), (*length, 0.0))),
-        Shape::Text(_) | Shape::Glass { .. } | Shape::Image { .. } => None,
+        Shape::Text(_)
+        | Shape::Glass { .. }
+        | Shape::Image { .. }
+        | Shape::Chart { .. } => None,
     }
 }
 
@@ -663,6 +666,8 @@ fn shape_path(shape: &Shape) -> Option<Path> {
         Shape::Image { .. } => None,
         // Glass samples the frame: draw_glass paints it.
         Shape::Glass { .. } => None,
+        // A chart is a family's own marks, drawn by the chart backend.
+        Shape::Chart { .. } => None,
         Shape::Rect {
             width,
             height,

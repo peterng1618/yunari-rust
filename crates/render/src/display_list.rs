@@ -112,6 +112,27 @@ pub enum Shape {
         /// Whether a clip starts again at its end; a background always does.
         video_loop: bool,
     },
+    /// A chart a backend draws from its own settings and readings. The settings
+    /// are the authored JSON bag; the renderer's chart rules decide which keys
+    /// are meaningful, so no backend gets a second chart vocabulary.
+    Chart {
+        family: ChartFamily,
+        settings: serde_json::Value,
+        bindings: Vec<String>,
+    },
+}
+
+/// The six chart families a theme authors. Names match the source app's
+/// family names so a Fabric object needs no translation table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartFamily {
+    Gauge,
+    Line,
+    Bar,
+    Pie,
+    Radar,
+    PolarBar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]

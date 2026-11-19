@@ -20,7 +20,7 @@ pub mod video;
 pub use affine::Affine;
 pub use color::{Color, parse_color};
 pub use display_list::{
-    Backdrop, DisplayList, GradientStop, Op, Paint, PathCommand, Shape, Stroke,
+    Backdrop, ChartFamily, DisplayList, GradientStop, Op, Paint, PathCommand, Shape, Stroke,
 };
 pub use format::{format_number, format_unit};
 pub use history::History;
