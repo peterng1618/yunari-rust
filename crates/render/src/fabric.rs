@@ -6,16 +6,22 @@
 //! `left`/`top` pins compose into one [`Affine`] per object, in parent space.
 
 use serde_json::Value;
-use yunari_model::document::{FabricObject, ThemeDocument};
+use yunari_model::document::{
+    FabricObject, StyleMap, TextAlign, TextContent, TextOverflow, ThemeDocument, VerticalAlign,
+};
 use yunari_providers::units::UnitPreferences;
 
 use crate::affine::Affine;
 use crate::display_list::{DisplayList, Op, Paint, Shape, Stroke};
 use crate::plan::{
-    IssueCode, PaintSpec, PlanIssue, page_surface, place_paint, resolve_object_paint,
+    IssueCode, PaintSpec, PlanIssue, ResolvedStyle, page_surface, place_paint,
+    resolve_object_paint, run_style_for,
 };
-use crate::reading::Readings;
-use crate::text::Fonts;
+use crate::reading::{self, Readings};
+use crate::text::{
+    Fonts, TextAlign as PlanTextAlign, TextOverflow as PlanTextOverflow, TextRequest, TextRunPlan,
+    VerticalAlign as PlanVerticalAlign, layout,
+};
 
 /// Build the frame from a schema-3 document's Fabric scene.
 ///
@@ -23,9 +29,9 @@ use crate::text::Fonts;
 /// the walk, transform and error contract stay here.
 pub fn build(
     document: &ThemeDocument,
-    _fonts: &mut Fonts,
-    _readings: &Readings,
-    _preferences: &UnitPreferences,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
 ) -> (DisplayList, Vec<PlanIssue>) {
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
@@ -45,6 +51,9 @@ pub fn build(
             Affine::IDENTITY,
             1.0,
             document,
+            fonts,
+            readings,
+            preferences,
             &mut list,
             &mut issues,
         );
@@ -161,11 +170,15 @@ fn group_matrix(object: &FabricObject) -> Affine {
         .then(Affine::translate(cx, cy))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit(
     object: &FabricObject,
     parent: Affine,
     opacity: f32,
     document: &ThemeDocument,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
     list: &mut DisplayList,
     issues: &mut Vec<PlanIssue>,
 ) {
@@ -177,7 +190,16 @@ fn emit(
     let object_opacity = opacity * object_opacity(object);
 
     if !is_group {
-        match object_ops(object, kind, document, object_opacity, issues) {
+        match object_ops(
+            object,
+            kind,
+            document,
+            object_opacity,
+            fonts,
+            readings,
+            preferences,
+            issues,
+        ) {
             Some((shape, fill, stroke)) => list.ops.push(Op {
                 transform: shape_matrix(object).then(parent),
                 shape,
@@ -201,7 +223,230 @@ fn emit(
         shape_matrix(object).then(parent)
     };
     for child in &object.children {
-        emit(child, child_parent, object_opacity, document, list, issues);
+        emit(
+            child,
+            child_parent,
+            object_opacity,
+            document,
+            fonts,
+            readings,
+            preferences,
+            list,
+            issues,
+        );
+    }
+}
+
+/// A Fabric text object's authored runs, face, size and layout → one laid-out
+/// paragraph. `yunariText` is the same authored content the major-1 node owns;
+/// it is deserialized into the model type so formatting has one owner. Run
+/// styles win over the object's flattened Fabric fields, which is how the
+/// editor resolves a token's face, size and tracking onto the object.
+#[allow(clippy::too_many_arguments)]
+fn text_shape(
+    object: &FabricObject,
+    document: &ThemeDocument,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
+    opacity: f32,
+    issues: &mut Vec<PlanIssue>,
+) -> Option<crate::text::TextLayout> {
+    let content: TextContent = match object.data.get("yunariText") {
+        Some(authored) => serde_json::from_value(authored.clone())
+            .map_err(|error| {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(object.id.clone()),
+                    detail: format!("A yunariText payload is not readable: {error}"),
+                });
+            })
+            .ok()?,
+        // A text object with no authored payload still carries its rendered
+        // string and face: one body-token literal run, as the source lifter does.
+        None => flat_text_content(object)?,
+    };
+
+    // The object's fill is the fallback run colour: an authored ref in
+    // `yunariPaint` wins over Fabric's flattened CSS snapshot, matching shapes.
+    let id = if object.id.is_empty() {
+        None
+    } else {
+        Some(object.id.as_str())
+    };
+    let fill = object
+        .data
+        .get("yunariPaint")
+        .and_then(Value::as_object)
+        .and_then(|map| map.get("fill"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .or_else(|| text(object, "fill").filter(|value| !value.is_empty()))
+        .and_then(|value| {
+            resolve_object_paint(
+                document,
+                value,
+                id,
+                &format!("scene/objects/{}/fill", object.id),
+                issues,
+            )
+        });
+    let node_style = ResolvedStyle {
+        fill,
+        ..ResolvedStyle::default()
+    };
+
+    let mut runs = Vec::new();
+    for run in &content.runs {
+        let (text, type_token, style) = match run {
+            yunari_model::document::TextRun::Literal {
+                text,
+                type_token,
+                style,
+            } => (text.clone(), type_token.as_str(), style),
+            yunari_model::document::TextRun::Value {
+                type_token, style, ..
+            } => (
+                reading::value_text_for(document, &object.id, run, readings, preferences, issues),
+                type_token.as_str(),
+                style,
+            ),
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let mut style = style.clone();
+        // Fabric resolves the face, size, weight and tracking onto the object
+        // from the first run's token. Only fields the run did not author take
+        // the object's flattened value, so the run stays the rule owner.
+        fill_object_style(object, &mut style);
+        let path = format!("scene/objects/{}/yunariText/runs", object.id);
+        runs.push(TextRunPlan {
+            text,
+            style: run_style_for(
+                document,
+                id,
+                &path,
+                type_token,
+                &style,
+                &node_style,
+                opacity,
+                issues,
+            ),
+        });
+    }
+    if runs.is_empty() {
+        return None;
+    }
+    // Line height is a whole-object Fabric property; tracking arrives per run
+    // as Fabric's charSpacing (1/1000 em) and is converted in `fill_object_style`.
+    let request = TextRequest {
+        runs: &runs,
+        box_: content
+            .box_
+            .map(|box_| (box_.width as f32, box_.height as f32)),
+        align: match content.align {
+            TextAlign::Left => PlanTextAlign::Left,
+            TextAlign::Center => PlanTextAlign::Center,
+            TextAlign::Right => PlanTextAlign::Right,
+        },
+        vertical_align: match content.vertical_align {
+            VerticalAlign::Top => PlanVerticalAlign::Top,
+            VerticalAlign::Middle => PlanVerticalAlign::Middle,
+            VerticalAlign::Bottom => PlanVerticalAlign::Bottom,
+        },
+        overflow: match content.overflow {
+            TextOverflow::Visible => PlanTextOverflow::Visible,
+            TextOverflow::Clip => PlanTextOverflow::Clip,
+            TextOverflow::Ellipsis => PlanTextOverflow::Ellipsis,
+        },
+        vertical: content.vertical,
+        line_height: number(object, "lineHeight").unwrap_or(1.2) as f32,
+    };
+    Some(layout(fonts, &request))
+}
+
+/// The source lifter's fallback for a text object with no `yunariText`: one
+/// literal run in the body token, with Fabric's flattened face values as the
+/// run's own style. The same fields become token overrides where the object
+/// carries them, so a theme with no globals still paints its authored text.
+fn flat_text_content(object: &FabricObject) -> Option<TextContent> {
+    use yunari_model::document::{StyleLiteral, StyleValue, TextRun};
+    let body = text(object, "text")?;
+    let mut style = StyleMap::new();
+    let mut flat = |key: &str, from: &str| {
+        if let Some(value) = object.data.get(from) {
+            style.insert(
+                key.to_owned(),
+                StyleValue::Literal(StyleLiteral {
+                    value: value.clone(),
+                }),
+            );
+        }
+    };
+    flat("color", "fill");
+    flat("fontSize", "fontSize");
+    flat("lineHeight", "lineHeight");
+    Some(TextContent {
+        runs: vec![TextRun::Literal {
+            text: body.to_owned(),
+            type_token: "typeTokens.body".to_owned(),
+            style,
+        }],
+        box_: None,
+        overflow: TextOverflow::Visible,
+        align: TextAlign::Left,
+        vertical_align: VerticalAlign::Top,
+        vertical: false,
+    })
+}
+
+/// Fill a run's style from the object's flattened Fabric fields for properties
+/// it did not author. `charSpacing` is Fabric's 1/1000 em, so a size is needed
+/// to write the artboard-unit tracking the layout measures with.
+fn fill_object_style(object: &FabricObject, style: &mut StyleMap) {
+    use yunari_model::document::{StyleLiteral, StyleValue};
+    let literal = |key: &str, value: f64, style: &mut StyleMap| {
+        style.entry(key.to_owned()).or_insert_with(|| {
+            StyleValue::Literal(StyleLiteral {
+                value: Value::from(value),
+            })
+        });
+    };
+    let string = |key: &str, value: &str, style: &mut StyleMap| {
+        style.entry(key.to_owned()).or_insert_with(|| {
+            StyleValue::Literal(StyleLiteral {
+                value: Value::from(value),
+            })
+        });
+    };
+    if let Some(family) = text(object, "fontFamily") {
+        // A CSS stack names the primary face first; that is the face the
+        // shaper asks for, the rest is the fallback it already has.
+        string(
+            "fontFamily",
+            family.split(',').next().unwrap_or(family).trim(),
+            style,
+        );
+    }
+    if let Some(weight) = text(object, "fontWeight") {
+        string("fontWeight", weight, style);
+    }
+    if let Some(size) = number(object, "fontSize") {
+        literal("fontSize", size, style);
+    }
+    let size = style
+        .get("fontSize")
+        .and_then(|value| match value {
+            StyleValue::Literal(f) => f.value.as_f64(),
+            StyleValue::Ref(_) => None,
+        })
+        .or_else(|| number(object, "fontSize"));
+    if let (Some(char_spacing), Some(size)) = (number(object, "charSpacing"), size)
+        && size > 0.0
+    {
+        // Fabric charSpacing is 1/1000 em; the layout owns pixels.
+        literal("letterSpacing", char_spacing / 1000.0 * size, style);
     }
 }
 
@@ -213,15 +458,32 @@ fn object_opacity(object: &FabricObject) -> f32 {
 
 /// The shape and paint of one non-group object. `None` means the type has no
 /// renderer yet; the caller turns that into an issue.
+#[allow(clippy::too_many_arguments)]
 fn object_ops(
     object: &FabricObject,
     kind: &str,
     document: &ThemeDocument,
     opacity: f32,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
     issues: &mut Vec<PlanIssue>,
 ) -> Option<(Shape, Option<Paint>, Option<Stroke>)> {
     let width = number(object, "width").unwrap_or(0.0) as f32;
     let height = number(object, "height").unwrap_or(0.0) as f32;
+    if matches!(kind, "Textbox" | "IText" | "Text") {
+        let layout = text_shape(
+            object,
+            document,
+            fonts,
+            readings,
+            preferences,
+            opacity,
+            issues,
+        )?;
+        // Text carries its own colour; there is no separate fill/stroke paint.
+        return Some((Shape::Text(layout), None, None));
+    }
     let shape = match kind {
         "Rect" => Shape::Rect {
             width,
@@ -231,7 +493,7 @@ fn object_ops(
                 .unwrap_or(0.0) as f32,
         },
         "Ellipse" | "Circle" => Shape::Ellipse { width, height },
-        // Text, paths, images and charts are added by later tasks; an object
+        // Paths, images, charts and glass are added by later tasks; an object
         // whose type is known but not yet converted is reported, not dropped.
         _ => return None,
     };

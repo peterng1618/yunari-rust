@@ -4,6 +4,8 @@
 //! which point `left`/`top` pins, and transforms compose once into parent space.
 
 use yunari_model::document::{ThemeDocument, parse_document};
+use yunari_providers::sample::Reading;
+use yunari_render::plan::MISSING_VALUE_TEXT;
 use yunari_render::{Color, IssueCode, Paint, Shape, fabric};
 
 fn document(objects: &str, extra: &str) -> ThemeDocument {
@@ -351,4 +353,234 @@ fn a_zero_scale_flattens_instead_of_being_rewritten_to_one() {
     // while the y axis is untouched. The op is flat, not silently unscaled.
     close(list.ops[0].transform.apply(0.0, 0.0), (100.0, 50.0));
     close(list.ops[0].transform.apply(40.0, 20.0), (100.0, 70.0));
+}
+
+/// A text object with globals and an optional binding owner. The extras carry
+/// the palette/typeTokens and the `bindings` map a value run needs.
+fn text_document(object: &str, extra: &str) -> ThemeDocument {
+    document(object, extra)
+}
+
+const GLOBALS: &str = r##","globals":{
+        "palette":{
+            "none":{"name":"None","value":{"kind":"solid","color":"transparent"}},
+            "text":{"name":"Text","value":{"kind":"solid","color":"#ff8800"}}
+        },
+        "typeTokens":{
+            "heading":{"family":"Inter","weight":700},
+            "body":{"family":"Inter","weight":400},
+            "mono":{"family":"Consolas","weight":400}
+        }
+    }"##;
+
+fn text_op(doc: &ThemeDocument) -> yunari_render::text::TextLayout {
+    let (list, issues) = fabric::build(
+        doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op, got {:?}", list.ops);
+    };
+    layout.clone()
+}
+
+#[test]
+fn a_textbox_with_a_literal_run_yields_one_text_op_with_authored_style() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":10,"top":20,"width":200,"height":40,
+            "originX":"left","originY":"top","fontSize":28,"fontFamily":"Inter",
+            "yunariPaint":{"fill":"palette.text"},
+            "yunariText":{"box":{"width":200,"height":40},"align":"left",
+                "runs":[{"kind":"literal","text":"Hello","typeToken":"typeTokens.heading",
+                    "style":{"fontSize":{"value":28}}}]}}"##,
+        GLOBALS,
+    );
+    let layout = text_op(&doc);
+    assert_eq!(layout.segments.len(), 1, "{:?}", layout.segments);
+    let segment = &layout.segments[0];
+    assert_eq!(segment.text, "Hello");
+    assert_eq!(segment.style.family.as_deref(), Some("Inter"));
+    assert_eq!(segment.style.weight, 700);
+    assert_eq!(segment.style.size, 28.0);
+    assert_eq!(
+        segment.style.color,
+        Color::rgb(255, 136, 0),
+        "the palette.text ref resolves through globals"
+    );
+}
+
+#[test]
+fn a_run_colour_ref_resolves_through_globals_palette() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","fontSize":20,"fill":"#000000",
+            "yunariText":{"runs":[{"kind":"literal","text":"Hi",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20},
+                    "color":{"ref":"palette.text"}}}]}}"##,
+        GLOBALS,
+    );
+    let layout = text_op(&doc);
+    assert_eq!(
+        layout.segments[0].style.color,
+        Color::rgb(255, 136, 0),
+        "the run's palette ref wins over the object's flattened fill"
+    );
+}
+
+#[test]
+fn a_textbox_fill_from_the_flat_fabric_colour_is_used_when_no_ref_is_authored() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","fontSize":20,"fill":"#123456",
+            "yunariText":{"runs":[{"kind":"literal","text":"Hi",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        GLOBALS,
+    );
+    let layout = text_op(&doc);
+    assert_eq!(layout.segments[0].style.color, Color::rgb(18, 52, 86));
+}
+
+#[test]
+fn a_flat_face_is_the_fallback_when_the_theme_declares_no_type_tokens() {
+    // A legacy theme with no globals still paints its authored face: the
+    // object's flattened Fabric fields are the fallback, not a second owner.
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","text":"42","fontFamily":"Segoe UI, sans-serif",
+            "fontWeight":"700","fontSize":24,"fill":"#ffffff"}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Segoe UI"));
+    assert_eq!(layout.segments[0].style.weight, 700);
+}
+
+#[test]
+fn a_textbox_resolves_family_and_weight_through_globals_type_tokens() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":40,
+            "originX":"left","originY":"top","fontFamily":"Consolas","fontWeight":"600",
+            "fontSize":20,"fill":"#ffffff",
+            "yunariText":{"runs":[{"kind":"literal","text":"AB",
+                "typeToken":"typeTokens.mono","style":{"fontSize":{"value":20}}}]}}"##,
+        GLOBALS,
+    );
+    let layout = text_op(&doc);
+    // mono's token owns the face and weight; the document's globals win over
+    // the object's flattened Fabric snapshot of the same fields.
+    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Consolas"));
+    assert_eq!(layout.segments[0].style.weight, 400);
+}
+
+#[test]
+fn a_textbox_line_height_and_char_spacing_come_from_the_object() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":100,
+            "originX":"left","originY":"top","fontSize":20,"lineHeight":1.5,
+            "charSpacing":500,"fill":"#ffffff",
+            "yunariText":{"box":{"width":200,"height":100},
+                "runs":[{"kind":"literal","text":"AB",
+                    "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        GLOBALS,
+    );
+    // Layout consumes the line height and the tracking through the one owner;
+    // both are observable: tracking shifts a right-aligned run leftwards.
+    let layout = text_op(&doc);
+    assert_eq!(
+        layout.segments[0].style.letter_spacing, 10.0,
+        "charSpacing 500 == 0.5em == 10px at 20px"
+    );
+}
+
+#[test]
+fn a_textbox_with_a_missing_reading_shows_the_em_dash_and_an_issue() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":40,
+            "originX":"left","originY":"top","fontSize":20,
+            "yunariText":{"runs":[{"kind":"value","bindingId":"b",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        &format!(
+            "{}{}",
+            GLOBALS, r#","bindings":{"label":[{"id":"b","semanticKey":"cpu.load"}]}"#
+        ),
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].text, MISSING_VALUE_TEXT, "never a zero");
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::MissingReading && issue.detail.contains("cpu.load")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn a_text_object_with_no_authored_payload_uses_its_flat_text() {
+    // Older themes carry only Fabric's flattened `text` and face; like the
+    // source lifter, the plan turns that into one body-token literal run.
+    let doc = text_document(
+        r##"{"type":"IText","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","text":"123","fontFamily":"Inter",
+            "fontSize":22,"fill":"#ffffff"}"##,
+        GLOBALS,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].text, "123");
+    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Inter"));
+    assert_eq!(layout.segments[0].style.size, 22.0);
+}
+
+#[test]
+fn a_textbox_value_run_formats_through_the_binding_rules() {
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":40,
+            "originX":"left","originY":"top","fontSize":20,
+            "yunariText":{"runs":[{"kind":"value","bindingId":"b",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        &format!(
+            "{}{}",
+            GLOBALS,
+            r#","bindings":{"label":[{"id":"b","semanticKey":"custom.probe.value","scale":2,"precision":2}]}"#
+        ),
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::new([Reading::number("custom.probe.value", 1.5, "MB")]),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].text, "3.00 MB");
 }

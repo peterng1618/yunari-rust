@@ -59,6 +59,20 @@ pub fn value_text(
     preferences: &UnitPreferences,
     issues: &mut Vec<PlanIssue>,
 ) -> String {
+    value_text_for(document, &node.id, run, readings, preferences, issues)
+}
+
+/// The same formatting rule for a run owned by any scene object id. A schema-3
+/// Fabric object owns its bindings by its own id, without being a major-1
+/// [`Node`]; both callers read the one owner rather than re-spelling it.
+pub fn value_text_for(
+    document: &ThemeDocument,
+    owner_id: &str,
+    run: &TextRun,
+    readings: &Readings,
+    preferences: &UnitPreferences,
+    issues: &mut Vec<PlanIssue>,
+) -> String {
     let TextRun::Value {
         binding_id,
         precision,
@@ -68,10 +82,14 @@ pub fn value_text(
     else {
         return String::new();
     };
-    let Some(binding) = binding_of(document, node, binding_id) else {
+    let Some(binding) = document
+        .bindings
+        .get(owner_id)
+        .and_then(|bindings| bindings.iter().find(|binding| binding.id == *binding_id))
+    else {
         issues.push(PlanIssue {
             code: IssueCode::UnmappedKey,
-            node_id: Some(node.id.clone()),
+            node_id: Some(owner_id.to_owned()),
             detail: format!(
                 "Text run references binding {binding_id}, which this node does not declare."
             ),
@@ -81,7 +99,7 @@ pub fn value_text(
     let Some(reading) = readings.get(&binding.semantic_key) else {
         issues.push(PlanIssue {
             code: IssueCode::MissingReading,
-            node_id: Some(node.id.clone()),
+            node_id: Some(owner_id.to_owned()),
             detail: format!("Nothing has read {}.", binding.semantic_key),
         });
         return MISSING_VALUE_TEXT.to_owned();
@@ -89,7 +107,7 @@ pub fn value_text(
     if reading.status != Status::Ok {
         issues.push(PlanIssue {
             code: IssueCode::MissingReading,
-            node_id: Some(node.id.clone()),
+            node_id: Some(owner_id.to_owned()),
             detail: match &reading.message {
                 Some(message) => format!(
                     "{} reads {MISSING_VALUE_TEXT}: {message}",
@@ -123,7 +141,7 @@ pub fn value_text(
         if converted.unsupported {
             issues.push(PlanIssue {
                 code: IssueCode::UnsupportedUnit,
-                node_id: Some(node.id.clone()),
+                node_id: Some(owner_id.to_owned()),
                 detail: format!(
                     "Unit {:?} is not displayable for {}; showing the measured form.",
                     binding.unit.as_deref().unwrap_or_default(),
@@ -146,7 +164,7 @@ pub fn value_text(
     } else {
         issues.push(PlanIssue {
             code: IssueCode::MissingReading,
-            node_id: Some(node.id.clone()),
+            node_id: Some(owner_id.to_owned()),
             detail: format!(
                 "{} carries neither a figure nor text.",
                 binding.semantic_key
@@ -155,18 +173,6 @@ pub fn value_text(
         return MISSING_VALUE_TEXT.to_owned();
     };
     text + &format_unit(reading.unit.as_deref(), display, None)
-}
-
-fn binding_of<'a>(
-    document: &'a ThemeDocument,
-    node: &Node,
-    binding_id: &str,
-) -> Option<&'a Binding> {
-    document
-        .bindings
-        .get(&node.id)?
-        .iter()
-        .find(|binding| binding.id == binding_id)
 }
 
 /// An instant is written with the author's format; any other text is shown

@@ -60,11 +60,11 @@ pub(crate) enum PaintSpec {
 }
 
 #[derive(Debug, Clone, Default)]
-struct ResolvedStyle {
-    fill: Option<PaintSpec>,
-    stroke: Option<PaintSpec>,
-    stroke_width: f32,
-    opacity: f32,
+pub(crate) struct ResolvedStyle {
+    pub(crate) fill: Option<PaintSpec>,
+    pub(crate) stroke: Option<PaintSpec>,
+    pub(crate) stroke_width: f32,
+    pub(crate) opacity: f32,
 }
 
 /// Build the frame's geometry and the reasons anything in it is missing, with
@@ -616,33 +616,89 @@ fn run_style(
     opacity: f32,
     issues: &mut Vec<PlanIssue>,
 ) -> TextStyle {
-    let path = |key: &str| format!("nodes/{}/kind/content/runs/{key}", node.id);
-    let token = document
-        .type_tokens
-        .get(type_token.strip_prefix("typeTokens.").unwrap_or(type_token));
+    let path = format!("nodes/{}/kind/content/runs", node.id);
+    run_style_for(
+        document,
+        Some(&node.id),
+        &path,
+        type_token,
+        style,
+        node_style,
+        opacity,
+        issues,
+    )
+}
+
+/// The face, size and colour a run paints with, for a run owned by any scene
+/// object. `path` locates the run in the authored document for diagnostics;
+/// schema-3 Fabric objects and major-1 nodes share this one rule owner.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_style_for(
+    document: &ThemeDocument,
+    node_id: Option<&str>,
+    path: &str,
+    type_token: &str,
+    style: &StyleMap,
+    node_style: &ResolvedStyle,
+    opacity: f32,
+    issues: &mut Vec<PlanIssue>,
+) -> TextStyle {
+    let token_ref = if type_token.starts_with("typeTokens.") {
+        type_token.to_owned()
+    } else {
+        format!("typeTokens.{type_token}")
+    };
+    let token = match yunari_model::validate::resolve_style_ref(document, &token_ref) {
+        Some(yunari_model::validate::StyleRefTarget::TypeToken(token)) => Some(token),
+        _ => None,
+    };
     let size = style.get("fontSize").and_then(style_number).map_or_else(
         || default_type_size(type_token, document.artboard.height),
         |size| size as f32,
     );
+    // Authored text runs name their colour `color` (`yunariText`); the
+    // major-1 view wrote `fill`. Both resolve through the one paint owner.
     let colour = style
-        .get("fill")
-        .and_then(|value| resolve_paint(document, value, Some(&node.id), &path("fill"), issues))
+        .get("color")
+        .or_else(|| style.get("fill"))
+        .and_then(|value| resolve_paint(document, value, node_id, &format!("{path}/color"), issues))
         .or(node_style.fill.clone())
         .and_then(|spec| match spec {
             PaintSpec::Solid(color) => Some(scale_alpha(color, opacity)),
             PaintSpec::Gradient { stops, .. } => {
                 issues.push(PlanIssue {
                     code: IssueCode::UnsupportedContent,
-                    node_id: Some(node.id.clone()),
+                    node_id: node_id.map(ToOwned::to_owned),
                     detail: "A gradient text run paints its first stop.".into(),
                 });
                 stops.first().map(|stop| scale_alpha(stop.color, opacity))
             }
         })
         .unwrap_or(Color::rgb(255, 255, 255));
+    let token_family = token.map(|token| token.family.clone());
+    let token_weight = token.and_then(|token| token.weight.as_ref());
     TextStyle {
-        family: token.map(|token| token.family.clone()),
-        weight: weight_of(token.and_then(|token| token.weight.as_ref())),
+        // A token owns the face when one resolves. The object's Fabric face is
+        // the fallback for themes that carry no type tokens, not a second
+        // derivation: it is only read where the token owner has no answer.
+        family: token_family.or_else(|| {
+            style.get("fontFamily").and_then(|value| match value {
+                StyleValue::Literal(f) => f.value.as_str().map(str::to_owned),
+                StyleValue::Ref(_) => None,
+            })
+        }),
+        weight: token_weight.map_or_else(
+            || {
+                style
+                    .get("fontWeight")
+                    .and_then(|value| match value {
+                        StyleValue::Literal(f) => f.value.as_str().and_then(|s| s.parse().ok()),
+                        StyleValue::Ref(_) => None,
+                    })
+                    .unwrap_or(400)
+            },
+            |weight| weight_of(Some(weight)),
+        ),
         italic: false,
         size,
         letter_spacing: style
@@ -774,23 +830,17 @@ fn resolve_paint(
             }
         },
         StyleValue::Ref(reference) => {
-            let Some(id) = reference.r#ref.strip_prefix("palette.") else {
+            let Some(yunari_model::validate::StyleRefTarget::Palette(paint)) =
+                yunari_model::validate::resolve_style_ref(document, &reference.r#ref)
+            else {
                 issues.push(PlanIssue {
                     code: IssueCode::UnresolvedGlobal,
                     node_id: node_id.map(ToOwned::to_owned),
-                    detail: format!("{} is not a paint this frame can use.", reference.r#ref),
+                    detail: format!("{} is not declared.", reference.r#ref),
                 });
                 return None;
             };
-            let Some(entry) = document.palette.get(id) else {
-                issues.push(PlanIssue {
-                    code: IssueCode::UnresolvedGlobal,
-                    node_id: node_id.map(ToOwned::to_owned),
-                    detail: format!("palette.{id} is not declared."),
-                });
-                return None;
-            };
-            match &entry.value {
+            match paint {
                 yunari_model::document::Paint::Solid { color } => {
                     parse_paint_string(color, node_id, path, issues)
                 }
