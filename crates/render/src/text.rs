@@ -107,13 +107,77 @@ impl Default for Fonts {
     }
 }
 
+/// One resolved font request. A CSS stack is split at the shared owner: the
+/// first named face is exact-matched by fontdb, and a CSS generic that appears
+/// in the stack becomes a cosmic-text generic so `sans-serif`/`monospace`
+/// actually select a face instead of being treated as a literal family name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum FontFamily {
+    Named(String),
+    Serif,
+    SansSerif,
+    Monospace,
+    Cursive,
+    Fantasy,
+}
+
+impl FontFamily {
+    /// The first usable entry of a CSS font stack. Quoted names keep their
+    /// spaces; generics map to cosmic-text's own family variants.
+    pub fn parse(stack: &str) -> Option<Self> {
+        let first = stack
+            .split(',')
+            .map(str::trim)
+            .find(|entry| !entry.is_empty())?;
+        let unquoted = first.trim_matches(['"', '\''].as_slice());
+        Some(match unquoted.to_ascii_lowercase().as_str() {
+            "serif" => Self::Serif,
+            "sans-serif" => Self::SansSerif,
+            "monospace" => Self::Monospace,
+            "cursive" => Self::Cursive,
+            "fantasy" => Self::Fantasy,
+            _ => Self::Named(unquoted.to_owned()),
+        })
+    }
+
+    /// The named face, when the request names one. A generic has no literal
+    /// name for a caller to compare.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Named(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The family string a platform backend that takes a name uses. CSS
+    /// generics map to gpui's system-family conventions, the same way they map
+    /// to cosmic-text generics for the shaper.
+    pub fn system_name(&self) -> &str {
+        match self {
+            Self::Named(name) => name,
+            // gpui takes a literal family name; map a CSS generic to a face
+            // this Windows-first product can rely on, not a keyword it cannot
+            // load. The cosmic backend uses the generics directly instead.
+            Self::Monospace => "Courier New",
+            Self::Serif => "Times New Roman",
+            Self::SansSerif | Self::Cursive | Self::Fantasy => ".SystemUIFont",
+        }
+    }
+}
+
+impl From<&str> for FontFamily {
+    fn from(value: &str) -> Self {
+        Self::parse(value).unwrap_or(Self::SansSerif)
+    }
+}
+
 /// How a run is drawn: the face it names and the size and colour it resolves
 /// to. Positions are the layout's business, so they are not here.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextStyle {
     /// The family the run's type token names. Absent takes the shaper's own
     /// sans-serif choice.
-    pub family: Option<String>,
+    pub family: Option<FontFamily>,
     /// A CSS-style weight: 400 is regular, 700 is bold.
     pub weight: u16,
     pub italic: bool,
@@ -309,14 +373,22 @@ pub fn attrs(style: &TextStyle) -> Attrs<'_> {
         .weight(Weight(style.weight))
         .color(cosmic_color(style.color));
     if let Some(family) = &style.family {
-        attrs = attrs.family(Family::Name(family));
+        attrs = attrs.family(match family {
+            FontFamily::Named(name) => Family::Name(name),
+            FontFamily::Serif => Family::Serif,
+            FontFamily::SansSerif => Family::SansSerif,
+            FontFamily::Monospace => Family::Monospace,
+            FontFamily::Cursive => Family::Cursive,
+            FontFamily::Fantasy => Family::Fantasy,
+        });
     }
     if style.italic {
         attrs = attrs.style(TextPosture::Italic);
     }
-    attrs
-        .letter_spacing(style.letter_spacing)
-        .metrics(Metrics::new(style.size, style.size * DEFAULT_LINE_HEIGHT))
+    // No per-span metrics here: the layout's buffer owns line height, so a
+    // span must not override it with a default and silently drop the authored
+    // value. A backend shaping one segment at a time sets metrics itself.
+    attrs.letter_spacing(style.letter_spacing)
 }
 
 fn cosmic_color(color: Color) -> cosmic_text::Color {

@@ -319,7 +319,9 @@ fn text_shape(
         // Fabric resolves the face, size, weight and tracking onto the object
         // from the first run's token. Only fields the run did not author take
         // the object's flattened value, so the run stays the rule owner.
-        fill_object_style(object, &mut style);
+        // `charSpacing` is derived from that first run only, so it is not
+        // copied into later runs that authored no tracking of their own.
+        fill_object_style(object, &mut style, runs.is_empty());
         let path = format!("scene/objects/{}/yunariText/runs", object.id);
         runs.push(TextRunPlan {
             text,
@@ -374,19 +376,41 @@ fn flat_text_content(object: &FabricObject) -> Option<TextContent> {
     use yunari_model::document::{StyleLiteral, StyleValue, TextRun};
     let body = text(object, "text")?;
     let mut style = StyleMap::new();
-    let mut flat = |key: &str, from: &str| {
-        if let Some(value) = object.data.get(from) {
-            style.insert(
-                key.to_owned(),
-                StyleValue::Literal(StyleLiteral {
-                    value: value.clone(),
-                }),
-            );
-        }
+    let literal = |value: &Value| {
+        StyleValue::Literal(StyleLiteral {
+            value: value.clone(),
+        })
     };
-    flat("color", "fill");
-    flat("fontSize", "fontSize");
-    flat("lineHeight", "lineHeight");
+    // A string fill is a CSS colour; a Fabric gradient object carries stops.
+    // Resolve its first stop through the one paint owner rather than writing
+    // an unreadable object into the style, which would paint default white.
+    match object.data.get("fill") {
+        Some(value @ Value::String(_)) => {
+            style.insert("color".to_owned(), literal(value));
+        }
+        Some(Value::Object(gradient)) => {
+            if let Some(first) = gradient
+                .get("colorStops")
+                .and_then(Value::as_array)
+                .and_then(|stops| stops.first())
+                .and_then(|stop| stop.get("color"))
+                .and_then(Value::as_str)
+            {
+                style.insert(
+                    "color".to_owned(),
+                    StyleValue::Literal(StyleLiteral {
+                        value: Value::from(first),
+                    }),
+                );
+            }
+        }
+        _ => {}
+    }
+    for key in ["fontSize", "lineHeight"] {
+        if let Some(value) = object.data.get(key) {
+            style.insert(key.to_owned(), literal(value));
+        }
+    }
     Some(TextContent {
         runs: vec![TextRun::Literal {
             text: body.to_owned(),
@@ -404,7 +428,7 @@ fn flat_text_content(object: &FabricObject) -> Option<TextContent> {
 /// Fill a run's style from the object's flattened Fabric fields for properties
 /// it did not author. `charSpacing` is Fabric's 1/1000 em, so a size is needed
 /// to write the artboard-unit tracking the layout measures with.
-fn fill_object_style(object: &FabricObject, style: &mut StyleMap) {
+fn fill_object_style(object: &FabricObject, style: &mut StyleMap, first_run: bool) {
     use yunari_model::document::{StyleLiteral, StyleValue};
     let literal = |key: &str, value: f64, style: &mut StyleMap| {
         style.entry(key.to_owned()).or_insert_with(|| {
@@ -421,13 +445,8 @@ fn fill_object_style(object: &FabricObject, style: &mut StyleMap) {
         });
     };
     if let Some(family) = text(object, "fontFamily") {
-        // A CSS stack names the primary face first; that is the face the
-        // shaper asks for, the rest is the fallback it already has.
-        string(
-            "fontFamily",
-            family.split(',').next().unwrap_or(family).trim(),
-            style,
-        );
+        // Pass the stack through; the shared style owner splits it once.
+        string("fontFamily", family, style);
     }
     if let Some(weight) = text(object, "fontWeight") {
         string("fontWeight", weight, style);
@@ -442,7 +461,8 @@ fn fill_object_style(object: &FabricObject, style: &mut StyleMap) {
             StyleValue::Ref(_) => None,
         })
         .or_else(|| number(object, "fontSize"));
-    if let (Some(char_spacing), Some(size)) = (number(object, "charSpacing"), size)
+    if first_run
+        && let (Some(char_spacing), Some(size)) = (number(object, "charSpacing"), size)
         && size > 0.0
     {
         // Fabric charSpacing is 1/1000 em; the layout owns pixels.

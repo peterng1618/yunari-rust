@@ -402,7 +402,10 @@ fn a_textbox_with_a_literal_run_yields_one_text_op_with_authored_style() {
     assert_eq!(layout.segments.len(), 1, "{:?}", layout.segments);
     let segment = &layout.segments[0];
     assert_eq!(segment.text, "Hello");
-    assert_eq!(segment.style.family.as_deref(), Some("Inter"));
+    assert_eq!(
+        segment.style.family.as_ref().and_then(|f| f.name()),
+        Some("Inter")
+    );
     assert_eq!(segment.style.weight, 700);
     assert_eq!(segment.style.size, 28.0);
     assert_eq!(
@@ -463,7 +466,14 @@ fn a_flat_face_is_the_fallback_when_the_theme_declares_no_type_tokens() {
     let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
         panic!("expected a Shape::Text op");
     };
-    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Segoe UI"));
+    assert_eq!(
+        layout.segments[0]
+            .style
+            .family
+            .as_ref()
+            .and_then(|f| f.name()),
+        Some("Segoe UI")
+    );
     assert_eq!(layout.segments[0].style.weight, 700);
 }
 
@@ -480,27 +490,133 @@ fn a_textbox_resolves_family_and_weight_through_globals_type_tokens() {
     let layout = text_op(&doc);
     // mono's token owns the face and weight; the document's globals win over
     // the object's flattened Fabric snapshot of the same fields.
-    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Consolas"));
+    assert_eq!(
+        layout.segments[0]
+            .style
+            .family
+            .as_ref()
+            .and_then(|f| f.name()),
+        Some("Consolas")
+    );
     assert_eq!(layout.segments[0].style.weight, 400);
 }
 
 #[test]
-fn a_textbox_line_height_and_char_spacing_come_from_the_object() {
+fn a_flat_text_with_a_fabric_gradient_fill_paints_its_first_stop() {
+    // Fabric stores a gradient `fill` as an object, not a CSS string. The flat
+    // fallback must resolve it to a colour rather than silently painting white.
     let doc = text_document(
-        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":100,
+        r##"{"type":"IText","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","text":"42","fontSize":20,
+            "fill":{"type":"linear","gradientUnits":"pixels","coords":{"x1":0,"y1":0,"x2":100,"y2":0},
+                "colorStops":[{"offset":0,"color":"#ff0000"},{"offset":1,"color":"#0000ff"}]}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].style.color, Color::rgb(255, 0, 0));
+}
+
+#[test]
+fn a_css_stack_in_a_type_token_selects_its_first_face() {
+    // A real theme declares `body.family = "Segoe UI, sans-serif"`. fontdb
+    // exact-matches a whole string, so passing it verbatim falls back to the
+    // shaper's default; the shared owner takes the first usable face.
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":100,"height":30,
+            "originX":"left","originY":"top","fontSize":20,"fill":"#ffffff",
+            "yunariText":{"runs":[{"kind":"literal","text":"Hi",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        r##","globals":{"palette":{"none":{"name":"None","value":{"kind":"solid","color":"transparent"}}},
+            "typeTokens":{"heading":{"family":"serif"},"body":{"family":"Segoe UI, sans-serif"},
+                "mono":{"family":"monospace"}}}"##,
+    );
+    let layout = text_op(&doc);
+    assert_eq!(
+        layout.segments[0]
+            .style
+            .family
+            .as_ref()
+            .and_then(|f| f.name()),
+        Some("Segoe UI")
+    );
+}
+
+#[test]
+fn a_generic_only_token_family_maps_to_a_cosmic_generic() {
+    use yunari_render::text::FontFamily;
+    assert_eq!(FontFamily::parse("sans-serif"), Some(FontFamily::SansSerif));
+    assert_eq!(FontFamily::parse("monospace"), Some(FontFamily::Monospace));
+    assert_eq!(
+        FontFamily::parse("'Segoe UI', sans-serif"),
+        Some(FontFamily::Named("Segoe UI".into()))
+    );
+}
+
+#[test]
+fn a_textbox_line_height_and_char_spacing_come_from_the_object() {
+    // Layout consumes both fields through the one owner: tracking is visible
+    // on the style, line height in the gap between wrapped line origins.
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":40,"height":100,
             "originX":"left","originY":"top","fontSize":20,"lineHeight":1.5,
             "charSpacing":500,"fill":"#ffffff",
-            "yunariText":{"box":{"width":200,"height":100},
-                "runs":[{"kind":"literal","text":"AB",
-                    "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+            "yunariText":{"box":{"width":40,"height":100},
+                "runs":[{"kind":"literal","text":"AA BB","typeToken":"typeTokens.body",
+                    "style":{"fontSize":{"value":20}}}]}}"##,
         GLOBALS,
     );
-    // Layout consumes the line height and the tracking through the one owner;
-    // both are observable: tracking shifts a right-aligned run leftwards.
     let layout = text_op(&doc);
     assert_eq!(
         layout.segments[0].style.letter_spacing, 10.0,
         "charSpacing 500 == 0.5em == 10px at 20px"
+    );
+    let tops: std::collections::BTreeSet<i32> = layout
+        .segments
+        .iter()
+        .map(|segment| (segment.origin.1).round() as i32)
+        .collect();
+    assert!(tops.len() > 1, "tracking should wrap the text: {tops:?}");
+    let gap = layout.segments[1].origin.1 - layout.segments[0].origin.1;
+    assert!(
+        (gap - 30.0).abs() < 1.0,
+        "lineHeight 1.5 at 20px means 30px between lines, got {gap}"
+    );
+}
+
+#[test]
+fn object_char_spacing_applies_only_to_the_first_run() {
+    // Fabric derives `charSpacing` from the first run's tracking, so it is
+    // authored once on the object. Each run resolves its own tracking: a run
+    // that authored none must not inherit the first one's spacing.
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":0,"top":0,"width":200,"height":40,
+            "originX":"left","originY":"top","fontSize":20,"charSpacing":1000,
+            "fill":"#ffffff",
+            "yunariText":{"runs":[
+                {"kind":"literal","text":"A","typeToken":"typeTokens.body",
+                 "style":{"fontSize":{"value":20}}},
+                {"kind":"literal","text":"B","typeToken":"typeTokens.body",
+                 "style":{"fontSize":{"value":20}}}]}}"##,
+        GLOBALS,
+    );
+    let layout = text_op(&doc);
+    assert_eq!(layout.segments.len(), 2, "{:?}", layout.segments);
+    assert_eq!(
+        layout.segments[0].style.letter_spacing, 20.0,
+        "charSpacing 1000 == 1em == 20px at 20px"
+    );
+    assert_eq!(
+        layout.segments[1].style.letter_spacing, 0.0,
+        "a later run that authored no tracking keeps none"
     );
 }
 
@@ -555,8 +671,45 @@ fn a_text_object_with_no_authored_payload_uses_its_flat_text() {
         panic!("expected a Shape::Text op");
     };
     assert_eq!(layout.segments[0].text, "123");
-    assert_eq!(layout.segments[0].style.family.as_deref(), Some("Inter"));
+    assert_eq!(
+        layout.segments[0]
+            .style
+            .family
+            .as_ref()
+            .and_then(|f| f.name()),
+        Some("Inter")
+    );
     assert_eq!(layout.segments[0].style.size, 22.0);
+}
+
+#[test]
+fn an_itext_non_ok_reading_shows_the_em_dash_with_its_reason() {
+    let doc = text_document(
+        r##"{"type":"IText","id":"label","left":0,"top":0,"width":200,"height":40,
+            "originX":"left","originY":"top","fontSize":20,
+            "yunariText":{"runs":[{"kind":"value","bindingId":"b",
+                "typeToken":"typeTokens.body","style":{"fontSize":{"value":20}}}]}}"##,
+        &format!(
+            "{}{}",
+            GLOBALS, r#","bindings":{"label":[{"id":"b","semanticKey":"cpu.load"}]}"#
+        ),
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::new([Reading::missing("cpu.load", "the sensor is asleep")]),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op");
+    };
+    assert_eq!(layout.segments[0].text, MISSING_VALUE_TEXT);
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::MissingReading && issue.detail.contains("the sensor is asleep")
+        }),
+        "{issues:?}"
+    );
 }
 
 #[test]

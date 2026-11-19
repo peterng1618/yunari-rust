@@ -171,8 +171,8 @@ fn paint_text(
                 family: segment
                     .style
                     .family
-                    .clone()
-                    .unwrap_or_else(|| ".SystemUIFont".into())
+                    .as_ref()
+                    .map_or(".SystemUIFont", |family| family.system_name())
                     .into(),
                 weight: FontWeight(f32::from(segment.style.weight)),
                 style: if segment.style.italic {

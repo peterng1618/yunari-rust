@@ -30,4 +30,4 @@ pub use path::{PathError, parse as parse_path};
 pub use plan::{IssueCode, PlanIssue, build, build_with, build_with_history};
 pub mod reading;
 pub use reading::Readings;
-pub use text::{Fonts, TextStyle};
+pub use text::{FontFamily, Fonts, TextStyle};

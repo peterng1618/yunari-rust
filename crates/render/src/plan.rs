@@ -675,15 +675,16 @@ pub(crate) fn run_style_for(
             }
         })
         .unwrap_or(Color::rgb(255, 255, 255));
-    let token_family = token.map(|token| token.family.clone());
+    let token_family = token.and_then(|token| crate::text::FontFamily::parse(&token.family));
     let token_weight = token.and_then(|token| token.weight.as_ref());
     TextStyle {
         // A token owns the face when one resolves. The object's Fabric face is
         // the fallback for themes that carry no type tokens, not a second
         // derivation: it is only read where the token owner has no answer.
+        // Both are CSS stacks: one owner splits them and maps CSS generics.
         family: token_family.or_else(|| {
             style.get("fontFamily").and_then(|value| match value {
-                StyleValue::Literal(f) => f.value.as_str().map(str::to_owned),
+                StyleValue::Literal(f) => f.value.as_str().and_then(crate::text::FontFamily::parse),
                 StyleValue::Ref(_) => None,
             })
         }),
@@ -1337,7 +1338,14 @@ mod tests {
         };
         assert_eq!(layout.segments.len(), 1);
         assert_eq!(layout.segments[0].text, "Hello");
-        assert_eq!(layout.segments[0].style.family.as_deref(), Some("Inter"));
+        assert_eq!(
+            layout.segments[0]
+                .style
+                .family
+                .as_ref()
+                .and_then(|f| f.name()),
+            Some("Inter")
+        );
         // 675 / 67.5 is the body role's share of the artboard height.
         assert_eq!(layout.segments[0].style.size, 10.0);
     }

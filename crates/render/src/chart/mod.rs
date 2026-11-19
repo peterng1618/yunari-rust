@@ -434,7 +434,10 @@ impl LabelStyle {
 
 fn text_style(style: &LabelStyle) -> TextStyle {
     TextStyle {
-        family: style.family.clone(),
+        family: style
+            .family
+            .as_deref()
+            .and_then(crate::text::FontFamily::parse),
         weight: style.weight,
         italic: false,
         size: style.size,
