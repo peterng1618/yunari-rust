@@ -995,3 +995,112 @@ fn glass_on_a_rect_whose_paint_cannot_be_resolved_still_blurs_the_base() {
         "{issues:?}"
     );
 }
+
+#[test]
+fn glass_on_a_group_reports_an_issue_and_children_still_paint() {
+    // Model validation admits glass on a Group, but Fabric gives a group no
+    // render boundary to sample through. Refuse the blur loudly; children paint.
+    let doc = document(
+        r##"{"type":"Group","id":"frame","left":0,"top":0,"width":50,"height":50,
+            "originX":"left","originY":"top","yunariGlass":{"blurRadius":8},
+            "objects":[
+                {"type":"Rect","id":"child","left":5,"top":5,"width":10,"height":10,
+                 "originX":"left","originY":"top","fill":"#ff0000"}]}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert_eq!(list.ops.len(), 1, "the group's child still paints");
+    assert!(matches!(list.ops[0].shape, Shape::Rect { .. }));
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::UnsupportedContent
+                && issue.node_id.as_deref() == Some("frame")
+                && issue.detail.to_lowercase().contains("glass")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn an_image_monochrome_mask_keeps_its_resolved_alpha() {
+    // A palette colour of rgba(255,0,0,0.5) at object opacity 1 must stay at
+    // alpha 128. Overwriting with opacity's byte loses the authored alpha.
+    let doc = document_with_assets(
+        r##"{"type":"Image","id":"icon","left":0,"top":0,"width":10,"height":10,
+            "originX":"left","originY":"top","opacity":1,
+            "yunariAsset":{"assetId":"logo","kind":"image"},
+            "yunariPaint":{"monochrome":"palette.ink"}}"##,
+        r##","globals":{"palette":{
+            "none":{"name":"None","value":{"kind":"solid","color":"transparent"}},
+            "ink":{"name":"Ink","value":{"kind":"solid","color":"rgba(255,0,0,0.5)"}}
+        },"typeTokens":{
+            "heading":{"family":"Inter"},"body":{"family":"Inter"},"mono":{"family":"Inter"}
+        }}"##,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Image { monochrome, .. }) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected an image op");
+    };
+    assert_eq!(*monochrome, Some(Color::rgb(255, 0, 0).with_alpha(128)));
+}
+
+#[test]
+fn a_path_closed_before_the_last_subpath_still_supports_glass() {
+    // Real themes end with a final open contour after earlier closed ones;
+    // "closed" means every subpath closes, not just the final command.
+    let doc = document(
+        r##"{"type":"Path","id":"rings","left":0,"top":0,"width":20,"height":20,
+            "originX":"left","originY":"top","stroke":"#ff0000",
+            "path":[["M",0,0],["L",10,0],["Z"],["M",5,5],["L",15,5],["Z"]],
+            "yunariGlass":{"blurRadius":8}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 2, "glass wraps the closed multi-subpath");
+    assert!(matches!(list.ops[0].shape, Shape::Glass { .. }));
+    assert!(matches!(list.ops[1].shape, Shape::Path { .. }));
+}
+
+#[test]
+fn a_path_with_one_open_subpath_refuses_glass_even_when_it_ends_with_z() {
+    let doc = document(
+        r##"{"type":"Path","id":"mixed","left":0,"top":0,"width":20,"height":20,
+            "originX":"left","originY":"top","stroke":"#ff0000",
+            "path":[["M",0,0],["L",10,0],["M",5,5],["L",15,5],["Z"]],
+            "yunariGlass":{"blurRadius":8}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert_eq!(list.ops.len(), 1, "the base path still paints");
+    assert!(matches!(list.ops[0].shape, Shape::Path { .. }));
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::UnsupportedContent
+                && issue.node_id.as_deref() == Some("mixed")
+                && issue.detail.to_lowercase().contains("glass")
+        }),
+        "{issues:?}"
+    );
+}

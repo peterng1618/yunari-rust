@@ -773,7 +773,7 @@ pub(crate) fn place_paint(spec: PaintSpec, width: f32, height: f32, opacity: f32
     }
 }
 
-fn scale_alpha(color: Color, opacity: f32) -> Color {
+pub(crate) fn scale_alpha(color: Color, opacity: f32) -> Color {
     if opacity >= 1.0 {
         return color;
     }

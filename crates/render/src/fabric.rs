@@ -12,7 +12,7 @@ use yunari_model::document::{
 use yunari_providers::units::UnitPreferences;
 
 use crate::affine::Affine;
-use crate::display_list::{DisplayList, Op, Paint, PathCommand, Shape, Stroke};
+use crate::display_list::{DisplayList, Op, Paint, Shape, Stroke};
 use crate::plan::{
     IssueCode, PaintSpec, PlanIssue, ResolvedStyle, page_surface, place_paint,
     resolve_object_paint, run_style_for,
@@ -189,7 +189,20 @@ fn emit(
     let is_group = kind == "Group" || (!object.children.is_empty() && kind.is_empty());
     let object_opacity = opacity * object_opacity(object);
 
-    if !is_group {
+    if is_group {
+        // Fabric groups paint no box of their own, so there is no interior to
+        // sample through. A treatment is valid in the model but not drawable:
+        // report it rather than silently dropping the authored frosting.
+        if let Some(glass) = &object.yunari_glass
+            && glass.blur_radius > 0.0
+        {
+            issues.push(PlanIssue {
+                code: IssueCode::UnsupportedContent,
+                node_id: Some(object.id.clone()),
+                detail: "Glass needs a closed shape to sample through.".into(),
+            });
+        }
+    } else {
         match object_ops(
             object,
             kind,
@@ -541,6 +554,37 @@ fn path_data(object: &FabricObject) -> Option<String> {
     Some(data)
 }
 
+/// Whether every subpath of a Fabric path closes. The last command alone is
+/// not enough: a theme can close early contours and end with an open one.
+fn path_is_closed(object: &FabricObject) -> bool {
+    let Some(commands) = object.data.get("path").and_then(Value::as_array) else {
+        return false;
+    };
+    let (mut open, mut saw_subpath) = (false, false);
+    for command in commands {
+        let Some(head) = command.as_array().and_then(|parts| parts.first()).and_then(Value::as_str) else {
+            return false;
+        };
+        match head.to_ascii_uppercase().as_str() {
+            "M" => {
+                if open {
+                    return false;
+                }
+                open = true;
+                saw_subpath = true;
+            }
+            "Z" => {
+                if !open {
+                    return false;
+                }
+                open = false;
+            }
+            _ => {}
+        }
+    }
+    saw_subpath && !open
+}
+
 /// Mirror the source lifter's number text so the shared SVG reader sees the
 /// same data whether it came from a Fabric array or a major-1 path node.
 fn format_number(value: f64) -> String {
@@ -597,11 +641,12 @@ fn object_ops(
                 });
                 return None;
             };
+            // Port of scene-fabric's `hasClosedPath`: a path is closed only when
+            // every subpath opened by M ends with Z. A final Z does not close
+            // an earlier open contour, which real multi-subpath themes contain.
+            let closed = path_is_closed(object);
             match crate::path::parse(&data) {
-                Ok(commands) => {
-                    let closed = commands.last() == Some(&PathCommand::Close);
-                    Shape::Path { commands, closed }
-                }
+                Ok(commands) => Shape::Path { commands, closed },
                 Err(error) => {
                     issues.push(PlanIssue {
                         code: IssueCode::UnsupportedContent,
@@ -682,7 +727,9 @@ fn object_ops(
                         None
                     }
                 });
-            let monochrome = monochrome.map(|color| color.with_alpha((opacity * 255.0) as u8));
+            // The colour's resolved alpha is authored truth; scale it, never
+            // overwrite it with the object opacity.
+            let monochrome = monochrome.map(|color| crate::plan::scale_alpha(color, opacity));
             return Some((
                 Shape::Image {
                     asset_id: asset_id.to_owned(),
