@@ -737,3 +737,261 @@ fn a_textbox_value_run_formats_through_the_binding_rules() {
     };
     assert_eq!(layout.segments[0].text, "3.00 MB");
 }
+
+/// A schema-3 document with assets, used by the image/path/glass tests below.
+fn document_with_assets(objects: &str, extra: &str) -> ThemeDocument {
+    document(
+        objects,
+        &format!(
+            r##", "assets":[{{"id":"logo","kind":"image","path":"assets/logo.png"}}]{extra}"##
+        ),
+    )
+}
+
+#[test]
+fn a_path_object_yields_parsed_commands_and_keeps_its_paint() {
+    // Real themes store a Fabric Path as [["M",x,y],["L",x,y],...]; the same
+    // path reader the major-1 planner uses turns that into drawable commands.
+    let doc = document_with_assets(
+        r##"{"type":"Path","id":"rule","left":10,"top":20,"width":100,"height":10,
+            "originX":"left","originY":"top","strokeWidth":2,
+            "path":[["M",0,0],["L",100,0],["L",100,10],["Z"]],
+            "fill":"#ff0000","stroke":"#0000ff",
+            "yunariPaint":{"fill":"palette.accent"}}"##,
+        r##","globals":{
+            "palette":{
+                "none":{"name":"None","value":{"kind":"solid","color":"transparent"}},
+                "accent":{"name":"Accent","value":{"kind":"solid","color":"#00ff00"}}
+            },
+            "typeTokens":{
+                "heading":{"family":"Inter"},"body":{"family":"Inter"},"mono":{"family":"Inter"}
+            }
+        }"##,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    let Some(Shape::Path { commands, closed }) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Path op, got {:?}", list.ops);
+    };
+    assert_eq!(
+        commands,
+        &vec![
+            yunari_render::PathCommand::MoveTo(0.0, 0.0),
+            yunari_render::PathCommand::LineTo(100.0, 0.0),
+            yunari_render::PathCommand::LineTo(100.0, 10.0),
+            yunari_render::PathCommand::Close,
+        ]
+    );
+    assert!(*closed, "a trailing Z makes the path closed");
+    assert_eq!(
+        list.ops[0].fill,
+        Some(Paint::Solid(Color::rgb(0, 255, 0))),
+        "the authored fill ref wins through the globals owner"
+    );
+    assert_eq!(list.ops[0].stroke.as_ref().map(|stroke| stroke.width), Some(2.0));
+}
+
+#[test]
+fn unreadable_path_data_reports_an_issue_and_paints_nothing() {
+    let doc = document_with_assets(
+        r##"{"type":"Path","id":"broken","left":0,"top":0,"width":10,"height":10,
+            "originX":"left","originY":"top","path":[["M",0,0],["L"]],"stroke":"#ff0000"}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(list.ops.is_empty());
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::UnsupportedContent
+                && issue.node_id.as_deref() == Some("broken")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn an_image_object_carries_its_asset_path_and_box() {
+    let doc = document_with_assets(
+        r##"{"type":"Image","id":"pic","left":10,"top":20,"width":120,"height":80,
+            "originX":"left","originY":"top",
+            "yunariAsset":{"assetId":"logo","kind":"image"},
+            "yunariImage":{"fit":"cover"}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    let Some(Shape::Image {
+        asset_id,
+        path,
+        width,
+        height,
+        fit,
+        ..
+    }) = list.ops.first().map(|op| &op.shape)
+    else {
+        panic!("expected a Shape::Image op, got {:?}", list.ops);
+    };
+    assert_eq!(asset_id, "logo");
+    assert_eq!(path, "assets/logo.png");
+    assert_eq!((*width, *height), (120.0, 80.0));
+    assert_eq!(*fit, yunari_model::document::ImageFit::Cover);
+    close(list.ops[0].transform.apply(0.0, 0.0), (10.0, 20.0));
+    assert!(!list.has_video());
+}
+
+#[test]
+fn an_image_with_an_undeclared_asset_reports_an_issue() {
+    let doc = document_with_assets(
+        r##"{"type":"Image","id":"pic","left":0,"top":0,"width":10,"height":10,
+            "originX":"left","originY":"top",
+            "yunariAsset":{"assetId":"missing","kind":"image"}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(list.ops.is_empty());
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::UnresolvedGlobal
+                && issue.node_id.as_deref() == Some("pic")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn glass_wraps_the_base_shape_and_leaves_it_visible() {
+    let doc = document(
+        r##"{"type":"Rect","id":"panel","left":10,"top":20,"width":40,"height":30,
+            "originX":"left","originY":"top","fill":"#ffffff",
+            "yunariGlass":{"blurRadius":12}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 2, "a blur op before the wrapped base shape");
+    let Some(Shape::Glass { shape, blur_radius }) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Glass op, got {:?}", list.ops);
+    };
+    assert_eq!(*blur_radius, 12.0);
+    assert_eq!(
+        **shape,
+        Shape::Rect {
+            width: 40.0,
+            height: 30.0,
+            corner_radius: 0.0
+        },
+        "glass wraps, never replaces, the authored shape"
+    );
+    assert_eq!(
+        list.ops[1].shape,
+        Shape::Rect {
+            width: 40.0,
+            height: 30.0,
+            corner_radius: 0.0
+        },
+        "the base shape still paints"
+    );
+    assert!(list.ops[1].fill.is_some());
+    assert_eq!(list.ops[0].transform, list.ops[1].transform);
+    close(list.ops[0].transform.apply(0.0, 0.0), (10.0, 20.0));
+}
+
+#[test]
+fn zero_glass_blur_does_not_add_a_blur_op() {
+    let doc = document(
+        r##"{"type":"Rect","id":"panel","left":0,"top":0,"width":10,"height":10,
+            "originX":"left","originY":"top","fill":"#ffffff",
+            "yunariGlass":{"blurRadius":0}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    assert!(!matches!(list.ops[0].shape, Shape::Glass { .. }));
+}
+
+#[test]
+fn unsupported_glass_reports_an_issue_and_leaves_the_base_visible() {
+    // An open path has no interior to sample through; the source renderer
+    // refuses glass on it. Refuse the blur loudly but still paint the base path.
+    let doc = document(
+        r##"{"type":"Path","id":"sketch","left":0,"top":0,"width":100,"height":10,
+            "originX":"left","originY":"top","stroke":"#ff0000","strokeWidth":2,
+            "path":[["M",0,0],["L",100,0]],
+            "yunariGlass":{"blurRadius":12}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert_eq!(list.ops.len(), 1, "the base path still paints");
+    assert!(matches!(list.ops[0].shape, Shape::Path { .. }));
+    assert!(
+        issues.iter().any(|issue| {
+            issue.code == IssueCode::UnsupportedContent
+                && issue.node_id.as_deref() == Some("sketch")
+                && issue.detail.to_lowercase().contains("glass")
+        }),
+        "{issues:?}"
+    );
+}
+
+#[test]
+fn glass_on_a_rect_whose_paint_cannot_be_resolved_still_blurs_the_base() {
+    // An unresolved paint is its own issue; it must not silently drop the glass
+    // op. The base shape and its blur both survive.
+    let doc = document(
+        r##"{"type":"Rect","id":"panel","left":0,"top":0,"width":10,"height":10,
+            "originX":"left","originY":"top","fill":"#ffffff",
+            "yunariPaint":{"fill":"palette.nope"},
+            "yunariGlass":{"blurRadius":6}}"##,
+        "",
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert_eq!(list.ops.len(), 2, "blur and base shape both present");
+    assert!(matches!(list.ops[0].shape, Shape::Glass { .. }));
+    assert!(
+        issues.iter().any(|issue| issue.code == IssueCode::UnresolvedGlobal),
+        "{issues:?}"
+    );
+}

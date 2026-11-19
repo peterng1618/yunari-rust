@@ -12,7 +12,7 @@ use yunari_model::document::{
 use yunari_providers::units::UnitPreferences;
 
 use crate::affine::Affine;
-use crate::display_list::{DisplayList, Op, Paint, Shape, Stroke};
+use crate::display_list::{DisplayList, Op, Paint, PathCommand, Shape, Stroke};
 use crate::plan::{
     IssueCode, PaintSpec, PlanIssue, ResolvedStyle, page_surface, place_paint,
     resolve_object_paint, run_style_for,
@@ -200,12 +200,39 @@ fn emit(
             preferences,
             issues,
         ) {
-            Some((shape, fill, stroke)) => list.ops.push(Op {
-                transform: shape_matrix(object).then(parent),
-                shape,
-                fill,
-                stroke,
-            }),
+            Some((shape, fill, stroke)) => {
+                let transform = shape_matrix(object).then(parent);
+                // Glass samples the frame under the base shape, so its blur op
+                // goes immediately before the base. An unsupported blur is an
+                // issue, never a blank surface: the base shape still paints.
+                if let Some(glass) = &object.yunari_glass
+                    && glass.blur_radius > 0.0
+                {
+                    if glass_supports_shape(&shape) {
+                        list.ops.push(Op {
+                            transform,
+                            shape: Shape::Glass {
+                                shape: Box::new(shape.clone()),
+                                blur_radius: glass.blur_radius as f32,
+                            },
+                            fill: None,
+                            stroke: None,
+                        });
+                    } else {
+                        issues.push(PlanIssue {
+                            code: IssueCode::UnsupportedContent,
+                            node_id: Some(object.id.clone()),
+                            detail: "Glass needs a closed shape to sample through.".into(),
+                        });
+                    }
+                }
+                list.ops.push(Op {
+                    transform,
+                    shape,
+                    fill,
+                    stroke,
+                });
+            }
             None => issues.push(PlanIssue {
                 code: IssueCode::UnsupportedContent,
                 node_id: Some(object.id.clone()),
@@ -476,6 +503,54 @@ fn object_opacity(object: &FabricObject) -> f32 {
         .unwrap_or(1.0)
 }
 
+/// Glass samples the frame through a closed interior. A rect and an ellipse
+/// always have one; a path has one only when its authored data ends in `Z`.
+/// Text, images and charts have no outline to sample through, so they are
+/// refused rather than blurred over their whole box.
+fn glass_supports_shape(shape: &Shape) -> bool {
+    match shape {
+        Shape::Rect { .. } | Shape::Ellipse { .. } => true,
+        Shape::Path { closed, .. } => *closed,
+        _ => false,
+    }
+}
+
+/// Fabric stores a path as `[["M", x, y], ["C", x1, y1, x2, y2, x, y], ...]`.
+/// The major-1 source lifter writes the same commands into one SVG string,
+/// which `crate::path::parse` reads into absolute commands. Return `None` for
+/// a command array this renderer cannot read rather than drawing a wrong path.
+fn path_data(object: &FabricObject) -> Option<String> {
+    let commands = object.data.get("path")?.as_array()?;
+    let mut data = String::new();
+    for command in commands {
+        let parts = command.as_array()?;
+        let (head, arguments) = parts.split_first()?;
+        if !data.is_empty() {
+            data.push(' ');
+        }
+        data.push_str(head.as_str()?);
+        for argument in arguments {
+            let value = argument.as_f64()?;
+            if !value.is_finite() {
+                return None;
+            }
+            data.push(' ');
+            data.push_str(&format_number(value));
+        }
+    }
+    Some(data)
+}
+
+/// Mirror the source lifter's number text so the shared SVG reader sees the
+/// same data whether it came from a Fabric array or a major-1 path node.
+fn format_number(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value}")
+    }
+}
+
 /// The shape and paint of one non-group object. `None` means the type has no
 /// renderer yet; the caller turns that into an issue.
 #[allow(clippy::too_many_arguments)]
@@ -513,8 +588,117 @@ fn object_ops(
                 .unwrap_or(0.0) as f32,
         },
         "Ellipse" | "Circle" => Shape::Ellipse { width, height },
-        // Paths, images, charts and glass are added by later tasks; an object
-        // whose type is known but not yet converted is reported, not dropped.
+        "Path" => {
+            let Some(data) = path_data(object) else {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(object.id.clone()),
+                    detail: "Fabric path data is not readable.".into(),
+                });
+                return None;
+            };
+            match crate::path::parse(&data) {
+                Ok(commands) => {
+                    let closed = commands.last() == Some(&PathCommand::Close);
+                    Shape::Path { commands, closed }
+                }
+                Err(error) => {
+                    issues.push(PlanIssue {
+                        code: IssueCode::UnsupportedContent,
+                        node_id: Some(object.id.clone()),
+                        detail: match error {
+                            crate::path::PathError::Syntax(detail) => {
+                                format!("Path data is not readable: {detail}")
+                            }
+                            crate::path::PathError::Unsupported(detail) => detail.into(),
+                        },
+                    });
+                    return None;
+                }
+            }
+        }
+        "Image" => {
+            let asset_id = object
+                .data
+                .get("yunariAsset")
+                .and_then(Value::as_object)
+                .and_then(|map| map.get("assetId"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty());
+            let Some(asset_id) = asset_id else {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnsupportedContent,
+                    node_id: Some(object.id.clone()),
+                    detail: "An image object has no yunariAsset reference.".into(),
+                });
+                return None;
+            };
+            let Some(asset) = document.assets.iter().find(|asset| asset.id == asset_id) else {
+                issues.push(PlanIssue {
+                    code: IssueCode::UnresolvedGlobal,
+                    node_id: Some(object.id.clone()),
+                    detail: format!("asset {asset_id} is not declared."),
+                });
+                return None;
+            };
+            let fit = match text(object, "yunariFit")
+                .or_else(|| {
+                    object
+                        .data
+                        .get("yunariImage")
+                        .and_then(Value::as_object)
+                        .and_then(|map| map.get("fit"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or("contain")
+            {
+                "cover" => yunari_model::document::ImageFit::Cover,
+                "stretch" => yunari_model::document::ImageFit::Stretch,
+                _ => yunari_model::document::ImageFit::Contain,
+            };
+            let monochrome = object
+                .data
+                .get("yunariPaint")
+                .and_then(Value::as_object)
+                .and_then(|map| map.get("monochrome"))
+                .and_then(Value::as_str)
+                .and_then(|value| {
+                    resolve_object_paint(
+                        document,
+                        value,
+                        Some(&object.id),
+                        &format!("scene/objects/{}/image/monochrome", object.id),
+                        issues,
+                    )
+                })
+                .and_then(|spec| match spec {
+                    crate::plan::PaintSpec::Solid(color) => Some(color),
+                    crate::plan::PaintSpec::Gradient { .. } => {
+                        issues.push(PlanIssue {
+                            code: IssueCode::UnreadablePaint,
+                            node_id: Some(object.id.clone()),
+                            detail: "A monochrome mask is a single colour.".into(),
+                        });
+                        None
+                    }
+                });
+            let monochrome = monochrome.map(|color| color.with_alpha((opacity * 255.0) as u8));
+            return Some((
+                Shape::Image {
+                    asset_id: asset_id.to_owned(),
+                    path: asset.path.clone(),
+                    width,
+                    height,
+                    fit,
+                    monochrome,
+                    video: false,
+                    video_loop: false,
+                },
+                None,
+                None,
+            ));
+        }
+        // Charts and any other unhandled type are reported by the caller.
         _ => return None,
     };
 
