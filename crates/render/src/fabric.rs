@@ -99,10 +99,33 @@ fn text<'a>(object: &'a FabricObject, key: &str) -> Option<&'a str> {
     object.data.get(key).and_then(Value::as_str)
 }
 
-fn scaled_size(object: &FabricObject, dimension: &str, scale_key: &str) -> f32 {
-    let size = number(object, dimension).unwrap_or(0.0);
-    let scale = number(object, scale_key).unwrap_or(1.0);
-    (size * scale) as f32
+/// Fabric stores a Textbox's box in `yunariText.box` and omits the flattened
+/// `height`. Only text geometry reads that authored box; shapes keep their own
+/// Fabric width/height.
+fn local_size(object: &FabricObject) -> (f32, f32) {
+    let kind = object.object_type.as_deref().unwrap_or("");
+    let authored = (matches!(kind, "Textbox" | "IText" | "Text")
+        && object.data.get("height").is_none())
+    .then(|| {
+        object
+            .data
+            .get("yunariText")
+            .and_then(Value::as_object)
+            .and_then(|payload| payload.get("box"))
+            .and_then(Value::as_object)
+    })
+    .flatten();
+    let (width, height) = match authored {
+        Some(box_) => (
+            box_.get("width").and_then(Value::as_f64).unwrap_or(0.0),
+            box_.get("height").and_then(Value::as_f64).unwrap_or(0.0),
+        ),
+        None => (
+            number(object, "width").unwrap_or(0.0),
+            number(object, "height").unwrap_or(0.0),
+        ),
+    };
+    (width as f32, height as f32)
 }
 
 /// Fabric's `visible` is a boolean on the object; absent means shown. A hidden
@@ -129,8 +152,11 @@ fn origin_offset(origin: Option<&str>, scaled_size: f32) -> f32 {
 
 /// The centre the object's `left`/`top` anchors, in parent space.
 fn centre(object: &FabricObject) -> (f32, f32) {
-    let width = scaled_size(object, "width", "scaleX");
-    let height = scaled_size(object, "height", "scaleY");
+    // A text object's centre comes from its authored box, not the missing
+    // flattened height; a group has no box of its own and is unchanged.
+    let (local_width, local_height) = local_size(object);
+    let width = local_width * number(object, "scaleX").unwrap_or(1.0) as f32;
+    let height = local_height * number(object, "scaleY").unwrap_or(1.0) as f32;
     let x = number(object, "left").unwrap_or(0.0) as f32
         - origin_offset(text(object, "originX"), width)
         + width / 2.0;
@@ -151,8 +177,7 @@ fn scale_affine(object: &FabricObject) -> Affine {
 /// centre. The leading-edge correction makes `(0, 0)` the shape's top-left
 /// corner, which is where the backend's rect/ellipse paths start.
 fn shape_matrix(object: &FabricObject) -> Affine {
-    let width = number(object, "width").unwrap_or(0.0) as f32;
-    let height = number(object, "height").unwrap_or(0.0) as f32;
+    let (width, height) = local_size(object);
     let (cx, cy) = centre(object);
     Affine::translate(-width / 2.0, -height / 2.0)
         .then(scale_affine(object))

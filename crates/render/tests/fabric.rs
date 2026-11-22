@@ -738,6 +738,78 @@ fn a_textbox_value_run_formats_through_the_binding_rules() {
     assert_eq!(layout.segments[0].text, "3.00 MB");
 }
 
+#[test]
+fn a_textbox_without_fabric_height_uses_its_authored_box_for_geometry() {
+    // Fabric's Textbox omits `height`: its box lives in `yunariText.box`.
+    // A group-local clock uses negative left/top with left/top origins; sizing
+    // from the missing height would put its centre above the box and paint
+    // nowhere near the authored coordinates.
+    let doc = text_document(
+        r##"{"type":"Group","id":"clock","left":160,"top":243,"width":354.3895,"height":128,
+            "originX":"center","originY":"center","scaleX":0.7399,"scaleY":0.7399,
+            "objects":[{"type":"Textbox","id":"time","left":-177.1948,"top":-64,
+                "width":353.3895,"originX":"left","originY":"top","fontSize":84,
+                "yunariText":{"box":{"width":353.3895,"height":100},"align":"center",
+                    "verticalAlign":"middle","overflow":"ellipsis",
+                    "runs":[{"kind":"literal","text":"12:34","typeToken":"typeTokens.heading",
+                        "style":{"fontSize":{"value":84}}}]}}]}"##,
+        GLOBALS,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let Some(Shape::Text(layout)) = list.ops.first().map(|op| &op.shape) else {
+        panic!("expected a Shape::Text op, got {:?}", list.ops);
+    };
+    assert!(!layout.segments.is_empty(), "text must have segments");
+    for segment in &layout.segments {
+        assert!(
+            segment.origin.0 < 353.3895 && segment.origin.1 < 100.0,
+            "segment origin {:?} must lie inside the authored box",
+            segment.origin
+        );
+    }
+    // The authored 353.3895x100 box must map as a box, not collapse to a
+    // zero-height line: its lower-right corner stays separated from its origin.
+    let top_left = list.ops[0].transform.apply(0.0, 0.0);
+    let bottom_right = list.ops[0].transform.apply(353.3895, 100.0);
+    assert!(
+        (bottom_right.0 - top_left.0 - 353.3895 * 0.7399).abs() < 1e-3
+            && (bottom_right.1 - top_left.1 - 100.0 * 0.7399).abs() < 1e-3,
+        "the authored box must survive the group transform: {top_left:?} -> {bottom_right:?}"
+    );
+}
+
+#[test]
+fn a_centre_origin_textbox_without_height_centres_on_its_authored_box() {
+    // Fabric's default origin is the box centre. With no flattened height the
+    // old geometry put the centre at `top`, shifting the whole paragraph up by
+    // half the authored box height.
+    let doc = text_document(
+        r##"{"type":"Textbox","id":"label","left":100,"top":50,"width":200,
+            "fontSize":20,"fill":"#ffffff",
+            "yunariText":{"box":{"width":200,"height":100},"align":"center",
+                "runs":[{"kind":"literal","text":"Hi","typeToken":"typeTokens.body",
+                    "style":{"fontSize":{"value":20}}}]}}"##,
+        GLOBALS,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 1);
+    // A centre origin places the box's top-left at left-width/2, top-height/2.
+    close(list.ops[0].transform.apply(0.0, 0.0), (0.0, 0.0));
+    close(list.ops[0].transform.apply(200.0, 100.0), (200.0, 100.0));
+}
+
 /// A schema-3 document with assets, used by the image/path/glass tests below.
 fn document_with_assets(objects: &str, extra: &str) -> ThemeDocument {
     document(
