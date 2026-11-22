@@ -76,11 +76,19 @@ impl Fonts {
             match font {
                 Ok(font) => {
                     let source = fontdb::Source::Binary(Arc::new(font));
-                    if self.system.db_mut().load_font_source(source).is_empty() {
+                    let ids = self.system.db_mut().load_font_source(source);
+                    if ids.is_empty() {
                         refusals.push(format!(
                             "The face at {:?} carries no readable font.",
                             asset.path
                         ));
+                    } else if let Some(declared) = asset
+                        .family
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                    {
+                        alias_family(&mut self.system, &ids, declared);
                     }
                 }
                 Err(reason) => refusals.push(format!("The face at {:?} is {reason}.", asset.path)),
@@ -88,6 +96,63 @@ impl Fonts {
         }
         refusals
     }
+}
+
+/// Register a packaged face under the family its theme declares.
+///
+/// A font's name table can disagree with the asset metadata: a face the theme
+/// calls `Manrope` may name itself `Manrope ExtraLight`, and fontdb matches
+/// only the name table, so a run that names the token family silently falls
+/// back to a system face. fontdb has no mutable face API, so rebuild the
+/// database with the alias as the first family on the named faces and rebuild
+/// the shaping system from it. The same `Source::Binary` bytes are reused; no
+/// face is re-parsed twice and no font bytes are copied.
+fn alias_family(system: &mut FontSystem, ids: &[fontdb::ID], declared: &str) {
+    let locale = system.locale().to_owned();
+    let db = system.db();
+    let generic = [
+        (
+            fontdb::Family::Serif,
+            db.family_name(&fontdb::Family::Serif),
+        ),
+        (
+            fontdb::Family::SansSerif,
+            db.family_name(&fontdb::Family::SansSerif),
+        ),
+        (
+            fontdb::Family::Cursive,
+            db.family_name(&fontdb::Family::Cursive),
+        ),
+        (
+            fontdb::Family::Fantasy,
+            db.family_name(&fontdb::Family::Fantasy),
+        ),
+        (
+            fontdb::Family::Monospace,
+            db.family_name(&fontdb::Family::Monospace),
+        ),
+    ];
+    let mut rebuilt = fontdb::Database::new();
+    for (family, name) in generic {
+        match family {
+            fontdb::Family::Serif => rebuilt.set_serif_family(name),
+            fontdb::Family::SansSerif => rebuilt.set_sans_serif_family(name),
+            fontdb::Family::Cursive => rebuilt.set_cursive_family(name),
+            fontdb::Family::Fantasy => rebuilt.set_fantasy_family(name),
+            fontdb::Family::Monospace => rebuilt.set_monospace_family(name),
+            _ => {}
+        }
+    }
+    for mut face in db.faces().cloned().collect::<Vec<_>>() {
+        if ids.contains(&face.id) && !face.families.iter().any(|(name, _)| name == declared) {
+            face.families.insert(
+                0,
+                (declared.to_owned(), fontdb::Language::English_UnitedStates),
+            );
+        }
+        rebuilt.push_face_info(face);
+    }
+    *system = FontSystem::new_with_locale_and_db(locale, rebuilt);
 }
 
 /// A format the document left out is read from the path's tail; the validator
