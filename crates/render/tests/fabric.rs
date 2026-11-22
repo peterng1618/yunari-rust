@@ -23,6 +23,66 @@ fn close(actual: (f32, f32), expected: (f32, f32)) {
     );
 }
 
+/// The `Clock` group from the active Kraken theme, verbatim. The panel adds a
+/// 90° device turn, but the group's own angle is 0; the transform still has to
+/// match Fabric's `translate(centre) · rotate · scale` or the clock lands in
+/// the wrong half of the frame before the panel turns it.
+const KRAKEN_CLOCK_GROUP: &str = r##"{"type":"Group","id":"clock","name":"Clock",
+    "left":160,"top":243,"width":354.3895,"height":128,
+    "scaleX":0.7399,"scaleY":0.7399,
+    "objects":[
+      {"type":"Textbox","id":"time","left":-177.1948,"top":-64,
+       "width":353.3895,"originX":"left","originY":"top","fontSize":84,
+       "fill":"#F3EEE5",
+       "yunariText":{"box":{"width":353.3895,"height":100},"align":"center",
+         "verticalAlign":"middle","overflow":"ellipsis",
+         "runs":[{"kind":"literal","text":"16:10:00","typeToken":"typeTokens.heading",
+           "style":{"fontSize":{"value":84}}}]}},
+      {"type":"Rect","id":"rule","left":-24.5,"top":27.6009,
+       "width":48,"height":1,"originX":"left","originY":"top","fill":"#C9A227"}
+    ]}"##;
+
+#[test]
+fn the_kraken_clock_group_matches_fabric_absolute_placement() {
+    let doc = document(
+        KRAKEN_CLOCK_GROUP,
+        r##","globals":{
+            "palette":{
+                "none":{"name":"None","value":{"kind":"solid","color":"transparent"}},
+                "text":{"name":"Text","value":{"kind":"solid","color":"#f3eee5"}},
+                "brass":{"name":"Brass","value":{"kind":"solid","color":"#c9a227"}}
+            },
+            "typeTokens":{
+                "heading":{"family":"serif"},"body":{"family":"serif"},
+                "mono":{"family":"monospace"}
+            }
+        }"##,
+    );
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(list.ops.len(), 2);
+
+    // Fabric 7.4's `Group.calcOwnMatrix()` for these fields is
+    // [0.7399, 0, 0, 0.7399, 160, 243]. The textbox's own left/top origin is
+    // group-local: its top-left maps to (28.89, 195.65), and the authored
+    // 353.3895×100 box keeps its scaled size. The clock's ink lands in the
+    // panel's middle band; after the device's 90° turn Chromium shows the same
+    // band at x≈66..106, y≈60..261.
+    let transform = list.ops[0].transform;
+    close(transform.apply(0.0, 0.0), (28.89357, 195.6464));
+    close(transform.apply(353.3895, 100.0), (290.36646, 269.63638));
+
+    // The brass rule's own left/top are group-local; Fabric's child matrix
+    // maps its leading edge to (141.87, 263.42).
+    let rule = list.ops[1].transform;
+    close(rule.apply(0.0, 0.0), (141.87245, 263.4219));
+}
+
 #[test]
 fn a_root_rect_and_a_grouped_ellipse_produce_two_ops() {
     let doc = document(
