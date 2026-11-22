@@ -274,6 +274,27 @@ fn frame(
         &session.background_sources,
     );
     issues.extend(build_issues);
+    // The planner resolves the backdrop in artboard units, but the final fit
+    // turns the whole frame afterwards. An author's `top` band belongs to the
+    // panel, so resolve it against the panel box first and map the area, crop
+    // and ramps back through the fit's inverse. The scene itself stays in
+    // artboard coordinates, so text and charts still turn with the panel.
+    if let Some(backdrop) = list.backdrop.as_mut()
+        && session.rotation != 0
+    {
+        let panel_composition = yunari_render::background::resolve(
+            (session.width as f32, session.height as f32),
+            backdrop.composition.as_ref(),
+            session.background_sources.get(&backdrop.path).copied(),
+            backdrop.geometry,
+        );
+        backdrop.resolved = yunari_render::background::from_panel(
+            panel_composition,
+            (list.width, list.height),
+            (session.width, session.height),
+            session.rotation,
+        );
+    }
     // The refusal is a fact about the theme, not a per-frame sensor gap:
     // report it on the first frame only, so a running panel does not flood the
     // host's notice surface at display rate.

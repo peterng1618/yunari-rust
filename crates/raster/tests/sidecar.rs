@@ -751,3 +751,69 @@ fn charts_with_the_same_key_use_their_own_binding_transform() {
         "right gauge owns scale 2, offset 1"
     );
 }
+
+/// A turned panel composes the authored background in the panel's own
+/// geometry: a top band must still enter from the top after the fit turns the
+/// frame, with the ramp at its lower edge rather than a hard cut on the side.
+#[test]
+fn a_turned_panel_keeps_the_background_band_in_panel_geometry() {
+    let dir = std::env::temp_dir().join(format!("yunari-turned-backdrop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+    let mut picture = image::RgbaImage::new(2, 2);
+    for pixel in picture.pixels_mut() {
+        *pixel = image::Rgba([0, 0, 255, 255]);
+    }
+    picture
+        .save(dir.join("assets/pic.png"))
+        .expect("the picture is written");
+
+    let theme = r##"{"schemaVersion":"3.0.0","id":"turned","artboard":{"width":20,"height":20},
+        "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+          "color":{"value":"#00ff00"},
+          "composition":{"anchor":"top","extent":0.75,"fade":0.1}}},
+        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+        "scene":{"version":"7.4.0","objects":[]}}"##;
+    let mut state = Sessions::new();
+    let mut request: serde_json::Value = serde_json::from_str(&open("d1", theme, "png")).unwrap();
+    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+    request["width"] = serde_json::json!(20);
+    request["height"] = serde_json::json!(20);
+    request["rotation"] = serde_json::json!(90);
+    reply(&mut state, request);
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+    );
+    let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8()
+        .as_raw()
+        .to_vec();
+    let pixel = |x: usize, y: usize| -> [u8; 4] {
+        let at = (y * 20 + x) * 4;
+        [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+    };
+    let band = pixel(10, 1);
+    assert!(
+        band[2] > 240 && band[1] < 16,
+        "the picture enters from the top: {band:?}"
+    );
+    let side = pixel(18, 10);
+    assert!(
+        side[2] > 240 && side[1] < 16,
+        "the band spans the panel's width, not a vertical strip: {side:?}"
+    );
+    let seam = pixel(10, 14);
+    assert!(
+        seam[2] > 20 && seam[1] > 20,
+        "the ramp blends picture and fill at the band's lower edge: {seam:?}"
+    );
+    let below = pixel(18, 19);
+    assert_eq!(
+        below,
+        [0, 255, 0, 255],
+        "the fill stays below the band: {below:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
