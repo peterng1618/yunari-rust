@@ -30,6 +30,12 @@ struct Session {
     document: ThemeDocument,
     fonts: Fonts,
     images: Images,
+    /// Decoded sizes of the theme's background pictures, keyed by asset path.
+    /// Measured at open so the planner can place the page picture before the
+    /// first frame is painted.
+    background_sources: HashMap<String, (f32, f32)>,
+    /// Why the declared background picture could not be measured, if so.
+    background_issue: Option<String>,
     width: u32,
     height: u32,
     rotation: u16,
@@ -196,18 +202,47 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
     fonts.load_faces(&document, |asset| {
         safe_asset_path(base.as_deref(), asset).and_then(|path| std::fs::read(path).ok())
     });
-    let images = match base.as_deref() {
+    let mut images = match base.as_deref() {
         // Images::at resolves paths against `base`; the guard above proved each
         // declared asset stays inside it.
         Some(dir) => Images::at(dir),
         None => Images::empty(),
     };
+    // Measuring the background asset is the only way to place it: the
+    // composition's area and ramps are known from the theme, but its crop needs
+    // the source's own size. Unreadable bytes are reported at `open`, never
+    // replaced by a guessed size or a fabricated picture.
+    let mut background_sources = HashMap::new();
+    let mut background_issue = None;
+    if let (Some(media), Some(_)) = (document.background.media.as_ref(), base.as_deref())
+        && let Some(asset) = document
+            .assets
+            .iter()
+            .find(|asset| asset.id == media.asset_id)
+    {
+        match images.load(&asset.path) {
+            Some(decoded) => {
+                background_sources.insert(
+                    asset.path.clone(),
+                    (decoded.width as f32, decoded.height as f32),
+                );
+            }
+            None => {
+                background_issue = Some(format!(
+                    "Background picture {:?} could not be read; only the fill paints.",
+                    asset.path
+                ));
+            }
+        }
+    }
     state.by_id.insert(
         id.clone(),
         Session {
             document,
             fonts,
             images,
+            background_sources,
+            background_issue,
             width,
             height,
             rotation,
@@ -231,13 +266,21 @@ fn frame(
         .ok_or_else(|| fail(format!("No open session for {id:?}.")))?;
 
     let (readings, wire, series, mut issues) = parse_frame(object, &session.document)?;
-    let (mut list, build_issues) = yunari_render::fabric::build(
+    let (mut list, build_issues) = yunari_render::fabric::build_with_sources(
         &session.document,
         &mut session.fonts,
         &wire,
         &UnitPreferences::default(),
+        &session.background_sources,
     );
     issues.extend(build_issues);
+    if let Some(detail) = &session.background_issue {
+        issues.push(PlanIssue {
+            code: IssueCode::UnreadablePaint,
+            node_id: None,
+            detail: detail.clone(),
+        });
+    }
 
     // The overlay is the UI alone, composited by the device over its own clip.
     // Hiding the board's paint and its backdrop is the whole difference; the

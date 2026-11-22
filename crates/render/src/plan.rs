@@ -5,6 +5,8 @@
 //! a value could not be drawn. A node that cannot be painted becomes an issue
 //! with a reason, never a guess.
 
+use std::collections::HashMap;
+
 use yunari_model::document::{
     ChartFamily, Node, NodeKind, StyleLiteral, StyleMap, StyleValue, TextAlign, TextContent,
     TextOverflow, TextRun, ThemeDocument, TypeWeight, VerticalAlign,
@@ -102,7 +104,8 @@ pub fn build_with_history(
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
-    let (background, backdrop) = page_surface(document, width, height, &mut issues);
+    let (background, backdrop) =
+        page_surface(document, width, height, &mut issues, &HashMap::new());
     let mut list = DisplayList {
         width,
         height,
@@ -135,10 +138,11 @@ pub(crate) fn page_surface(
     width: f32,
     height: f32,
     issues: &mut Vec<PlanIssue>,
+    sources: &HashMap<String, (f32, f32)>,
 ) -> (Option<Paint>, Option<crate::Backdrop>) {
     (
         resolve_background(document, width, height, issues),
-        resolve_backdrop(document, issues),
+        resolve_backdrop(document, width, height, issues, sources),
     )
 }
 
@@ -146,7 +150,10 @@ pub(crate) fn page_surface(
 /// no composition: it covers the box.
 fn resolve_backdrop(
     document: &ThemeDocument,
+    width: f32,
+    height: f32,
     issues: &mut Vec<PlanIssue>,
+    sources: &HashMap<String, (f32, f32)>,
 ) -> Option<crate::Backdrop> {
     let media = document.background.media.as_ref()?;
     let Some(asset) = document
@@ -161,12 +168,20 @@ fn resolve_backdrop(
         });
         return None;
     };
+    let composition = crate::background::active(&document.background).cloned();
+    let geometry = crate::background::Geometry::of(Some(media));
     Some(crate::Backdrop {
         asset_id: media.asset_id.clone(),
         path: asset.path.clone(),
         video: asset.kind == yunari_model::document::AssetKind::Video,
-        composition: crate::background::active(&document.background).cloned(),
-        geometry: crate::background::Geometry::of(Some(media)),
+        resolved: crate::background::resolve(
+            (width, height),
+            composition.as_ref(),
+            sources.get(&asset.path).copied(),
+            geometry,
+        ),
+        composition,
+        geometry,
         flip_x: media.flip_x,
         flip_y: media.flip_y,
     })

@@ -3,6 +3,8 @@
 //! Group children live in their parent's centre-origin space, origins name
 //! which point `left`/`top` pins, and transforms compose once into parent space.
 
+use std::collections::HashMap;
+
 use yunari_model::document::{ThemeDocument, parse_document};
 use yunari_providers::sample::Reading;
 use yunari_render::plan::MISSING_VALUE_TEXT;
@@ -1291,4 +1293,60 @@ fn an_unknown_fabric_chart_family_reports_an_issue() {
         issue.code == IssueCode::UnsupportedContent
             && issue.node_id.as_deref() == Some("chart-x")
     }), "{issues:?}");
+}
+
+/// An advanced media declares where the picture goes, but its crop waits for
+/// the bytes. A caller that has measured them supplies the source size here.
+#[test]
+fn an_advanced_backdrop_resolves_media_from_its_source_size() {
+    let doc = parse_document(
+        r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":20},
+            "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+              "color":{"value":"#ff0000"},
+              "composition":{"anchor":"top","extent":0.5,"fade":0.1}}},
+            "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+            "scene":{"version":"7.4.0","objects":[]}}"##,
+    )
+    .expect("fixture document parses");
+    let sizes = HashMap::from([("assets/pic.png".to_owned(), (16.0, 9.0))]);
+    let (list, issues) = fabric::build_with_sources(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+        &sizes,
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let backdrop = list.backdrop.expect("a declared background has a picture");
+    let resolved = &backdrop.resolved;
+    let media = resolved.media.expect("the media is placed");
+    assert!(media.cover.width > 0.0 && media.cover.height > 0.0);
+    assert!(!resolved.masks.is_empty(), "a fade has a ramp");
+}
+
+#[test]
+fn a_backdrop_without_a_measured_source_has_no_media() {
+    let doc = parse_document(
+        r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":20},
+            "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+              "color":{"value":"#ff0000"},
+              "composition":{"anchor":"top","extent":0.5,"fade":0.1}}},
+            "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+            "scene":{"version":"7.4.0","objects":[]}}"##,
+    )
+    .expect("fixture document parses");
+    let (list, issues) = fabric::build(
+        &doc,
+        &mut yunari_render::Fonts::new(),
+        &yunari_render::Readings::default(),
+        &yunari_providers::units::UnitPreferences::default(),
+    );
+    assert!(issues.is_empty(), "{issues:?}");
+    let backdrop = list.backdrop.expect("a declared background has a picture");
+    let resolved = &backdrop.resolved;
+    assert!(resolved.media.is_none(), "no size means no placed picture");
+    assert!(
+        !resolved.masks.is_empty(),
+        "the area and its ramps are still known"
+    );
 }

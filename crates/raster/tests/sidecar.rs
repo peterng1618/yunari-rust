@@ -568,6 +568,106 @@ fn asset_paths_cannot_escape_the_theme_dir() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// An advanced background with a real picture: the sidecar measures the source
+/// at open, so the frame shows the picture in its band and the fill below it.
+#[test]
+fn an_advanced_background_composites_the_picture_into_the_frame() {
+    let dir = std::env::temp_dir().join(format!("yunari-backdrop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+    let mut picture = image::RgbaImage::new(2, 2);
+    for pixel in picture.pixels_mut() {
+        *pixel = image::Rgba([0, 0, 255, 255]);
+    }
+    picture
+        .save(dir.join("assets/pic.png"))
+        .expect("the picture is written");
+
+    let theme = r##"{"schemaVersion":"3.0.0","id":"backdrop","artboard":{"width":20,"height":20},
+        "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+          "color":{"value":"#00ff00"},
+          "composition":{"anchor":"top","extent":0.5,"fade":1.0}}},
+        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+        "scene":{"version":"7.4.0","objects":[]}}"##;
+    let request = serde_json::json!({
+        "type":"open","id":"d1","theme_json":theme,
+        "width":20,"height":20,"format":"png",
+        "theme_dir": dir.to_string_lossy()
+    });
+    let mut state = Sessions::new();
+    let opened = reply(&mut state, request);
+    assert_eq!(opened["ok"], true, "{opened}");
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+    );
+    let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8()
+        .as_raw()
+        .to_vec();
+    let pixel = |x: usize, y: usize| -> [u8; 4] {
+        let at = (y * 20 + x) * 4;
+        [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+    };
+    let band = pixel(10, 1);
+    assert!(
+        band[2] > 240 && band[1] < 16,
+        "the picture fills the band: {band:?}"
+    );
+    let seam = pixel(10, 5);
+    assert!(
+        seam[2] > 40 && seam[1] > 40,
+        "the fade blends picture and fill: {seam:?}"
+    );
+    assert_eq!(
+        pixel(10, 15),
+        [0, 255, 0, 255],
+        "the fill stays below the band"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Unreadable bytes are not a picture. The session still paints the fill and
+/// says why, so no fabricated image reaches the panel.
+#[test]
+fn an_unreadable_background_asset_reports_an_issue_without_a_picture() {
+    let dir = std::env::temp_dir().join(format!("yunari-bad-backdrop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+    std::fs::write(dir.join("assets/pic.png"), b"not a picture").expect("unreadable bytes");
+
+    let theme = r##"{"schemaVersion":"3.0.0","id":"bad","artboard":{"width":10,"height":10},
+        "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+          "color":{"value":"#ff0000"},
+          "composition":{"anchor":"top","extent":0.5,"fade":0.1}}},
+        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+        "scene":{"version":"7.4.0","objects":[]}}"##;
+    let request = serde_json::json!({
+        "type":"open","id":"d1","theme_json":theme,
+        "width":10,"height":10,"format":"png",
+        "theme_dir": dir.to_string_lossy()
+    });
+    let mut state = Sessions::new();
+    let opened = reply(&mut state, request);
+    assert_eq!(opened["ok"], true, "{opened}");
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+    );
+    assert!(
+        codes(&response).contains(&"unreadable-paint"),
+        "the unreadable asset is reported: {response}"
+    );
+    let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8()
+        .as_raw()
+        .to_vec();
+    assert_eq!(&rgba[..4], &[255, 0, 0, 255], "only the fill paints");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn charts_with_the_same_key_use_their_own_binding_transform() {
     // Raw 10: the left gauge (no transform) shows 10/100; the right gauge

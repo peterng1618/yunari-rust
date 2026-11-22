@@ -132,7 +132,7 @@ pub fn render_with_charts(
     if let (Some(backdrop), Some(store)) = (&list.backdrop, images.as_deref_mut())
         && let Some(asset) = store.load(&backdrop.path)
     {
-        draw_backdrop(&mut pixmap, asset, list, backdrop, scale);
+        draw_backdrop(&mut pixmap, asset, backdrop, scale);
     }
 
     for op in &ops {
@@ -513,24 +513,16 @@ fn box_blur(
     }
 }
 
-/// Paint the page's picture where the composition puts it, faded into the fill
-/// by its ramps.
+/// Paint the page's picture where the planner put it, faded into the fill by
+/// its ramps. The planner resolved the area from this picture's own dimensions
+/// before the list reached the backend.
 fn draw_backdrop(
     pixmap: &mut Pixmap,
     asset: &Decoded,
-    list: &DisplayList,
     backdrop: &yunari_render::Backdrop,
     scale: f32,
 ) {
-    if asset.width == 0 || asset.height == 0 {
-        return;
-    }
-    let placed = yunari_render::background::resolve(
-        (list.width, list.height),
-        backdrop.composition.as_ref(),
-        Some((asset.width as f32, asset.height as f32)),
-        backdrop.geometry,
-    );
+    let placed = &backdrop.resolved;
     let Some(media) = placed.media else {
         return;
     };
@@ -941,12 +933,30 @@ fn straight_rgba(pixmap: &Pixmap) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use yunari_render::Color;
 
     fn list(json: &str) -> DisplayList {
         let document = yunari_model::document::parse_document(json).expect("fixture parses");
         yunari_render::build(&document, &mut Fonts::new()).0
+    }
+
+    /// A Fabric list planned with the decoded size of its background picture.
+    /// The area and ramps can be planned without bytes; placing the picture
+    /// needs its own dimensions.
+    fn backdrop_list(json: &str) -> DisplayList {
+        let document = yunari_model::document::parse_document(json).expect("fixture parses");
+        let sources = HashMap::from([("assets/pic.png".to_owned(), (2.0, 2.0))]);
+        yunari_render::fabric::build_with_sources(
+            &document,
+            &mut Fonts::new(),
+            &yunari_render::Readings::default(),
+            &yunari_providers::units::UnitPreferences::default(),
+            &sources,
+        )
+        .0
     }
 
     fn pixel(raster: &Raster, x: u32, y: u32) -> [u8; 4] {
@@ -1253,7 +1263,7 @@ mod tests {
     fn a_backdrop_covers_the_page_behind_its_nodes() {
         let dir = image_fixture("backdrop", [0, 0, 255]);
         let raster = render(
-            &list(
+            &backdrop_list(
                 r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "background":{"media":{"assetId":"pic","bounds":"theme",
                     "color":{"value":"#000000"}}},
@@ -1272,7 +1282,7 @@ mod tests {
     fn an_advanced_top_band_leaves_the_fill_below_it() {
         let dir = image_fixture("top-band", [0, 0, 255]);
         let raster = render(
-            &list(
+            &backdrop_list(
                 r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
                     "background":{"mode":"advanced",
                     "media":{"assetId":"pic","bounds":"theme",

@@ -5,6 +5,8 @@
 //! its position to the children it owns. Rotation, scale and the origin point
 //! `left`/`top` pins compose into one [`Affine`] per object, in parent space.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 use yunari_model::document::{
     FabricObject, StyleMap, TextAlign, TextContent, TextOverflow, ThemeDocument, VerticalAlign,
@@ -33,10 +35,24 @@ pub fn build(
     readings: &Readings,
     preferences: &UnitPreferences,
 ) -> (DisplayList, Vec<PlanIssue>) {
+    build_with_sources(document, fonts, readings, preferences, &HashMap::new())
+}
+
+/// Build with the decoded sizes of the theme's background pictures, keyed by
+/// asset path. A caller that has read the bytes knows the source dimensions the
+/// composition needs to place the picture; without them the area and ramps are
+/// still resolved, but no picture is placed.
+pub fn build_with_sources(
+    document: &ThemeDocument,
+    fonts: &mut Fonts,
+    readings: &Readings,
+    preferences: &UnitPreferences,
+    sources: &HashMap<String, (f32, f32)>,
+) -> (DisplayList, Vec<PlanIssue>) {
     let width = document.artboard.width as f32;
     let height = document.artboard.height as f32;
     let mut issues = Vec::new();
-    let (background, backdrop) = page_surface(document, width, height, &mut issues);
+    let (background, backdrop) = page_surface(document, width, height, &mut issues, sources);
     let mut list = DisplayList {
         width,
         height,

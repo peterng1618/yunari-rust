@@ -46,6 +46,10 @@ pub struct Backdrop {
     /// Absent for a simple background, which covers the box.
     pub composition: Option<yunari_model::document::BackgroundComposition>,
     pub geometry: crate::background::Geometry,
+    /// The area, ramps and placed picture, resolved once the caller knows the
+    /// source's own size. A backend that paints a decoded picture already has
+    /// that size; it need not resolve the same arithmetic a second time.
+    pub resolved: crate::background::Composition,
     /// A mirror about the placed rect's own centre.
     pub flip_x: bool,
     pub flip_y: bool,

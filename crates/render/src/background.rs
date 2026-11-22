@@ -25,7 +25,7 @@ pub const MAX_OFFSET: f32 = 5.0;
 pub const RAMP_STOPS: usize = 8;
 
 /// A box in artboard units.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Rect {
     pub left: f32,
     pub top: f32,
@@ -34,7 +34,7 @@ pub struct Rect {
 }
 
 /// A window of the source picture, in source pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Crop {
     pub x: f32,
     pub y: f32,
@@ -44,7 +44,7 @@ pub struct Crop {
 
 /// Where one picture goes: the rect it covers, the rect the box lets through,
 /// and the source window that fills the latter.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Placed {
     pub cover: Rect,
     pub dest: Rect,
@@ -53,7 +53,7 @@ pub struct Placed {
 
 /// One ramp: transparent at the first point, opaque at the second, along the
 /// axis the two share.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Mask {
     pub x1: f32,
     pub y1: f32,
@@ -61,7 +61,7 @@ pub struct Mask {
     pub y2: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Composition {
     /// The media area in box units. It may extend past the box on any side.
     pub region: Rect,
