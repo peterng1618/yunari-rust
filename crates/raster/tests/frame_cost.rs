@@ -83,8 +83,9 @@ fn one_frame_plans_and_paints_a_representative_theme() {
 }
 
 /// Bounded video probe: three seconds of the 4K sunset-drive clip at the
-/// Kraken's 9 fps cadence versus the source's 30 fps. Each `load` returns one
-/// full-size RGBA frame, so the byte count is the decoder's real work.
+/// Kraken's 9 fps cadence. `load` returns the bytes the panel actually consumes,
+/// so the byte count is the decoder's real work. A panel-sized decode must
+/// return the same picture at a fraction of the source's size.
 #[test]
 #[ignore = "requires ffmpeg and an installed theme; reports resource numbers"]
 fn video_decode_follows_panel_demand() {
@@ -94,17 +95,45 @@ fn video_decode_follows_panel_demand() {
         eprintln!("skip: theme video or YUNARI_FFMPEG absent");
         return;
     }
-    for (label, demand) in [("source 30 fps", f64::INFINITY), ("panel 9 fps", 9.0)] {
+    let mut full_frame_bytes = 0_u64;
+    let mut panel_frame_bytes = 0_u64;
+    let mut panel_pixels = 0_u64;
+    let mut frame_changed = false;
+    for (label, size) in [("source 4K", (0, 0)), ("panel 800x450", (800, 450))] {
         let mut images = yunari_render_raster::Images::at(&dir);
-        images.set_demand_fps(demand);
+        images.set_demand_fps(9.0);
+        images.set_render_size(size.0, size.1);
         let started = Instant::now();
-        let mut bytes = 0_u64;
         let mut reads = 0_u64;
         let mut in_read = Duration::ZERO;
+        let mut first_frame = None;
         while started.elapsed() < Duration::from_secs(3) {
             let read_started = Instant::now();
             if let Some(frame) = images.load(asset) {
-                bytes += frame.rgba.len() as u64;
+                if size.0 > 0 {
+                    let bytes = frame.rgba.clone();
+                    if let Some(first) = &first_frame {
+                        frame_changed |= first != &bytes;
+                    } else {
+                        first_frame = Some(bytes);
+                    }
+                }
+                if reads == 0 {
+                    if size.0 == 0 {
+                        full_frame_bytes = frame.rgba.len() as u64;
+                    } else {
+                        panel_frame_bytes = frame.rgba.len() as u64;
+                    }
+                }
+                if size.0 > 0 {
+                    assert_eq!((frame.width, frame.height), (800, 450));
+                    // A real frame, not a fabricated or blank substitute: the
+                    // clip is photographic, so its bytes are not all equal.
+                    assert!(frame.rgba.iter().any(|byte| *byte != 0));
+                    if panel_pixels == 0 {
+                        panel_pixels = frame.rgba.len() as u64 / 4;
+                    }
+                }
                 reads += 1;
             }
             in_read += read_started.elapsed();
@@ -112,9 +141,24 @@ fn video_decode_follows_panel_demand() {
         }
         println!(
             "{label}: {reads} load calls, {:.1} MiB returned in {:.2}s, {:.1}% of wall time in load",
-            bytes as f64 / (1024.0 * 1024.0),
+            reads as f64
+                * if size.0 == 0 {
+                    full_frame_bytes
+                } else {
+                    panel_frame_bytes
+                } as f64
+                / (1024.0 * 1024.0),
             started.elapsed().as_secs_f64(),
             100.0 * in_read.as_secs_f64() / started.elapsed().as_secs_f64()
         );
     }
+    assert_eq!(panel_pixels, 800 * 450, "the decoded frame is panel-sized");
+    assert!(
+        frame_changed,
+        "the panel receives real advancing video frames"
+    );
+    assert!(
+        panel_frame_bytes * 20 < full_frame_bytes,
+        "a panel frame carried {panel_frame_bytes} bytes against {full_frame_bytes} full-size bytes"
+    );
 }

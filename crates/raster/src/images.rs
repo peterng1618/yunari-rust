@@ -31,6 +31,10 @@ pub struct Images {
     /// The panel's draw rate, in frames per second. Decoding faster cannot put
     /// more frames on the glass. Absent means the source's own rate.
     demand_fps: f64,
+    /// Device pixels the sidecar will paint. A source larger than this is
+    /// scaled by ffmpeg before RGBA conversion; the rest of the pipeline still
+    /// samples the same composition, just from fewer bytes.
+    render_size: (u32, u32),
 }
 
 /// One video asset's decoder.
@@ -56,6 +60,7 @@ struct Live {
     /// The rate ffmpeg is asked to emit, capped at the panel's cadence. Frames
     /// above it are dropped before RGBA conversion, so they cost no decode.
     fps: f64,
+    render_size: (u32, u32),
     total: u64,
     frames: u64,
     started: Instant,
@@ -69,6 +74,7 @@ impl Images {
             cache: HashMap::new(),
             videos: HashMap::new(),
             demand_fps: f64::INFINITY,
+            render_size: (0, 0),
         }
     }
 
@@ -77,6 +83,7 @@ impl Images {
     pub fn empty() -> Self {
         Self {
             demand_fps: f64::INFINITY,
+            render_size: (0, 0),
             ..Self::default()
         }
     }
@@ -88,6 +95,13 @@ impl Images {
         if fps.is_finite() && fps > 0.0 {
             self.demand_fps = fps;
         }
+    }
+
+    /// Bound decoded video frames to the device's own geometry. Only a session
+    /// that paints for one panel knows this; a detached raster keeps the
+    /// source's resolution.
+    pub fn set_render_size(&mut self, width: u32, height: u32) {
+        self.render_size = (width, height);
     }
 
     /// A picture the caller holds in memory, such as one just imported and not
@@ -112,7 +126,8 @@ impl Images {
             let file = self.base.as_ref().map(|base| base.join(path));
             match file {
                 Some(file) if is_video(&file) => {
-                    let video = start(&file, self.demand_fps).map_or(Video::Failed, Video::Live);
+                    let video = start(&file, self.demand_fps, self.render_size)
+                        .map_or(Video::Failed, Video::Live);
                     self.videos.insert(path.to_owned(), video);
                 }
                 other => {
@@ -212,7 +227,7 @@ impl Live {
 
     /// The same file, from its first frame, with the clock restarted.
     fn reopen(&mut self) {
-        if let Some(next) = start(&self.path, self.fps) {
+        if let Some(next) = start(&self.path, self.fps, self.render_size) {
             let _ = self.child.kill();
             self.child = next.child;
             self.stdout = next.stdout;
@@ -222,7 +237,55 @@ impl Live {
     }
 }
 
-fn start(path: &Path, demand_fps: f64) -> Option<Live> {
+/// ffmpeg reads a 4K source even when the panel is 800 pixels wide. Scaling in
+/// the decoder cuts the RGBA conversion and every downstream copy by the area
+/// ratio; the panel cannot show those pixels anyway.
+fn scaled_size(source: (u32, u32), panel: (u32, u32)) -> (u32, u32) {
+    if panel.0 == 0 || panel.1 == 0 || source.0 == 0 || source.1 == 0 {
+        return source;
+    }
+    let fit = (panel.0 as f64 / source.0 as f64).min(panel.1 as f64 / source.1 as f64);
+    if fit >= 1.0 {
+        return source;
+    }
+    let width = (source.0 as f64 * fit).round().max(1.0) as u32;
+    let height = (source.1 as f64 * fit).round().max(1.0) as u32;
+    (width.min(panel.0), height.min(panel.1))
+}
+
+/// The decoder's arguments, kept pure so the panel-cadence and size rules can
+/// be tested without spawning a process.
+fn video_args(path: &Path, rate: f64, size: (u32, u32)) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        path.to_str().unwrap_or_default(),
+        "-an",
+        "-sn",
+        "-dn",
+    ]
+    .into_iter()
+    .map(ToOwned::to_owned)
+    .collect();
+    if size.0 > 0 && size.1 > 0 {
+        args.extend(["-vf".to_owned(), format!("scale={}:{}", size.0, size.1)]);
+    }
+    args.extend([
+        "-r".to_owned(),
+        format!("{rate:.3}"),
+        "-f".to_owned(),
+        "rawvideo".to_owned(),
+        "-pix_fmt".to_owned(),
+        "rgba".to_owned(),
+        "-".to_owned(),
+    ]);
+    args
+}
+
+fn start(path: &Path, demand_fps: f64, render_size: (u32, u32)) -> Option<Live> {
     let bytes = std::fs::read(path).ok()?;
     let facts = yunari_model::video::read(&bytes)?;
     if facts.width == 0 || facts.height == 0 || facts.frame_rate <= 0.0 {
@@ -233,26 +296,9 @@ fn start(path: &Path, demand_fps: f64) -> Option<Live> {
     // Throttling only the reader leaves ffmpeg decoding the whole source at
     // full rate and writing into a pipe nobody drains.
     let rate = facts.frame_rate.min(demand_fps);
-    let rate_arg = format!("{rate:.3}");
+    let size = scaled_size((facts.width, facts.height), render_size);
     let mut child = Command::new(ffmpeg)
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-i",
-            path.to_str()?,
-            "-an",
-            "-sn",
-            "-dn",
-            "-r",
-            &rate_arg,
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "-",
-        ])
+        .args(video_args(path, rate, size))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -263,9 +309,10 @@ fn start(path: &Path, demand_fps: f64) -> Option<Live> {
         path: path.to_path_buf(),
         child,
         stdout,
-        width: facts.width,
-        height: facts.height,
+        width: size.0,
+        height: size.1,
         fps: rate,
+        render_size,
         total: (facts.duration_ms as f64 * rate / 1000.0) as u64,
         frames: 0,
         started: Instant::now(),
@@ -407,6 +454,40 @@ mod tests {
         assert_eq!(
             frame_reads(30.0, 240.0, 0, second),
             frame_reads(30.0, f64::INFINITY, 0, second)
+        );
+    }
+
+    #[test]
+    fn a_wide_source_fits_a_taller_panel_without_distortion() {
+        assert_eq!(scaled_size((3840, 2160), (800, 480)), (800, 450));
+    }
+
+    #[test]
+    fn a_small_source_is_never_upscaled() {
+        assert_eq!(scaled_size((320, 240), (800, 480)), (320, 240));
+    }
+
+    #[test]
+    fn video_decode_is_scaled_to_the_panels_own_geometry() {
+        let args = video_args(Path::new("clip.mp4"), 9.0, (800, 450));
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("-vf scale=800:450"),
+            "the decoder must scale before RGBA conversion: {joined}"
+        );
+        assert!(
+            joined.contains("-r 9.000"),
+            "the decoder must cap its output at the panel cadence: {joined}"
+        );
+    }
+
+    #[test]
+    fn video_decode_without_a_panel_size_stays_at_source_size() {
+        let args = video_args(Path::new("clip.mp4"), 9.0, (0, 0));
+        assert!(
+            !args.iter().any(|arg| arg == "-vf"),
+            "no scale filter without a panel size: {}",
+            args.join(" ")
         );
     }
 

@@ -233,6 +233,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
     if let Some(interval) = frame_interval_ms {
         images.set_demand_fps(1000.0 / interval as f64);
     }
+    images.set_render_size(width, height);
     // Measuring the background asset is the only way to place it: the
     // composition's area and ramps are known from the theme, but its crop needs
     // the source's own size. Unreadable bytes are reported at `open`, never
