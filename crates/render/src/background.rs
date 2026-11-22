@@ -69,6 +69,10 @@ pub struct Composition {
     pub masks: Vec<Mask>,
     /// Absent until the source's own size is known.
     pub media: Option<Placed>,
+    /// The cover rect was mapped through a quarter turn, so its width follows
+    /// the source's y axis and its height the source's x axis. A sampler that
+    /// assumes artboard x is source x must swap the two.
+    pub quarter_turn: bool,
 }
 
 /// The authored scale and pan, clamped to the document's ranges. A non-finite
@@ -147,6 +151,7 @@ pub fn resolve(
             media: known.map(|known| place_media(region, box_, known, geometry)),
             region,
             masks: Vec::new(),
+            quarter_turn: false,
         };
     };
     let anchor = composition.anchor;
@@ -166,6 +171,7 @@ pub fn resolve(
             media: known.map(|known| place_media(region, box_, known, geometry)),
             region,
             masks,
+            quarter_turn: false,
         };
     }
     let base = edge_band(
@@ -179,6 +185,7 @@ pub fn resolve(
         media: known.map(|known| place_media(region, box_, known, geometry)),
         region,
         masks,
+        quarter_turn: false,
     }
 }
 
@@ -553,6 +560,7 @@ pub fn from_panel(
             media.dest = rect(media.dest);
             media
         }),
+        quarter_turn: matches!(rotation, 90 | 270),
     }
 }
 
@@ -587,6 +595,24 @@ mod tests {
 
     fn close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 1e-2, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn a_quarter_turn_marks_the_cover_as_axis_swapped() {
+        let base = resolve(
+            BOX,
+            Some(&composition(BackgroundAnchor::Top, Some(0.5), None)),
+            Some(SOURCE),
+            Geometry::default(),
+        );
+        assert!(!base.quarter_turn);
+        for (rotation, swapped) in [(0, false), (90, true), (180, false), (270, true)] {
+            let mapped = from_panel(base.clone(), BOX, (400, 100), rotation);
+            assert_eq!(
+                mapped.quarter_turn, swapped,
+                "rotation {rotation} changes source axes: {swapped}"
+            );
+        }
     }
 
     #[test]

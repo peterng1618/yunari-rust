@@ -557,8 +557,21 @@ fn draw_backdrop(
     for y in top..bottom {
         for x in left..right {
             let (box_x, box_y) = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
-            let u = (box_x - cover.left) / cover.width;
-            let v = (box_y - cover.top) / cover.height;
+            let (u, v) = if placed.quarter_turn {
+                // The mapped cover's width follows the source's y axis and its
+                // height the source's x axis. Sampling without the swap shows
+                // a quarter-turned panel a different window of the picture —
+                // the video looks stretched against Chromium.
+                (
+                    (box_y - cover.top) / cover.height,
+                    (box_x - cover.left) / cover.width,
+                )
+            } else {
+                (
+                    (box_x - cover.left) / cover.width,
+                    (box_y - cover.top) / cover.height,
+                )
+            };
             let alpha = fade_alpha(&placed.masks, box_x, box_y);
             if alpha <= 0.0 {
                 continue;
@@ -1368,6 +1381,88 @@ mod tests {
         assert!(beyond[0] > 0 && beyond[0] < 255, "{beyond:?}");
         // Outside the panel nothing moved.
         assert_eq!(pixel(&raster, 35, 20), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn glass_over_a_backdrop_samples_the_painted_picture() {
+        let dir = image_fixture("glass-backdrop", [0, 0, 255]);
+        let raster = render(
+            &backdrop_list(
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":20,"height":20},
+                    "background":{"mode":"advanced",
+                    "media":{"assetId":"pic","bounds":"theme",
+                    "color":{"value":"#ff0000"},
+                    "composition":{"anchor":"top","extent":0.75,"fade":0.1}}},
+                    "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                    "nodes":[
+                    {"id":"panel","kind":{"type":"rectangle"},
+                     "transform":{"x":0,"y":0,"width":20,"height":6},
+                     "style":{"fill":{"value":"rgba(0, 0, 0, 0.2)"}},
+                     "glass":{"blurRadius":4}}]}"##,
+            ),
+            1.0,
+            None,
+            Some(&mut Images::at(&dir)),
+        );
+        let over = pixel(&raster, 10, 4);
+        let bare = pixel(&raster, 10, 8);
+        assert_eq!(bare, [0, 0, 255, 255], "backdrop paints the band");
+        assert!(
+            over[2] > 180,
+            "glass still shows the picture beneath it: {over:?}"
+        );
+        assert!(
+            over[0] < 80,
+            "glass does not replace the picture with the fill: {over:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A scaled glass rect must sample the picture at each point under it, not
+    /// one row stretched across its box. The image's left half is red and its
+    /// right half blue, so the two ends of the glass must differ.
+    #[test]
+    fn a_scaled_glass_rect_samples_the_picture_beneath_every_point() {
+        let dir = std::env::temp_dir().join(format!("yunari-scaled-glass-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+        let mut picture = image::RgbaImage::new(4, 2);
+        for y in 0..2 {
+            for x in 0..4 {
+                let color = if x < 2 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                };
+                picture.put_pixel(x, y, image::Rgba(color));
+            }
+        }
+        picture.save(dir.join("assets/pic.png")).expect("the picture is written");
+
+        let list = backdrop_list(
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":40},
+                "background":{"mode":"advanced",
+                "media":{"assetId":"pic","bounds":"theme",
+                "color":{"value":"#111111"},
+                "composition":{"anchor":"top","extent":1.0,"fade":0.01}}},
+                "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                "scene":{"version":"7.4.0","objects":[
+                  {"id":"panel","type":"Rect","left":0,"top":0,"width":40,"height":40,
+                   "originX":"left","originY":"top","scaleY":0.5,
+                   "fill":"#00000033","yunariGlass":{"blurRadius":2}}]}}"##,
+        );
+        let raster = render(&list, 1.0, None, Some(&mut Images::at(&dir)));
+        let left = pixel(&raster, 10, 4);
+        let right = pixel(&raster, 30, 4);
+        assert!(
+            left[0] > left[2] + 40,
+            "the glass left half shows red: {left:?}"
+        );
+        assert!(
+            right[2] > right[0] + 40,
+            "the glass right half shows blue: {right:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
