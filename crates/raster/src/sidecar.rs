@@ -274,11 +274,14 @@ fn frame(
         &session.background_sources,
     );
     issues.extend(build_issues);
-    if let Some(detail) = &session.background_issue {
+    // The refusal is a fact about the theme, not a per-frame sensor gap:
+    // report it on the first frame only, so a running panel does not flood the
+    // host's notice surface at display rate.
+    if let Some(detail) = session.background_issue.take() {
         issues.push(PlanIssue {
             code: IssueCode::UnreadablePaint,
             node_id: None,
-            detail: detail.clone(),
+            detail,
         });
     }
 

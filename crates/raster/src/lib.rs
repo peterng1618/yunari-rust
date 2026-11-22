@@ -132,7 +132,7 @@ pub fn render_with_charts(
     if let (Some(backdrop), Some(store)) = (&list.backdrop, images.as_deref_mut())
         && let Some(asset) = store.load(&backdrop.path)
     {
-        draw_backdrop(&mut pixmap, asset, backdrop, scale);
+        draw_backdrop(&mut pixmap, asset, list, backdrop, scale);
     }
 
     for op in &ops {
@@ -513,16 +513,32 @@ fn box_blur(
     }
 }
 
-/// Paint the page's picture where the planner put it, faded into the fill by
-/// its ramps. The planner resolved the area from this picture's own dimensions
-/// before the list reached the backend.
+/// Paint the page's picture where the composition puts it, faded into the fill
+/// by its ramps. A planner that was handed decoded source sizes resolved the
+/// media already; otherwise the backend resolves it from the bytes it just
+/// decoded, so a readable picture never disappears from a frame.
 fn draw_backdrop(
     pixmap: &mut Pixmap,
     asset: &Decoded,
+    list: &DisplayList,
     backdrop: &yunari_render::Backdrop,
     scale: f32,
 ) {
-    let placed = &backdrop.resolved;
+    if asset.width == 0 || asset.height == 0 {
+        return;
+    }
+    let resolved;
+    let placed = if backdrop.resolved.media.is_some() {
+        &backdrop.resolved
+    } else {
+        resolved = yunari_render::background::resolve(
+            (list.width, list.height),
+            backdrop.composition.as_ref(),
+            Some((asset.width as f32, asset.height as f32)),
+            backdrop.geometry,
+        );
+        &resolved
+    };
     let Some(media) = placed.media else {
         return;
     };
@@ -957,6 +973,34 @@ mod tests {
             &sources,
         )
         .0
+    }
+
+    /// A list built without measured sources — the path every non-sidecar
+    /// backend uses — still has to paint a picture the raster can decode.
+    #[test]
+    fn a_backdrop_without_a_planned_source_still_composites_the_decoded_picture() {
+        let dir = image_fixture("unplanned-backdrop", [0, 0, 255]);
+        let document = yunari_model::document::parse_document(
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":4,"height":4},
+                "background":{"mode":"advanced",
+                "media":{"assetId":"pic","bounds":"theme",
+                "color":{"value":"#ff0000"},
+                "composition":{"anchor":"top","extent":0.5}}},
+                "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+                "scene":{"version":"7.4.0","objects":[]}}"##,
+        )
+        .expect("fixture parses");
+        let list = yunari_render::fabric::build(
+            &document,
+            &mut Fonts::new(),
+            &yunari_render::Readings::default(),
+            &yunari_providers::units::UnitPreferences::default(),
+        )
+        .0;
+        let raster = render(&list, 1.0, None, Some(&mut Images::at(&dir)));
+        assert_eq!(pixel(&raster, 2, 1), [0, 0, 255, 255]);
+        assert_eq!(pixel(&raster, 2, 3), [255, 0, 0, 255]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn pixel(raster: &Raster, x: u32, y: u32) -> [u8; 4] {

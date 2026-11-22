@@ -649,15 +649,22 @@ fn an_unreadable_background_asset_reports_an_issue_without_a_picture() {
         "theme_dir": dir.to_string_lossy()
     });
     let mut state = Sessions::new();
-    let opened = reply(&mut state, request);
-    assert_eq!(opened["ok"], true, "{opened}");
-    let response = reply(
+    // `open` paints its first frame and carries the refusal there.
+    let response = reply(&mut state, request);
+    assert_eq!(response["ok"], true, "{response}");
+    assert!(
+        codes(&response).contains(&"unreadable-paint"),
+        "the unreadable asset is reported at open: {response}"
+    );
+    // A fact about the theme is not a per-frame sensor gap: repeating it at
+    // display rate floods the host's notice surface. Later frames stay quiet.
+    let later = reply(
         &mut state,
         serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
     );
     assert!(
-        codes(&response).contains(&"unreadable-paint"),
-        "the unreadable asset is reported: {response}"
+        !codes(&later).contains(&"unreadable-paint"),
+        "the refusal is reported once, not on every frame: {later}"
     );
     let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
         .expect("a PNG frame")
