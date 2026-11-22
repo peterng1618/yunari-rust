@@ -159,6 +159,44 @@ fn open_returns_ok_with_the_declared_geometry() {
     assert!(response["raster_ms"].as_f64().is_some_and(|ms| ms >= 0.0));
 }
 
+/// A panel turn belongs to the session, not to the frame request: the host
+/// opens a session per display and every frame must carry that display's
+/// rotation. Without it a 90-degree panel paints an unturned picture.
+#[test]
+fn an_open_rotation_turns_every_frame() {
+    fn frame_pixels(rotation: Option<u16>) -> Vec<u8> {
+        let mut state = Sessions::new();
+        let mut request: serde_json::Value =
+            serde_json::from_str(&open("d1", THEME, "png")).unwrap();
+        if let Some(degrees) = rotation {
+            request["rotation"] = serde_json::json!(degrees);
+        }
+        reply(&mut state, request);
+        bytes(&reply(
+            &mut state,
+            serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+        ))
+    }
+
+    let upright = frame_pixels(None);
+    let turned = frame_pixels(Some(90));
+    assert_ne!(upright, turned, "a 90-degree session must turn its frame");
+}
+
+#[test]
+fn an_out_of_range_rotation_is_refused() {
+    let mut state = Sessions::new();
+    let mut request: serde_json::Value =
+        serde_json::from_str(&open("d1", THEME, "png")).unwrap();
+    request["rotation"] = serde_json::json!(70_000);
+    let response = handle_line(&mut state, &request.to_string())
+        .expect_err("an out-of-range turn is refused")
+        .to_response_line();
+    let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert_eq!(response["ok"], false);
+    assert!(response["error"].as_str().unwrap().contains("rotation"));
+}
+
 #[test]
 fn frame_with_a_known_reading_decodes_to_a_non_empty_picture() {
     let mut state = Sessions::new();

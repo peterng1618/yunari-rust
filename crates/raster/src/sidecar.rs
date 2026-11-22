@@ -32,6 +32,7 @@ struct Session {
     images: Images,
     width: u32,
     height: u32,
+    rotation: u16,
     format: Format,
 }
 
@@ -113,6 +114,19 @@ fn u32_field(object: &Map<String, Value>, name: &str) -> Result<u32, ProtocolErr
         .ok_or_else(|| fail(format!("A request needs an unsigned integer {name:?}.")))
 }
 
+/// A display's quarter turn, defaulting to zero so hosts that predate the
+/// field keep the same frames. An out-of-range value is refused at the trust
+/// boundary rather than truncated into a different rotation.
+fn rotation_field(object: &Map<String, Value>) -> Result<u16, ProtocolError> {
+    let Some(value) = object.get("rotation") else {
+        return Ok(0);
+    };
+    value
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or_else(|| fail("A request's rotation must be an unsigned 16-bit integer."))
+}
+
 fn opening_dir(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
     let Some(dir) = object.get("theme_dir").and_then(Value::as_str) else {
         return Ok(None);
@@ -152,6 +166,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
     let theme_json = field(object, "theme_json")?;
     let width = u32_field(object, "width")?;
     let height = u32_field(object, "height")?;
+    let rotation = rotation_field(object)?;
     let format = match field(object, "format")? {
         "png" => Format::Png,
         "jpeg" => Format::Jpeg,
@@ -195,6 +210,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
             images,
             width,
             height,
+            rotation,
             format,
         },
     );
@@ -253,7 +269,7 @@ fn frame(
 
     // The device consumes a frame at its own geometry. Fit the painted artboard
     // into it; the frame we report is the frame we encoded.
-    let fitted = fit_raster_into(&source, session.width, session.height, 0, false)
+    let fitted = fit_raster_into(&source, session.width, session.height, session.rotation, false)
         .map_err(|error| fail(format!("Could not fit the frame: {error}")))?;
     let picture = image::RgbaImage::from_raw(fitted.width, fitted.height, fitted.rgba)
         .ok_or_else(|| fail("The frame does not fill the panel."))?;
