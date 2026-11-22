@@ -444,7 +444,9 @@ fn text_shape(
             TextOverflow::Ellipsis => PlanTextOverflow::Ellipsis,
         },
         vertical: content.vertical,
-        line_height: number(object, "lineHeight").unwrap_or(1.2) as f32,
+        // Fabric's own default; the plan layout uses the same number when a
+        // caller leaves the request's line height unset.
+        line_height: number(object, "lineHeight").unwrap_or(1.16) as f32,
     };
     Some(layout(fonts, &request))
 }

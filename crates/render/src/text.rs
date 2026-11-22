@@ -330,7 +330,9 @@ pub struct TextRequest<'a> {
     pub line_height: f32,
 }
 
-const DEFAULT_LINE_HEIGHT: f32 = 1.2;
+/// Fabric's own default (`fabric/dist/index.mjs:4175`), so a paragraph with no
+/// authored line height lands on the editor's lines.
+const DEFAULT_LINE_HEIGHT: f32 = 1.16;
 
 /// Shape, wrap and place the paragraph.
 pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
@@ -599,6 +601,29 @@ mod tests {
             vertical: false,
             line_height: DEFAULT_LINE_HEIGHT,
         }
+    }
+
+    /// Fabric's own default is 1.16 (`fabric/dist/index.mjs:4175`); a native
+    /// paragraph with no authored lineHeight must land on the same lines.
+    #[test]
+    fn an_unset_line_height_uses_fabric_1_16() {
+        let runs = vec![run("one two three four", 20.0)];
+        let mut request = request(&runs);
+        request.box_ = Some((40.0, 200.0));
+        request.line_height = 0.0;
+        let laid = layout(&mut fonts(), &request);
+        let tops: Vec<f32> = laid.segments.iter().map(|segment| segment.origin.1).collect();
+        let lines: Vec<f32> = tops.into_iter().fold(Vec::new(), |mut lines, top| {
+            if lines.last().is_none_or(|last| (*last - top).abs() > 0.5) {
+                lines.push(top);
+            }
+            lines
+        });
+        assert!(lines.len() >= 2, "the narrow box wraps: {lines:?}");
+        assert!(
+            ((lines[1] - lines[0]) - 20.0 * 1.16).abs() < 0.5,
+            "unset line height is 1.16 of the size: {lines:?}"
+        );
     }
 
     #[test]

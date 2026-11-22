@@ -40,15 +40,7 @@ pub fn render(
     fonts: Option<&mut Fonts>,
     images: Option<&mut Images>,
 ) -> Raster {
-    render_with_charts(
-        list,
-        scale,
-        fonts,
-        images,
-        None,
-        &ChartSamples::empty(),
-    )
-    .0
+    render_with_charts(list, scale, fonts, images, None, &ChartSamples::empty()).0
 }
 
 /// Render with the readings and window samples charts need, returning the
@@ -354,7 +346,7 @@ fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: A
     // box. Clamping the sample at the box gives the blur nothing outside the
     // panel to diffuse, so the edges read flat. Pad before extraction and put
     // the pattern back at the padded corner.
-    let device_radius = blur_radius * scale;
+    let device_radius = device_blur_radius(blur_radius, transform, scale);
     let pad = (2.0 * device_radius).ceil() as i32 + 2;
     let sample_left = (left - pad).max(0);
     let sample_top = (top - pad).max(0);
@@ -396,6 +388,16 @@ fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: A
     );
 }
 
+/// The blur radius in device pixels. The source uses the equal-area root of the
+/// object's own matrix, so an anisotropic card blurs at one radius, not two.
+fn device_blur_radius(blur_radius: f32, transform: Affine, scale: f32) -> f32 {
+    blur_radius
+        * (transform.a * transform.d - transform.b * transform.c)
+            .abs()
+            .sqrt()
+        * scale
+}
+
 /// The box a shape's own geometry occupies, in its node's coordinates.
 fn shape_bounds(shape: &Shape) -> Option<((f32, f32), (f32, f32))> {
     match shape {
@@ -427,10 +429,7 @@ fn shape_bounds(shape: &Shape) -> Option<((f32, f32), (f32, f32))> {
             (min.0.is_finite() && max.0.is_finite()).then_some((min, max))
         }
         Shape::Line { length } => Some(((0.0, 0.0), (*length, 0.0))),
-        Shape::Text(_)
-        | Shape::Glass { .. }
-        | Shape::Image { .. }
-        | Shape::Chart { .. } => None,
+        Shape::Text(_) | Shape::Glass { .. } | Shape::Image { .. } | Shape::Chart { .. } => None,
     }
 }
 
@@ -1412,6 +1411,20 @@ mod tests {
         );
     }
 
+    /// The source scales a glass blur by the equal-area root of the object's
+    /// matrix (`glass.ts:474-476`). The Lian Li demo's cards are scaled 1.1421
+    /// by 0.6969, so reading one axis alone makes them 64% too blurry.
+    #[test]
+    fn glass_blur_follows_the_equal_area_scale_not_one_axis() {
+        let wide = device_blur_radius(8.0, Affine::scale(2.0, 0.5), 1.0);
+        let tall = device_blur_radius(8.0, Affine::scale(0.5, 2.0), 1.0);
+        assert!(
+            (wide - tall).abs() < 0.01,
+            "equal-area transforms must blur alike: wide {wide}, tall {tall}"
+        );
+        assert!((wide - 8.0).abs() < 0.01, "area scale 1 keeps the radius");
+    }
+
     #[test]
     fn glass_over_a_backdrop_samples_the_painted_picture() {
         let dir = image_fixture("glass-backdrop", [0, 0, 255]);
@@ -1466,7 +1479,9 @@ mod tests {
                 picture.put_pixel(x, y, image::Rgba(color));
             }
         }
-        picture.save(dir.join("assets/pic.png")).expect("the picture is written");
+        picture
+            .save(dir.join("assets/pic.png"))
+            .expect("the picture is written");
 
         let list = backdrop_list(
             r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":40},

@@ -14,13 +14,13 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use base64::Engine as _;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use yunari_model::document::ThemeDocument;
 use yunari_providers::sample::{Reading, Status};
 use yunari_providers::units::UnitPreferences;
 use yunari_render::{DisplayList, Fonts, IssueCode, PlanIssue, Readings, Shape};
 
-use crate::{fit_raster_into, render_with_charts, ChartSamples, Images};
+use crate::{ChartSamples, Images, fit_raster_into, render_with_charts};
 
 type ReadingsById = HashMap<String, Option<f64>>;
 type SeriesById = HashMap<String, Vec<(u64, f64)>>;
@@ -36,6 +36,10 @@ struct Session {
     background_sources: HashMap<String, (f32, f32)>,
     /// Why the declared background picture could not be measured, if so.
     background_issue: Option<String>,
+    /// The host's panel sample is a snapshot with no history. A line chart needs
+    /// more than one point, so the session keeps the readings that actually
+    /// arrived, paced by the panel's own tick. No sample, no fabricated point.
+    history: SeriesById,
     width: u32,
     height: u32,
     rotation: u16,
@@ -133,6 +137,23 @@ fn rotation_field(object: &Map<String, Value>) -> Result<u16, ProtocolError> {
         .ok_or_else(|| fail("A request's rotation must be an unsigned 16-bit integer."))
 }
 
+/// The panel's own tick, if it states one. A host that omits it keeps the
+/// source's cadence; zero or nonsense is refused rather than turning into an
+/// infinite decode rate.
+fn frame_interval_field(object: &Map<String, Value>) -> Result<Option<u32>, ProtocolError> {
+    match object.get("frame_interval_ms") {
+        None => Ok(None),
+        Some(value) => {
+            let interval = value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| fail("A request's frame_interval_ms must be a positive integer."))?;
+            Ok(Some(interval))
+        }
+    }
+}
+
 fn opening_dir(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
     let Some(dir) = object.get("theme_dir").and_then(Value::as_str) else {
         return Ok(None);
@@ -173,6 +194,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
     let width = u32_field(object, "width")?;
     let height = u32_field(object, "height")?;
     let rotation = rotation_field(object)?;
+    let frame_interval_ms = frame_interval_field(object)?;
     let format = match field(object, "format")? {
         "png" => Format::Png,
         "jpeg" => Format::Jpeg,
@@ -208,6 +230,9 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
         Some(dir) => Images::at(dir),
         None => Images::empty(),
     };
+    if let Some(interval) = frame_interval_ms {
+        images.set_demand_fps(1000.0 / interval as f64);
+    }
     // Measuring the background asset is the only way to place it: the
     // composition's area and ramps are known from the theme, but its crop needs
     // the source's own size. Unreadable bytes are reported at `open`, never
@@ -243,6 +268,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
             images,
             background_sources,
             background_issue,
+            history: HashMap::new(),
             width,
             height,
             rotation,
@@ -265,7 +291,26 @@ fn frame(
         .get_mut(&id)
         .ok_or_else(|| fail(format!("No open session for {id:?}.")))?;
 
-    let (readings, wire, series, mut issues) = parse_frame(object, &session.document)?;
+    let (readings, wire, mut series, mut issues) = parse_frame(object, &session.document)?;
+    // The host's snapshot has no history. A line chart fed only the newest
+    // reading can never draw its polyline. Record the values that actually
+    // arrived on the panel's own frames; the wire's `series`, when present,
+    // stays authoritative. Overlays reuse the same state and must not append.
+    if !overlay {
+        for (key, value) in &readings {
+            if let Some(value) = value.filter(|value| value.is_finite()) {
+                let history = session.history.entry(key.clone()).or_default();
+                let tick = history.last().map_or(0, |(at, _)| at + 1_000);
+                history.push((tick, value));
+                if history.len() > 600 {
+                    history.remove(0);
+                }
+            }
+        }
+        for (key, values) in &session.history {
+            series.entry(key.clone()).or_insert_with(|| values.clone());
+        }
+    }
     let (mut list, build_issues) = yunari_render::fabric::build_with_sources(
         &session.document,
         &mut session.fonts,
@@ -315,8 +360,14 @@ fn frame(
 
     // The device consumes a frame at its own geometry. Fit the painted artboard
     // into it; the frame we report is the frame we encoded.
-    let fitted = fit_raster_into(&source, session.width, session.height, session.rotation, false)
-        .map_err(|error| fail(format!("Could not fit the frame: {error}")))?;
+    let fitted = fit_raster_into(
+        &source,
+        session.width,
+        session.height,
+        session.rotation,
+        false,
+    )
+    .map_err(|error| fail(format!("Could not fit the frame: {error}")))?;
     let picture = image::RgbaImage::from_raw(fitted.width, fitted.height, fitted.rgba)
         .ok_or_else(|| fail("The frame does not fill the panel."))?;
     let mut bytes = Vec::new();

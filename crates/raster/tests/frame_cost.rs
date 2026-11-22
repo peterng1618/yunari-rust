@@ -4,7 +4,8 @@
 //! -- --ignored --nocapture`. It prints the figures the spec's performance
 //! section reports; it is not a gate.
 
-use std::time::Instant;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 const THEME: &str = r##"{
   "schemaVersion": "3.0.0",
@@ -79,4 +80,41 @@ fn one_frame_plans_and_paints_a_representative_theme() {
         samples.len()
     );
     assert!(mean < 50.0, "a frame took {mean:.2} ms on average");
+}
+
+/// Bounded video probe: three seconds of the 4K sunset-drive clip at the
+/// Kraken's 9 fps cadence versus the source's 30 fps. Each `load` returns one
+/// full-size RGBA frame, so the byte count is the decoder's real work.
+#[test]
+#[ignore = "requires ffmpeg and an installed theme; reports resource numbers"]
+fn video_decode_follows_panel_demand() {
+    let dir = PathBuf::from(r"C:\Users\peter\.yunari\themes\f29b228d-b1b3-4109-b07c-6aada468074b");
+    let asset = "assets/DeLorean-by-VISUALDON---4k-60fps-Ultra-HD.mp4";
+    if !dir.join(asset).is_file() || std::env::var_os("YUNARI_FFMPEG").is_none() {
+        eprintln!("skip: theme video or YUNARI_FFMPEG absent");
+        return;
+    }
+    for (label, demand) in [("source 30 fps", f64::INFINITY), ("panel 9 fps", 9.0)] {
+        let mut images = yunari_render_raster::Images::at(&dir);
+        images.set_demand_fps(demand);
+        let started = Instant::now();
+        let mut bytes = 0_u64;
+        let mut reads = 0_u64;
+        let mut in_read = Duration::ZERO;
+        while started.elapsed() < Duration::from_secs(3) {
+            let read_started = Instant::now();
+            if let Some(frame) = images.load(asset) {
+                bytes += frame.rgba.len() as u64;
+                reads += 1;
+            }
+            in_read += read_started.elapsed();
+            std::thread::sleep(Duration::from_millis(33));
+        }
+        println!(
+            "{label}: {reads} load calls, {:.1} MiB returned in {:.2}s, {:.1}% of wall time in load",
+            bytes as f64 / (1024.0 * 1024.0),
+            started.elapsed().as_secs_f64(),
+            100.0 * in_read.as_secs_f64() / started.elapsed().as_secs_f64()
+        );
+    }
 }

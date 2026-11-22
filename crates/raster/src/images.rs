@@ -28,6 +28,9 @@ pub struct Images {
     /// A theme video is a live decoder, not a picture: it reads a frame per
     /// paint so a background plays instead of showing its first image.
     videos: HashMap<String, Video>,
+    /// The panel's draw rate, in frames per second. Decoding faster cannot put
+    /// more frames on the glass. Absent means the source's own rate.
+    demand_fps: f64,
 }
 
 /// One video asset's decoder.
@@ -50,6 +53,8 @@ struct Live {
     stdout: ChildStdout,
     width: u32,
     height: u32,
+    /// The rate ffmpeg is asked to emit, capped at the panel's cadence. Frames
+    /// above it are dropped before RGBA conversion, so they cost no decode.
     fps: f64,
     total: u64,
     frames: u64,
@@ -63,13 +68,26 @@ impl Images {
             base: Some(base.as_ref().to_path_buf()),
             cache: HashMap::new(),
             videos: HashMap::new(),
+            demand_fps: f64::INFINITY,
         }
     }
 
     /// No pictures: every image node draws nothing. A frame rendered without an
     /// asset source says so rather than inventing a picture.
     pub fn empty() -> Self {
-        Self::default()
+        Self {
+            demand_fps: f64::INFINITY,
+            ..Self::default()
+        }
+    }
+
+    /// Limit video decoding to the panel's own rate. A 30 fps source on a
+    /// 110 ms panel has no viewer for two of every three frames, and decoding
+    /// them costs a 4K RGBA read apiece.
+    pub fn set_demand_fps(&mut self, fps: f64) {
+        if fps.is_finite() && fps > 0.0 {
+            self.demand_fps = fps;
+        }
     }
 
     /// A picture the caller holds in memory, such as one just imported and not
@@ -94,7 +112,7 @@ impl Images {
             let file = self.base.as_ref().map(|base| base.join(path));
             match file {
                 Some(file) if is_video(&file) => {
-                    let video = start(&file).map_or(Video::Failed, Video::Live);
+                    let video = start(&file, self.demand_fps).map_or(Video::Failed, Video::Live);
                     self.videos.insert(path.to_owned(), video);
                 }
                 other => {
@@ -121,9 +139,35 @@ fn is_video(path: &Path) -> bool {
     file.read_exact(&mut header).is_ok() && &header[4..8] == b"ftyp"
 }
 
+/// The frame a clip reaches after `elapsed`, capped by what the panel can show.
+#[cfg(test)]
+fn target_frame(source_fps: f64, demand_fps: f64, elapsed: std::time::Duration) -> u64 {
+    (elapsed.as_secs_f64() * source_fps.min(demand_fps)) as u64
+}
+
+/// Full-size frame reads a decoder makes to catch up with `elapsed`. One read
+/// per frame, so this is the CPU-equivalent cost the panel pays. The live
+/// decoder reaches the same count through `target_frame`'s while loop.
+#[cfg(test)]
+fn frame_reads(
+    source_fps: f64,
+    demand_fps: f64,
+    previous: u64,
+    elapsed: std::time::Duration,
+) -> u64 {
+    target_frame(source_fps, demand_fps, elapsed).saturating_sub(previous) + 1
+}
+
 impl Live {
+    /// The wall-clock frame a panel can actually show. A 30 fps source drawn on
+    /// a 9 fps panel has no viewer for 21 of every 30 decoded frames, so the
+    /// decoder's cadence follows the panel's, not the source's.
+    fn target_frame(&self) -> u64 {
+        (self.started.elapsed().as_secs_f64() * self.fps) as u64
+    }
+
     fn frame(&mut self, looping: bool) -> Option<Decoded> {
-        let target = (self.started.elapsed().as_secs_f64() * self.fps) as u64;
+        let target = self.target_frame();
         if self.total > 0 && target >= self.total {
             if !looping {
                 // The clip is over: its last frame stays until something
@@ -134,7 +178,7 @@ impl Live {
             // frame rather than holding the last one.
             self.reopen();
         }
-        let target = (self.started.elapsed().as_secs_f64() * self.fps) as u64;
+        let target = self.target_frame();
         let mut latest = None;
         while self.frames <= target {
             match self.read_frame() {
@@ -168,7 +212,7 @@ impl Live {
 
     /// The same file, from its first frame, with the clock restarted.
     fn reopen(&mut self) {
-        if let Some(next) = start(&self.path) {
+        if let Some(next) = start(&self.path, self.fps) {
             let _ = self.child.kill();
             self.child = next.child;
             self.stdout = next.stdout;
@@ -178,13 +222,18 @@ impl Live {
     }
 }
 
-fn start(path: &Path) -> Option<Live> {
+fn start(path: &Path, demand_fps: f64) -> Option<Live> {
     let bytes = std::fs::read(path).ok()?;
     let facts = yunari_model::video::read(&bytes)?;
     if facts.width == 0 || facts.height == 0 || facts.frame_rate <= 0.0 {
         return None;
     }
     let ffmpeg = ffmpeg()?;
+    // Drop frames to the panel's cadence in ffmpeg, before RGBA conversion.
+    // Throttling only the reader leaves ffmpeg decoding the whole source at
+    // full rate and writing into a pipe nobody drains.
+    let rate = facts.frame_rate.min(demand_fps);
+    let rate_arg = format!("{rate:.3}");
     let mut child = Command::new(ffmpeg)
         .args([
             "-hide_banner",
@@ -196,6 +245,8 @@ fn start(path: &Path) -> Option<Live> {
             "-an",
             "-sn",
             "-dn",
+            "-r",
+            &rate_arg,
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -214,8 +265,8 @@ fn start(path: &Path) -> Option<Live> {
         stdout,
         width: facts.width,
         height: facts.height,
-        fps: facts.frame_rate,
-        total: (facts.duration_ms as f64 * facts.frame_rate / 1000.0) as u64,
+        fps: rate,
+        total: (facts.duration_ms as f64 * rate / 1000.0) as u64,
         frames: 0,
         started: Instant::now(),
     })
@@ -334,6 +385,29 @@ mod tests {
         let decoded = images.load("assets/icon.svg").expect("an SVG is a picture");
         assert_eq!((decoded.width, decoded.height), (8, 8));
         assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn a_9fps_panel_reads_at_most_9_source_frames_per_second() {
+        // One second of the sunset drive clip (30 fps) on the Kraken's 9 fps
+        // cadence: at most ten 3840x2160 RGBA reads instead of 31.
+        let second = std::time::Duration::from_secs(1);
+        let source = frame_reads(30.0, f64::INFINITY, 0, second);
+        let panel = frame_reads(30.0, 9.0, 0, second);
+        assert_eq!(source, 31);
+        assert!(
+            panel <= 10,
+            "a 9 fps panel read {panel} frames in one second"
+        );
+    }
+
+    #[test]
+    fn a_fast_panel_never_makes_the_source_decode_faster() {
+        let second = std::time::Duration::from_secs(1);
+        assert_eq!(
+            frame_reads(30.0, 240.0, 0, second),
+            frame_reads(30.0, f64::INFINITY, 0, second)
+        );
     }
 
     #[test]

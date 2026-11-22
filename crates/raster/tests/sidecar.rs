@@ -5,7 +5,8 @@
 //! response that encodes pixels is decoded and inspected here.
 
 use base64::Engine;
-use yunari_render_raster::sidecar::{handle_line, Sessions};
+use image::GenericImageView;
+use yunari_render_raster::sidecar::{Sessions, handle_line};
 
 const THEME: &str = r##"{
   "schemaVersion":"3.0.0",
@@ -57,6 +58,24 @@ const SCALED_THEME: &str = r##"{
     "label":[{"id":"b","semanticKey":"cpu.load","scale":2,"offset":1}],
     "gauge":[{"id":"b","semanticKey":"cpu.load","scale":2,"offset":1}]
   }
+}"##;
+
+/// A line chart on its own, with a bright stroke on a dark board so a painted
+/// polyline can be counted in the decoded frame.
+const LINE_THEME: &str = r##"{
+  "schemaVersion":"3.0.0",
+  "id":"line",
+  "artboard":{"width":120,"height":80},
+  "background":{"color":{"value":"#000000"}},
+  "scene":{"version":"7.4.0","objects":[
+    {"id":"trend","type":"YunariChart","family":"line",
+     "settings":{"lineWidth":4,"min":0,"max":100,"showAxes":false,
+       "windowSeconds":60,"maxPoints":10,
+       "stroke":{"kind":"solid","color":"#00ff00"}},
+     "left":0,"top":0,"width":120,"height":80,
+     "originX":"left","originY":"top"}
+  ]},
+  "bindings":{"trend":[{"id":"a","semanticKey":"cpu.load"}]}
 }"##;
 
 /// Two gauges share `cpu.load` but own different transforms: `left` uses
@@ -122,10 +141,91 @@ fn open_with_geometry(id: &str, theme: &str, format: &str, width: u32, height: u
     .to_string()
 }
 
+fn open_with_interval(
+    id: &str,
+    theme: &str,
+    format: &str,
+    width: u32,
+    height: u32,
+    interval_ms: u32,
+) -> String {
+    serde_json::json!({
+        "type": "open",
+        "id": id,
+        "theme_json": theme,
+        "width": width,
+        "height": height,
+        "format": format,
+        "frame_interval_ms": interval_ms
+    })
+    .to_string()
+}
+
 fn reply(state: &mut Sessions, request: serde_json::Value) -> serde_json::Value {
     let line = handle_line(state, &request.to_string()).expect("a response line");
     let line = line.expect("a request always answers");
     serde_json::from_str(&line).expect("the response is JSON")
+}
+
+#[test]
+fn a_line_chart_accumulates_samples_from_frames_without_a_series_field() {
+    let mut state = Sessions::new();
+    reply(
+        &mut state,
+        serde_json::from_str(&open_with_geometry("d1", LINE_THEME, "png", 120, 80)).unwrap(),
+    );
+    let mut response = serde_json::Value::Null;
+    for value in [10.0, 40.0, 80.0] {
+        response = reply(
+            &mut state,
+            serde_json::json!({
+                "type": "frame",
+                "id": "d1",
+                "readings": [
+                    {"semantic_key": "cpu.load", "value": value, "status": "ok"}
+                ]
+            }),
+        );
+    }
+    assert_eq!(response["ok"], true, "{response}");
+    let picture = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame");
+    let green = picture
+        .pixels()
+        .filter(|(_, _, pixel)| pixel[1] > 200 && pixel[2] < 50 && pixel[0] < 50)
+        .count();
+    assert!(
+        green > 30,
+        "three readings should paint a polyline, got {green} green pixels"
+    );
+}
+
+#[test]
+fn an_open_with_a_panel_interval_still_answers_with_a_frame() {
+    let mut state = Sessions::new();
+    let response = reply(
+        &mut state,
+        serde_json::from_str(&open_with_interval("d1", THEME, "png", 40, 20, 110)).unwrap(),
+    );
+    assert_eq!(response["ok"], true);
+    assert!(!bytes(&response).is_empty());
+}
+
+#[test]
+fn a_zero_panel_interval_is_refused_at_the_boundary() {
+    let mut state = Sessions::new();
+    let request = serde_json::json!({
+        "type": "open",
+        "id": "d1",
+        "theme_json": THEME,
+        "width": 40,
+        "height": 20,
+        "format": "png",
+        "frame_interval_ms": 0
+    });
+    let error = handle_line(&mut state, &request.to_string())
+        .expect_err("a zero interval is not a cadence");
+    assert!(error.to_string().contains("frame_interval_ms"));
 }
 
 fn bytes(response: &serde_json::Value) -> Vec<u8> {
@@ -186,8 +286,7 @@ fn an_open_rotation_turns_every_frame() {
 #[test]
 fn an_out_of_range_rotation_is_refused() {
     let mut state = Sessions::new();
-    let mut request: serde_json::Value =
-        serde_json::from_str(&open("d1", THEME, "png")).unwrap();
+    let mut request: serde_json::Value = serde_json::from_str(&open("d1", THEME, "png")).unwrap();
     request["rotation"] = serde_json::json!(70_000);
     let response = handle_line(&mut state, &request.to_string())
         .expect_err("an out-of-range turn is refused")
@@ -777,11 +876,18 @@ fn a_turned_panel_is_the_upright_frame_turned_by_the_device() {
             picture.put_pixel(
                 x,
                 y,
-                image::Rgba([if x < 4 { 240 } else { 20 }, if y < 2 { 200 } else { 30 }, 40, 255]),
+                image::Rgba([
+                    if x < 4 { 240 } else { 20 },
+                    if y < 2 { 200 } else { 30 },
+                    40,
+                    255,
+                ]),
             );
         }
     }
-    picture.save(dir.join("assets/pic.png")).expect("the picture is written");
+    picture
+        .save(dir.join("assets/pic.png"))
+        .expect("the picture is written");
     let theme = r##"{"schemaVersion":"3.0.0","id":"parity","artboard":{"width":20,"height":20},
         "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
           "color":{"value":"#111111"},
@@ -792,7 +898,8 @@ fn a_turned_panel_is_the_upright_frame_turned_by_the_device() {
            "originX":"left","originY":"top","fill":"#ff00ff"}]}}"##;
     let capture = |rotation: u16| -> Vec<u8> {
         let mut state = Sessions::new();
-        let mut request: serde_json::Value = serde_json::from_str(&open("d1", theme, "png")).unwrap();
+        let mut request: serde_json::Value =
+            serde_json::from_str(&open("d1", theme, "png")).unwrap();
         request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
         request["width"] = serde_json::json!(20);
         request["height"] = serde_json::json!(20);
