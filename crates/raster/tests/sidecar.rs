@@ -548,7 +548,9 @@ fn asset_paths_cannot_escape_the_theme_dir() {
 
     let theme = r##"{"schemaVersion":"3.0.0","id":"esc","artboard":{"width":10,"height":10},
         "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
-        "scene":{"version":"7.4.0","objects":[]}}"##;
+        "scene":{"version":"7.4.0","objects":[
+          {"id":"mark","type":"Rect","left":2,"top":2,"width":6,"height":4,
+           "originX":"left","originY":"top","fill":"#ff00ff"}]}}"##;
     let request = serde_json::json!({
         "type":"open","id":"d1","theme_json":theme,
         "width":10,"height":10,"format":"png",
@@ -588,7 +590,9 @@ fn an_advanced_background_composites_the_picture_into_the_frame() {
           "color":{"value":"#00ff00"},
           "composition":{"anchor":"top","extent":0.5,"fade":1.0}}},
         "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
-        "scene":{"version":"7.4.0","objects":[]}}"##;
+        "scene":{"version":"7.4.0","objects":[
+          {"id":"mark","type":"Rect","left":2,"top":2,"width":6,"height":4,
+           "originX":"left","originY":"top","fill":"#ff00ff"}]}}"##;
     let request = serde_json::json!({
         "type":"open","id":"d1","theme_json":theme,
         "width":20,"height":20,"format":"png",
@@ -642,7 +646,9 @@ fn an_unreadable_background_asset_reports_an_issue_without_a_picture() {
           "color":{"value":"#ff0000"},
           "composition":{"anchor":"top","extent":0.5,"fade":0.1}}},
         "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
-        "scene":{"version":"7.4.0","objects":[]}}"##;
+        "scene":{"version":"7.4.0","objects":[
+          {"id":"mark","type":"Rect","left":2,"top":2,"width":6,"height":4,
+           "originX":"left","originY":"top","fill":"#ff00ff"}]}}"##;
     let request = serde_json::json!({
         "type":"open","id":"d1","theme_json":theme,
         "width":10,"height":10,"format":"png",
@@ -752,137 +758,82 @@ fn charts_with_the_same_key_use_their_own_binding_transform() {
     );
 }
 
-/// A turned panel composes the authored background in the panel's own
-/// geometry: a top band must still enter from the top after the fit turns the
-/// frame, with the ramp at its lower edge rather than a hard cut on the side.
+/// A panel is the Chromium frame turned by the device. With an upright square
+/// artboard the turned frame must be exactly the upright frame rotated a
+/// quarter turn: every scene op and the backdrop have to land in the same
+/// place they did before the device turned it. Inverse-mapping the backdrop
+/// into artboard coordinates rotates it twice and moves the picture away from
+/// the scene it belongs to.
 #[test]
-fn a_turned_panel_keeps_the_background_band_in_panel_geometry() {
-    let dir = std::env::temp_dir().join(format!("yunari-turned-backdrop-{}", std::process::id()));
+fn a_turned_panel_is_the_upright_frame_turned_by_the_device() {
+    let dir = std::env::temp_dir().join(format!("yunari-turn-parity-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
-    let mut picture = image::RgbaImage::new(2, 2);
-    for pixel in picture.pixels_mut() {
-        *pixel = image::Rgba([0, 0, 255, 255]);
-    }
-    picture
-        .save(dir.join("assets/pic.png"))
-        .expect("the picture is written");
-
-    let theme = r##"{"schemaVersion":"3.0.0","id":"turned","artboard":{"width":20,"height":20},
-        "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
-          "color":{"value":"#00ff00"},
-          "composition":{"anchor":"top","extent":0.75,"fade":0.1}}},
-        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
-        "scene":{"version":"7.4.0","objects":[]}}"##;
-    let mut state = Sessions::new();
-    let mut request: serde_json::Value = serde_json::from_str(&open("d1", theme, "png")).unwrap();
-    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
-    request["width"] = serde_json::json!(20);
-    request["height"] = serde_json::json!(20);
-    request["rotation"] = serde_json::json!(90);
-    reply(&mut state, request);
-    let response = reply(
-        &mut state,
-        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
-    );
-    let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
-        .expect("a PNG frame")
-        .to_rgba8()
-        .as_raw()
-        .to_vec();
-    let pixel = |x: usize, y: usize| -> [u8; 4] {
-        let at = (y * 20 + x) * 4;
-        [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
-    };
-    let band = pixel(10, 1);
-    assert!(
-        band[2] > 240 && band[1] < 16,
-        "the picture enters from the top: {band:?}"
-    );
-    let side = pixel(18, 10);
-    assert!(
-        side[2] > 240 && side[1] < 16,
-        "the band spans the panel's width, not a vertical strip: {side:?}"
-    );
-    let seam = pixel(10, 14);
-    assert!(
-        seam[2] > 20 && seam[1] > 20,
-        "the ramp blends picture and fill at the band's lower edge: {seam:?}"
-    );
-    let below = pixel(18, 19);
-    assert_eq!(
-        below,
-        [0, 255, 0, 255],
-        "the fill stays below the band: {below:?}"
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-/// A turned panel's top band must show the same source window Chromium shows:
-/// the source's whole height and a cropped width, never the axes swapped.
-#[test]
-fn a_turned_panel_samples_the_same_source_window_as_chromium() {
-    let dir = std::env::temp_dir().join(format!("yunari-cover-axis-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
-    // The source encodes x in red and y in green. A wrong axis window changes
-    // which channel varies across the panel's top band.
-    let mut picture = image::RgbaImage::new(4, 4);
+    // A source whose two halves differ: a wrong window or a second turn puts
+    // the marker on the opposite side of the panel.
+    let mut picture = image::RgbaImage::new(8, 4);
     for y in 0..4 {
-        for x in 0..4 {
+        for x in 0..8 {
             picture.put_pixel(
                 x,
                 y,
-                image::Rgba([
-                    (x * 85) as u8,
-                    (y * 85) as u8,
-                    0,
-                    255,
-                ]),
+                image::Rgba([if x < 4 { 240 } else { 20 }, if y < 2 { 200 } else { 30 }, 40, 255]),
             );
         }
     }
     picture.save(dir.join("assets/pic.png")).expect("the picture is written");
-
-    let theme = r##"{"schemaVersion":"3.0.0","id":"axis","artboard":{"width":20,"height":20},
+    let theme = r##"{"schemaVersion":"3.0.0","id":"parity","artboard":{"width":20,"height":20},
         "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
           "color":{"value":"#111111"},
           "composition":{"anchor":"top","extent":0.75,"fade":0.01}}},
         "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
-        "scene":{"version":"7.4.0","objects":[]}}"##;
-    let mut state = Sessions::new();
-    let mut request: serde_json::Value = serde_json::from_str(&open("d1", theme, "png")).unwrap();
-    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
-    request["width"] = serde_json::json!(20);
-    request["height"] = serde_json::json!(20);
-    request["rotation"] = serde_json::json!(90);
-    reply(&mut state, request);
-    let response = reply(
-        &mut state,
-        serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
-    );
-    let rgba = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
-        .expect("a PNG frame")
-        .to_rgba8()
-        .as_raw()
-        .to_vec();
-    let pixel = |x: usize, y: usize| -> [u8; 4] {
-        let at = (y * 20 + x) * 4;
-        [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+        "scene":{"version":"7.4.0","objects":[
+          {"id":"mark","type":"Rect","left":2,"top":2,"width":6,"height":4,
+           "originX":"left","originY":"top","fill":"#ff00ff"}]}}"##;
+    let capture = |rotation: u16| -> Vec<u8> {
+        let mut state = Sessions::new();
+        let mut request: serde_json::Value = serde_json::from_str(&open("d1", theme, "png")).unwrap();
+        request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+        request["width"] = serde_json::json!(20);
+        request["height"] = serde_json::json!(20);
+        request["rotation"] = serde_json::json!(rotation);
+        reply(&mut state, request);
+        let response = reply(
+            &mut state,
+            serde_json::json!({"type":"frame","id":"d1","readings":[],"series":{}}),
+        );
+        image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+            .expect("a PNG frame")
+            .to_rgba8()
+            .as_raw()
+            .to_vec()
     };
-    // After the turn the source's x (red) runs down the panel and its y (green)
-    // runs across it. Sampling the wrong axis leaves one channel constant.
-    let left = pixel(2, 6);
-    let right = pixel(17, 6);
-    let top = pixel(10, 2);
-    let bottom = pixel(10, 13);
-    assert!(
-        right[0] < left[0].saturating_sub(30),
-        "the source's y runs across the panel: {left:?} then {right:?}"
-    );
-    assert!(
-        bottom[1] > top[1].saturating_add(30),
-        "the source's x runs down the panel: {top:?} then {bottom:?}"
-    );
+    let upright = capture(0);
+    let pixel = |frame: &[u8], x: usize, y: usize| -> [u8; 4] {
+        let at = (y * 20 + x) * 4;
+        [frame[at], frame[at + 1], frame[at + 2], frame[at + 3]]
+    };
+    for rotation in [90, 180, 270] {
+        let turned = capture(rotation);
+        let mismatches = (0..20)
+            .flat_map(|y| (0..20).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                // The same inverse map fit_raster_into uses to sample source.
+                let angle = f32::from(rotation) * std::f32::consts::PI / 180.0;
+                let (sin, cos) = angle.sin_cos();
+                let dx = x as f32 + 0.5 - 10.0;
+                let dy = y as f32 + 0.5 - 10.0;
+                let sx = (dx * cos + dy * sin + 10.0) as usize;
+                let sy = (-dx * sin + dy * cos + 10.0) as usize;
+                let expected = pixel(&upright, sx.min(19), sy.min(19));
+                let actual = pixel(&turned, x, y);
+                expected.iter().zip(actual).any(|(a, b)| a.abs_diff(b) > 12)
+            })
+            .count();
+        assert_eq!(
+            mismatches, 0,
+            "the {rotation}-degree panel must show the upright frame turned once"
+        );
+    }
     let _ = std::fs::remove_dir_all(dir);
 }

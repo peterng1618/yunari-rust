@@ -69,10 +69,6 @@ pub struct Composition {
     pub masks: Vec<Mask>,
     /// Absent until the source's own size is known.
     pub media: Option<Placed>,
-    /// The cover rect was mapped through a quarter turn, so its width follows
-    /// the source's y axis and its height the source's x axis. A sampler that
-    /// assumes artboard x is source x must swap the two.
-    pub quarter_turn: bool,
 }
 
 /// The authored scale and pan, clamped to the document's ranges. A non-finite
@@ -151,7 +147,6 @@ pub fn resolve(
             media: known.map(|known| place_media(region, box_, known, geometry)),
             region,
             masks: Vec::new(),
-            quarter_turn: false,
         };
     };
     let anchor = composition.anchor;
@@ -171,7 +166,6 @@ pub fn resolve(
             media: known.map(|known| place_media(region, box_, known, geometry)),
             region,
             masks,
-            quarter_turn: false,
         };
     }
     let base = edge_band(
@@ -185,7 +179,6 @@ pub fn resolve(
         media: known.map(|known| place_media(region, box_, known, geometry)),
         region,
         masks,
-        quarter_turn: false,
     }
 }
 
@@ -490,80 +483,6 @@ fn bounded(value: Option<f32>, fallback: f32, minimum: f32, maximum: f32) -> f32
         .map_or(fallback, |value| value.clamp(minimum, maximum))
 }
 
-/// Map a composition resolved in the panel's own pixels back into the artboard
-/// coordinates a raster paints before its final fit.
-///
-/// The sidecar paints at artboard size and fits the finished frame to the
-/// panel, turning it last. An author's `top` band is a band of the panel, so
-/// resolving it in artboard coordinates before that turn puts it on the wrong
-/// edge. Resolving against the panel box and mapping the result through the
-/// fit's inverse keeps the area, crop window and ramp endpoints in one frame.
-pub fn from_panel(
-    composition: Composition,
-    artboard: (f32, f32),
-    panel: (u32, u32),
-    rotation: u16,
-) -> Composition {
-    if rotation == 0 || panel.0 == 0 || panel.1 == 0 || artboard.0 <= 0.0 || artboard.1 <= 0.0 {
-        return composition;
-    }
-    // Quarter turns are the only turns a rectangular panel accepts; a round
-    // panel's free angle is refused before it reaches a raster.
-    let (sin, cos): (f32, f32) = match rotation {
-        90 => (1.0, 0.0),
-        180 => (0.0, -1.0),
-        270 => (-1.0, 0.0),
-        _ => return composition,
-    };
-    let turned_width = artboard.0 * cos.abs() + artboard.1 * sin.abs();
-    let turned_height = artboard.0 * sin.abs() + artboard.1 * cos.abs();
-    let scale = (panel.0 as f32 / turned_width).min(panel.1 as f32 / turned_height);
-    if scale <= 0.0 || !scale.is_finite() {
-        return composition;
-    }
-    let map = |point: (f32, f32)| {
-        let dx = point.0 - panel.0 as f32 / 2.0;
-        let dy = point.1 - panel.1 as f32 / 2.0;
-        let (sx, sy) = match rotation {
-            90 => (dy, -dx),
-            180 => (-dx, -dy),
-            270 => (-dy, dx),
-            _ => (dx, dy),
-        };
-        (artboard.0 / 2.0 + sx / scale, artboard.1 / 2.0 + sy / scale)
-    };
-    let rect = |value: Rect| {
-        let a = map((value.left, value.top));
-        let b = map((value.left + value.width, value.top + value.height));
-        Rect {
-            left: a.0.min(b.0),
-            top: a.1.min(b.1),
-            width: (a.0 - b.0).abs(),
-            height: (a.1 - b.1).abs(),
-        }
-    };
-    let mask = |value: Mask| {
-        let a = map((value.x1, value.y1));
-        let b = map((value.x2, value.y2));
-        Mask {
-            x1: a.0,
-            y1: a.1,
-            x2: b.0,
-            y2: b.1,
-        }
-    };
-    Composition {
-        region: rect(composition.region),
-        masks: composition.masks.iter().copied().map(mask).collect(),
-        media: composition.media.map(|mut media| {
-            media.cover = rect(media.cover);
-            media.dest = rect(media.dest);
-            media
-        }),
-        quarter_turn: matches!(rotation, 90 | 270),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,24 +514,6 @@ mod tests {
 
     fn close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 1e-2, "{actual} != {expected}");
-    }
-
-    #[test]
-    fn a_quarter_turn_marks_the_cover_as_axis_swapped() {
-        let base = resolve(
-            BOX,
-            Some(&composition(BackgroundAnchor::Top, Some(0.5), None)),
-            Some(SOURCE),
-            Geometry::default(),
-        );
-        assert!(!base.quarter_turn);
-        for (rotation, swapped) in [(0, false), (90, true), (180, false), (270, true)] {
-            let mapped = from_panel(base.clone(), BOX, (400, 100), rotation);
-            assert_eq!(
-                mapped.quarter_turn, swapped,
-                "rotation {rotation} changes source axes: {swapped}"
-            );
-        }
     }
 
     #[test]

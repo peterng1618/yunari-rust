@@ -350,26 +350,36 @@ fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: A
     if right <= left || bottom <= top {
         return;
     }
+    // The source renderer samples a surround (`ceil(2r) + 2`), not the panel
+    // box. Clamping the sample at the box gives the blur nothing outside the
+    // panel to diffuse, so the edges read flat. Pad before extraction and put
+    // the pattern back at the padded corner.
+    let device_radius = blur_radius * scale;
+    let pad = (2.0 * device_radius).ceil() as i32 + 2;
+    let sample_left = (left - pad).max(0);
+    let sample_top = (top - pad).max(0);
+    let sample_right = (right + pad).min(pixmap.width() as i32);
+    let sample_bottom = (bottom + pad).min(pixmap.height() as i32);
     let Some(mut region) = extract(
         pixmap,
-        left,
-        top,
-        (right - left) as usize,
-        (bottom - top) as usize,
+        sample_left,
+        sample_top,
+        (sample_right - sample_left) as usize,
+        (sample_bottom - sample_top) as usize,
     ) else {
         return;
     };
     // CSS reads a blur radius as twice the deviation, and three box passes of
     // radius `r` reach about that deviation.
-    blur(&mut region, blur_radius * scale / 2.0);
+    blur(&mut region, device_radius / 2.0);
     let pattern = tiny_skia::Pattern::new(
         region.as_ref(),
         SpreadMode::Pad,
         tiny_skia::FilterQuality::Bilinear,
         1.0,
         // The pattern's transform maps its own pixels into the frame, so the
-        // region's corner lands back where it was cut from.
-        Transform::from_translate(left as f32, top as f32),
+        // padded region's corner lands back where it was cut from.
+        Transform::from_translate(sample_left as f32, sample_top as f32),
     );
     let mut paint = SkiaPaint {
         shader: pattern,
@@ -557,21 +567,8 @@ fn draw_backdrop(
     for y in top..bottom {
         for x in left..right {
             let (box_x, box_y) = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
-            let (u, v) = if placed.quarter_turn {
-                // The mapped cover's width follows the source's y axis and its
-                // height the source's x axis. Sampling without the swap shows
-                // a quarter-turned panel a different window of the picture —
-                // the video looks stretched against Chromium.
-                (
-                    (box_y - cover.top) / cover.height,
-                    (box_x - cover.left) / cover.width,
-                )
-            } else {
-                (
-                    (box_x - cover.left) / cover.width,
-                    (box_y - cover.top) / cover.height,
-                )
-            };
+            let u = (box_x - cover.left) / cover.width;
+            let v = (box_y - cover.top) / cover.height;
             let alpha = fade_alpha(&placed.masks, box_x, box_y);
             if alpha <= 0.0 {
                 continue;
@@ -1381,6 +1378,38 @@ mod tests {
         assert!(beyond[0] > 0 && beyond[0] < 255, "{beyond:?}");
         // Outside the panel nothing moved.
         assert_eq!(pixel(&raster, 35, 20), [0, 0, 0, 255]);
+    }
+
+    /// Glass samples a surround, not just the panel's own box. With a sharp
+    /// black/white edge just outside a panel, the pixel nearest that edge must
+    /// take on the neighbour's colour. Sampling only the panel box clamps the
+    /// blur at its boundary and leaves the edge unsoftened.
+    #[test]
+    fn glass_diffuses_colour_from_outside_its_own_box() {
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":40,"height":20},
+                    "background":{"color":{"value":"#000000"}},
+                    "nodes":[
+                    {"id":"source","kind":{"type":"rectangle"},
+                    "transform":{"x":20,"y":0,"width":20,"height":20},
+                    "style":{"fill":{"value":"#ffffff"}}},
+                    {"id":"panel","kind":{"type":"rectangle"},
+                    "transform":{"x":8,"y":0,"width":12,"height":20},
+                    "glass":{"blurRadius":8}}]}"##,
+            ),
+            1.0,
+            None,
+            None,
+        );
+        // White touches the panel's right edge. A blur must carry it inward;
+        // clamping the sample at the panel box leaves the edge black.
+        let inside = pixel(&raster, 19, 10);
+        let centre = pixel(&raster, 10, 10);
+        assert!(
+            inside[0] >= centre[0] + 3,
+            "glass must diffuse the neighbouring white inward: {inside:?} vs {centre:?}"
+        );
     }
 
     #[test]
