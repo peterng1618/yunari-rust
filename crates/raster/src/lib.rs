@@ -426,38 +426,30 @@ fn draw_glass(
     // CSS reads a blur radius as twice the deviation, and three box passes of
     // radius `r` reach about that deviation.
     blur(&mut region, device_radius / 2.0);
-    // The pattern places the extracted region in device space. tiny-skia's
-    // `fill_path` post-concats the fill transform onto a shader, so handing it
-    // the device-space corner would apply the panel's translate and scale twice
-    // and sample the wrong picture: a card at (-20, 198) would read from
-    // (-40, 396). Pre-divide that transform out. Affine inverses are exact here
-    // (the panel is non-singular or `fill_path` would paint nothing), so the
-    // composed transform is the identity and the region lands where it was cut.
-    let place = Transform::from_translate(sample_left as f32, sample_top as f32);
-    let pattern = tiny_skia::Pattern::new(
-        region.as_ref(),
-        SpreadMode::Pad,
-        tiny_skia::FilterQuality::Bilinear,
-        1.0,
-        to_device.inverse().map_or(place, |inverse| {
-            Transform::from_row(
-                inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
-            )
-            .post_concat(place)
-        }),
-    );
-    let mut paint = SkiaPaint {
-        shader: pattern,
-        anti_alias: true,
-        ..SkiaPaint::default()
+    // Paint the blurred region through a device-space mask. A pattern handed to
+    // `fill_path` samples in the path's pre-transform coordinates, so a panel
+    // with a translate and a non-uniform scale cannot be corrected by one
+    // shader matrix: the region was cut in device space, but the pattern reads
+    // local space. Transform the path once, then draw the region at its own
+    // device corner with the panel's clip as a mask - one transform, one sample.
+    let device_path = path
+        .clone()
+        .transform(transform_of(to_device))
+        .unwrap_or(path);
+    let mut mask = match tiny_skia::Mask::new(pixmap.width(), pixmap.height()) {
+        Some(mask) => mask,
+        None => return,
     };
-    paint.blend_mode = tiny_skia::BlendMode::SourceOver;
-    pixmap.fill_path(
-        &path,
-        &paint,
-        FillRule::Winding,
-        transform_of(to_device),
-        None,
+    mask.fill_path(&device_path, FillRule::Winding, true, Transform::identity());
+    let mut region_paint = tiny_skia::PixmapPaint::default();
+    region_paint.quality = tiny_skia::FilterQuality::Bilinear;
+    pixmap.draw_pixmap(
+        sample_left,
+        sample_top,
+        region.as_ref(),
+        &region_paint,
+        Transform::identity(),
+        Some(&mask),
     );
 }
 

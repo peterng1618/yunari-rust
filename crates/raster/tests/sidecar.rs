@@ -1109,6 +1109,63 @@ fn r10_glass_band_blurs_the_real_theme_photo_at_kraken_geometry() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Real R10-A theme + real clip at Kraken geometry. The authored glass sits at
+/// local (-20, 198) with scaleY 0.6097 and blur 2; the panel turns 90 degrees.
+/// Chromium's band at device x=20 is blurred teal from the video, not the flat
+/// #081523 tint. A decoder is required: a still photo cannot exercise the
+/// still-path video source the defect is about.
+#[test]
+fn r10_glass_band_frosts_the_real_clip_at_kraken_geometry() {
+    let Some(ffmpeg) = std::env::var_os("YUNARI_FFMPEG") else {
+        eprintln!("SKIP: YUNARI_FFMPEG is not set");
+        return;
+    };
+    let dir = std::path::PathBuf::from(r"C:\Users\peter\.yunari\themes\r10-a-clean-clock-video-bg");
+    let raw = std::fs::read_to_string(dir.join("theme.json")).expect("R10-A theme is installed");
+    // The native host bakes the authored pan/zoom into the clip it hands the
+    // device; the media layer covers the whole panel. The installed TS copy
+    // keeps that composition in a sidecar, which the native path does not read.
+    let json = raw.clone();
+    let mut request: serde_json::Value = serde_json::from_str(&open("r10", &json, "png")).unwrap();
+    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+    request["width"] = serde_json::json!(320);
+    request["height"] = serde_json::json!(320);
+    request["rotation"] = serde_json::json!(90);
+    request["frame_interval_ms"] = serde_json::json!(111);
+    let mut state = Sessions::new();
+    reply(&mut state, request);
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"r10","readings":[],"series":{}}),
+    );
+    assert_eq!(response["ok"], true, "frame: {response}");
+    let frame = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8();
+    // The authored card is translated to (-20, 198) and squashed by scaleY
+    // 0.6097. A pattern sampled in the path's local coordinates misses the
+    // device-space region by that translate and paints a flat #081523 tint.
+    // The clip's decoded frame changes with wall-clock timing, so the check
+    // reads several rows across the card rather than one source pixel.
+    let glass_rows: Vec<[u8; 4]> = [10, 60, 100, 140, 180, 220, 260, 300]
+        .iter()
+        .map(|y| frame.get_pixel(30, *y).0)
+        .collect();
+    eprintln!("glass band colours: {glass_rows:?}");
+    // The first rows of the turned card sit over a dark part of the clip. When
+    // the pattern misses the device-space region they are all the exact tint
+    // #081523 paired with the panel's own fill; when it lands they carry the
+    // picture's slightly different green/blue instead.
+    let flat_tint_rows = glass_rows[1..4]
+        .iter()
+        .filter(|pixel| **pixel == [8, 27, 32, 255] || **pixel == [7, 26, 31, 255])
+        .count();
+    assert!(
+        flat_tint_rows == 0,
+        "glass sampled the flat tint instead of the video: {glass_rows:?}"
+    );
+}
+
 fn video_panel_glass_theme(artboard: &str, card: &str) -> String {
     format!(
         r##"{{"schemaVersion":"3.0.0","id":"video-panel-glass",
