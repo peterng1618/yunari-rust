@@ -160,9 +160,13 @@ fn paint_text(
     cx: &mut App,
 ) {
     for segment in &layout.segments {
+        // The layout shaped all runs in one line at the paragraph's largest
+        // size. A small unit reshaped alone has a shorter ascent; move its
+        // origin down to the shared baseline, as the raster backend does.
+        let baseline_shift = segment.line_y - segment.style.size * 1.2;
         let origin = fit.point(
             segment.origin.0 * op.transform.a + op.transform.e,
-            segment.origin.1 * op.transform.d + op.transform.f,
+            (segment.origin.1 + baseline_shift) * op.transform.d + op.transform.f,
         );
         let size = px(segment.style.size * fit.scale);
         let run = TextRun {

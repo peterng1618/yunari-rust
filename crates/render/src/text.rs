@@ -302,6 +302,10 @@ pub struct TextLayout {
     pub segments: Vec<TextSegment>,
     /// The box an overflowing paragraph is cut to, when it is cut.
     pub clip: Option<(f32, f32)>,
+    /// The paragraph's line spacing as a multiple of its font size. A backend
+    /// reshaping one segment alone must keep this when it overrides that
+    /// segment's font size, or the authored spacing becomes a per-run default.
+    pub line_height: f32,
 }
 
 /// One run's share of one line, positioned and ready to shape.
@@ -311,6 +315,11 @@ pub struct TextSegment {
     /// paints baselines reads the ascent from its own shaping, so the line box
     /// is the unit both sides agree on.
     pub origin: (f32, f32),
+    /// The paragraph line's baseline, relative to the same box as `origin`.
+    /// Runs of different sizes share one line, so a small unit painted at its
+    /// own font size must still be aligned to the big value's baseline. A
+    /// backend shaping a segment alone cannot rediscover this from its size.
+    pub line_y: f32,
     pub text: String,
     pub style: TextStyle,
 }
@@ -358,11 +367,12 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
         let mut buffer = buffer.borrow_with(&mut fonts.system);
         buffer.set_size(width, None);
         buffer.set_rich_text(
-            request
-                .runs
-                .iter()
-                .enumerate()
-                .map(|(index, run)| (run.text.as_str(), attrs(&run.style).metadata(index))),
+            request.runs.iter().enumerate().map(|(index, run)| {
+                (
+                    run.text.as_str(),
+                    attrs(&run.style, line_height).metadata(index),
+                )
+            }),
             &Attrs::new(),
             Shaping::Advanced,
             Some(align(request.align)),
@@ -406,6 +416,7 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
             };
             segments.push(TextSegment {
                 origin: (first.x, run.line_top),
+                line_y: run.line_y,
                 text: run.text[first.start..last.end].to_string(),
                 style: request.runs[span].style.clone(),
             });
@@ -414,6 +425,7 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
 
     let mut layout = TextLayout {
         segments,
+        line_height,
         clip: match (request.overflow, request.box_) {
             (TextOverflow::Clip, Some(box_)) | (TextOverflow::Ellipsis, Some(box_)) => Some(box_),
             _ => None,
@@ -435,8 +447,17 @@ pub fn layout(fonts: &mut Fonts, request: &TextRequest<'_>) -> TextLayout {
 }
 
 /// The shaping attributes a segment's style asks for.
-pub fn attrs(style: &TextStyle) -> Attrs<'_> {
+/// Attributes for one run, including the per-span font size and the paragraph
+/// line height both the layout and the backends shape with.
+pub fn attrs(style: &TextStyle, line_height: f32) -> Attrs<'_> {
+    // A rich paragraph holds runs at different sizes (a 70px value followed by
+    // a 15px `%`). Cosmic-text's buffer owns one font size, so without a
+    // per-span override every glyph is measured at the largest run's size:
+    // the unit is laid out far too wide, which shifts the whole centred line
+    // left and makes the two runs share a false baseline. The authored size
+    // and spacing are the same ones the layout measures with.
     let mut attrs = Attrs::new()
+        .metrics(Metrics::new(style.size, style.size * line_height))
         .weight(Weight(style.weight))
         .color(cosmic_color(style.color));
     if let Some(family) = &style.family {
@@ -515,7 +536,7 @@ fn measure(fonts: &mut Fonts, text: &str, style: &TextStyle) -> f32 {
     {
         let mut buffer = buffer.borrow_with(&mut fonts.system);
         buffer.set_size(None, None);
-        buffer.set_text(text, &attrs(style), Shaping::Advanced, None);
+        buffer.set_text(text, &attrs(style, 1.2), Shaping::Advanced, None);
     }
     buffer
         .layout_runs()
@@ -543,7 +564,12 @@ fn vertical(fonts: &mut Fonts, request: &TextRequest<'_>, line_height: f32) -> T
             let width = {
                 let mut buffer = buffer.borrow_with(&mut fonts.system);
                 buffer.set_size(None, None);
-                buffer.set_text(&text, &attrs(&run.style), Shaping::Advanced, None);
+                buffer.set_text(
+                    &text,
+                    &attrs(&run.style, line_height),
+                    Shaping::Advanced,
+                    None,
+                );
                 buffer.layout_runs().next().map_or(0.0, |line| line.line_w)
             };
             let x = match (request.align, request.box_) {
@@ -554,6 +580,9 @@ fn vertical(fonts: &mut Fonts, request: &TextRequest<'_>, line_height: f32) -> T
             };
             segments.push(TextSegment {
                 origin: (x, y),
+                // Each cluster is its own line; the glyph plane is measured
+                // from that line's top, so `line_y` is the baseline offset.
+                line_y: 0.0,
                 text,
                 style: run.style.clone(),
             });
@@ -570,6 +599,7 @@ fn vertical(fonts: &mut Fonts, request: &TextRequest<'_>, line_height: f32) -> T
     TextLayout {
         segments,
         clip: None,
+        line_height,
     }
 }
 
@@ -612,7 +642,11 @@ mod tests {
         request.box_ = Some((40.0, 200.0));
         request.line_height = 0.0;
         let laid = layout(&mut fonts(), &request);
-        let tops: Vec<f32> = laid.segments.iter().map(|segment| segment.origin.1).collect();
+        let tops: Vec<f32> = laid
+            .segments
+            .iter()
+            .map(|segment| segment.origin.1)
+            .collect();
         let lines: Vec<f32> = tops.into_iter().fold(Vec::new(), |mut lines, top| {
             if lines.last().is_none_or(|last| (*last - top).abs() > 0.5) {
                 lines.push(top);

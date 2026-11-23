@@ -13,7 +13,7 @@ fn measure(fonts: &mut Fonts, text: &str, style: &TextStyle) -> f32 {
     let mut buffer = ShapeBuffer::new(fonts.system_mut(), metrics);
     let width = {
         let mut borrowed = buffer.borrow_with(fonts.system_mut());
-        borrowed.set_text(text, &attrs(style), TextShaping::Advanced, None);
+        borrowed.set_text(text, &attrs(style, 1.2), TextShaping::Advanced, None);
         borrowed
             .layout_runs()
             .map(|run| run.line_w)

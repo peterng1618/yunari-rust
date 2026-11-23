@@ -222,7 +222,7 @@ fn draw_text(
             buffer.set_size(None, None);
             buffer.set_text(
                 &segment.text,
-                &attrs(&segment.style),
+                &attrs(&segment.style, layout.line_height),
                 TextShaping::Advanced,
                 None,
             );
@@ -231,8 +231,18 @@ fn draw_text(
                 extent.1 = extent.1.max(run.line_top + run.line_height);
             }
         }
+        // The layout shaped the whole paragraph at the largest run's size, so
+        // every segment shares its line's baseline. Reshaping one segment at
+        // its own size gives a different ascent: a 15px `%` drawn from the
+        // same line top lands far above a 70px value. Measure the single
+        // segment's own baseline and move its plane down by the difference.
+        let own_baseline = {
+            let mut buffer = buffer.borrow_with(fonts.system_mut());
+            buffer.layout_runs().next().map_or(0.0, |run| run.line_y)
+        };
+        let baseline_shift = ((segment.line_y - own_baseline) * scale).round() as i32;
         let width = extent.0.ceil().max(1.0) as u32 + 2;
-        let height = extent.1.ceil().max(1.0) as u32 + 2;
+        let height = (extent.1.ceil().max(1.0) as i32 + 2 + baseline_shift.max(0)).max(1) as u32;
         let Some(mut glyphs) = Pixmap::new(width, height) else {
             continue;
         };
@@ -243,6 +253,7 @@ fn draw_text(
             });
         }
         let place = text_transform(transform, segment, scale);
+        let place = place.post_translate(0.0, baseline_shift as f32);
         pixmap.draw_pixmap(0, 0, glyphs.as_ref(), &PixmapPaint::default(), place, None);
     }
 }
@@ -364,14 +375,25 @@ fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: A
     // CSS reads a blur radius as twice the deviation, and three box passes of
     // radius `r` reach about that deviation.
     blur(&mut region, device_radius / 2.0);
+    // The pattern places the extracted region in device space. tiny-skia's
+    // `fill_path` post-concats the fill transform onto a shader, so handing it
+    // the device-space corner would apply the panel's translate and scale twice
+    // and sample the wrong picture: a card at (-20, 198) would read from
+    // (-40, 396). Pre-divide that transform out. Affine inverses are exact here
+    // (the panel is non-singular or `fill_path` would paint nothing), so the
+    // composed transform is the identity and the region lands where it was cut.
+    let place = Transform::from_translate(sample_left as f32, sample_top as f32);
     let pattern = tiny_skia::Pattern::new(
         region.as_ref(),
         SpreadMode::Pad,
         tiny_skia::FilterQuality::Bilinear,
         1.0,
-        // The pattern's transform maps its own pixels into the frame, so the
-        // padded region's corner lands back where it was cut from.
-        Transform::from_translate(sample_left as f32, sample_top as f32),
+        to_device.inverse().map_or(place, |inverse| {
+            Transform::from_row(
+                inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
+            )
+            .post_concat(place)
+        }),
     );
     let mut paint = SkiaPaint {
         shader: pattern,
@@ -968,6 +990,19 @@ mod tests {
         yunari_render::build(&document, &mut Fonts::new()).0
     }
 
+    /// The Fabric scene a real v3 theme carries, planned through the same path
+    /// the sidecar uses, so anchors, scale and glass ops are the authored ones.
+    fn fabric_list(json: &str) -> DisplayList {
+        let document = yunari_model::document::parse_document(json).expect("fixture parses");
+        yunari_render::fabric::build(
+            &document,
+            &mut Fonts::new(),
+            &yunari_render::Readings::default(),
+            &yunari_providers::units::UnitPreferences::default(),
+        )
+        .0
+    }
+
     /// A Fabric list planned with the decoded size of its background picture.
     /// The area and ramps can be planned without bytes; placing the picture
     /// needs its own dimensions.
@@ -1507,6 +1542,192 @@ mod tests {
             "the glass right half shows blue: {right:?}"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The pattern places the extracted region in device space, but `fill_path`
+    /// post-concats the fill transform onto the shader. A panel that is itself
+    /// translated or scaled must pre-divide that transform out, or the region
+    /// lands at `op_transform ∘ sample_corner` instead of `sample_corner`.
+    /// R10-A's glass sits at (-20, 198) with `scaleY: 0.6097`; Aurora's cards
+    /// sit at (24, 196) and (248, 196). Both read a flat area with the bug.
+    #[test]
+    fn glass_samples_the_picture_directly_beneath_a_translated_panel() {
+        let raster = render(
+            &list(
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":60,"height":40},
+                    "background":{"color":{"value":"#000000"}},
+                    "nodes":[
+                    {"id":"red","kind":{"type":"rectangle"},
+                     "transform":{"x":0,"y":0,"width":30,"height":40},
+                     "style":{"fill":{"value":"#ff0000"}}},
+                    {"id":"blue","kind":{"type":"rectangle"},
+                     "transform":{"x":30,"y":0,"width":30,"height":40},
+                     "style":{"fill":{"value":"#0000ff"}}},
+                    {"id":"panel","kind":{"type":"rectangle"},
+                     "transform":{"x":20,"y":10,"width":20,"height":20},
+                     "style":{"fill":{"value":"rgba(0,0,0,0)"}},
+                     "glass":{"blurRadius":1}}]}"##,
+            ),
+            1.0,
+            None,
+            None,
+        );
+        // The panel straddles the red/blue edge. Its right half must still show
+        // blue: a transform applied twice samples far to the left of the panel.
+        let right = pixel(&raster, 35, 20);
+        let left = pixel(&raster, 25, 20);
+        assert!(
+            i16::from(right[2]) > i16::from(right[0]) + 60,
+            "glass right half must show the blue beneath it: {right:?}"
+        );
+        assert!(
+            i16::from(left[0]) > i16::from(left[2]) + 60,
+            "glass left half must show the red beneath it: {left:?}"
+        );
+    }
+
+    /// The R10-A Clean Clock card: a wide, short glass rect with a translated
+    /// leading corner and a non-unit `scaleY`. The blur must land on the card,
+    /// not on a shifted, rescaled copy of the sampled region.
+    #[test]
+    fn glass_on_the_r10_clock_card_keeps_its_sampled_region_in_place() {
+        let raster = render(
+            &fabric_list(
+                r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":320,"height":320},
+                    "background":{"color":{"value":"#000000"}},
+                    "scene":{"version":"7.4.0","objects":[
+                    {"id":"red","type":"Rect","left":0,"top":0,"width":160,"height":320,
+                     "originX":"left","originY":"top","fill":"#ff0000"},
+                    {"id":"blue","type":"Rect","left":160,"top":0,"width":160,"height":320,
+                     "originX":"left","originY":"top","fill":"#0000ff"},
+                    {"id":"card","type":"Rect","left":-20,"top":198.056,"width":360,"height":200,
+                     "scaleY":0.6097,"originX":"left","originY":"top",
+                     "fill":"rgba(0,0,0,0)","yunariGlass":{"blurRadius":2}}]}}"##,
+            ),
+            1.0,
+            None,
+            None,
+        );
+        // The card spans x -20..340, straddling the source edge at 160. Both
+        // halves must show their own colour through the glass.
+        let left = pixel(&raster, 80, 250);
+        let right = pixel(&raster, 240, 250);
+        assert!(
+            i16::from(left[0]) > i16::from(left[2]) + 60,
+            "R10 card's left half must show red: {left:?}"
+        );
+        assert!(
+            i16::from(right[2]) > i16::from(right[0]) + 60,
+            "R10 card's right half must show blue: {right:?}"
+        );
+    }
+
+    /// A big value and a small `%` unit share one line. The shaper lays both
+    /// out in one buffer, so both inherit the paragraph's line height. The
+    /// raster backend reshapes each segment on its own; with a hard-coded 1.2
+    /// instead of the authored 1.18 the two glyph planes land at different
+    /// baselines and the unit reads as sitting above the value.
+    #[test]
+    fn text_runs_of_different_sizes_share_a_baseline() {
+        let document = yunari_model::document::parse_document(
+            r##"{"schemaVersion":"3.0.0","id":"t","artboard":{"width":200,"height":100},
+                "background":{"color":{"value":"#000000"}},
+                "typeTokens":{"heading":{"family":"Inter","weight":700}},
+                "palette":{"ink":{"name":"Ink","value":{"kind":"solid","color":"#ffffff"}},
+                           "dim":{"name":"Dim","value":{"kind":"solid","color":"#ff0000"}}},
+                "scene":{"version":"7.4.0","objects":[
+                  {"id":"label","type":"Textbox","left":10,"top":10,"width":160,"height":70,
+                   "originX":"left","originY":"top","fill":"#ffffff",
+                   "yunariText":{"box":{"width":160,"height":70},
+                     "align":"left","verticalAlign":"middle","overflow":"clip",
+                     "runs":[
+                       {"kind":"literal","text":"42","typeToken":"typeTokens.heading",
+                        "style":{"color":{"ref":"palette.ink"},"fontSize":{"value":60},
+                                 "lineHeight":{"value":1.18}}},
+                       {"kind":"literal","text":"%","typeToken":"typeTokens.heading",
+                        "style":{"color":{"ref":"palette.dim"},"fontSize":{"value":15},
+                                 "lineHeight":{"value":1.18}}}]}}]}}"##,
+        )
+        .expect("fixture parses");
+        let (planned, issues) = yunari_render::fabric::build(
+            &document,
+            &mut Fonts::new(),
+            &yunari_render::Readings::default(),
+            &yunari_providers::units::UnitPreferences::default(),
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        let mut fonts = Fonts::new();
+        let raster = render(&planned, 1.0, Some(&mut fonts), None);
+        // Find the bottom of each run's ink by colour. Both runs share the
+        // same shaped line, so their ink must end on the same baseline row
+        // (allowing for descenders, which neither glyph here has).
+        let mut value_bottom = None;
+        let mut unit_bottom = None;
+        for y in 0..raster.height {
+            for x in 0..raster.width {
+                let p = pixel(&raster, x, y);
+                if p[0] > 200 && p[1] > 200 && p[2] > 200 && p[3] > 100 {
+                    value_bottom = Some(y);
+                }
+                if p[0] > 200 && p[1] < 100 && p[2] < 100 && p[3] > 100 {
+                    unit_bottom = Some(y);
+                }
+            }
+        }
+        let value = value_bottom.expect("value glyphs painted");
+        let unit = unit_bottom.expect("unit glyphs painted");
+        assert!(
+            value.abs_diff(unit) <= 4,
+            "unit and value must share a baseline: value bottom {value}, unit bottom {unit}"
+        );
+    }
+
+    /// The Lian Li and Turzx cards were reported as "tint only": a flat
+    /// colour over the card with no visible diffusion. Reading two frames of
+    /// the same scene, one with a blur radius and one without, must differ in
+    /// the pixels immediately inside the card — not merely in its fill.
+    #[test]
+    fn glass_blur_changes_pixels_and_not_only_the_tint() {
+        let scene = |radius: u32| {
+            let json = format!(
+                r##"{{"schemaVersion":"3.0.0","id":"t","artboard":{{"width":80,"height":40}},
+                    "background":{{"color":{{"value":"#000000"}}}},
+                    "scene":{{"version":"7.4.0","objects":[
+                    {{"id":"stripes","type":"Rect","left":0,"top":0,"width":40,"height":40,
+                      "originX":"left","originY":"top","fill":"#ffffff"}},
+                    {{"id":"stripes2","type":"Rect","left":40,"top":0,"width":40,"height":40,
+                      "originX":"left","originY":"top","fill":"#000000"}},
+                    {{"id":"card","type":"Rect","left":24,"top":8,"width":32,"height":24,
+                      "originX":"left","originY":"top","fill":"rgba(0,0,0,0)",
+                      "yunariGlass":{{"blurRadius":{radius}}}}}]}}}}"##
+            );
+            render(&fabric_list(&json), 1.0, None, None)
+        };
+        let sharp = scene(0);
+        let blurred = scene(8);
+        let mut differing = 0;
+        for y in 9..32 {
+            for x in 25..56 {
+                let a = pixel(&sharp, x, y);
+                let b = pixel(&blurred, x, y);
+                if a != b {
+                    differing += 1;
+                }
+            }
+        }
+        // The card straddles the white/black edge at x=40. Without a blur the
+        // edge inside the card stays sharp; with one it diffuses. A tint-only
+        // implementation would paint the same pixels in both frames.
+        assert!(
+            differing > 50,
+            "glass blur must diffuse the edge; only {differing} pixels changed"
+        );
+        let sharp_edge = i16::from(pixel(&sharp, 39, 20)[0]);
+        let soft_edge = i16::from(pixel(&blurred, 39, 20)[0]);
+        assert!(
+            soft_edge < sharp_edge,
+            "the sharp side of the edge must be softened: {sharp_edge} -> {soft_edge}"
+        );
     }
 
     #[test]

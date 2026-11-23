@@ -944,3 +944,75 @@ fn a_turned_panel_is_the_upright_frame_turned_by_the_device() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Glass samples the frame behind its own card. On a turned panel the sampled
+/// region must turn with the card, not stay at the upright frame's coordinates.
+/// A two-colour backdrop and a card on the red half make a wrong transform
+/// visible as a blue card after the turn.
+#[test]
+fn glass_sampling_follows_the_turned_panel() {
+    let dir = std::env::temp_dir().join(format!("yunari-glass-turn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+    let mut picture = image::RgbaImage::new(20, 20);
+    for y in 0..20 {
+        for x in 0..20 {
+            picture.put_pixel(
+                x,
+                y,
+                image::Rgba([if x < 10 { 240 } else { 20 }, 40, 40, 255]),
+            );
+        }
+    }
+    picture
+        .save(dir.join("assets/pic.png"))
+        .expect("the picture is written");
+    let theme = r##"{"schemaVersion":"3.0.0","id":"glass-turn","artboard":{"width":20,"height":20},
+        "background":{"mode":"advanced","media":{"assetId":"pic","bounds":"display",
+          "color":{"value":"#111111"}}},
+        "assets":[{"id":"pic","kind":"image","path":"assets/pic.png"}],
+        "scene":{"version":"7.4.0","objects":[
+          {"id":"card","type":"Rect","left":2,"top":6,"width":8,"height":8,
+           "originX":"left","originY":"top","fill":"rgba(0,0,0,0)",
+           "yunariGlass":{"blurRadius":1}}]}}"##;
+    let capture = |rotation: u16| {
+        let mut state = Sessions::new();
+        let mut request: serde_json::Value =
+            serde_json::from_str(&open("g", theme, "png")).unwrap();
+        request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+        request["width"] = serde_json::json!(20);
+        request["height"] = serde_json::json!(20);
+        request["rotation"] = serde_json::json!(rotation);
+        reply(&mut state, request);
+        let response = reply(
+            &mut state,
+            serde_json::json!({"type":"frame","id":"g","readings":[],"series":{}}),
+        );
+        image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+            .expect("a PNG frame")
+            .to_rgba8()
+    };
+    let upright = capture(0);
+    let card_pixel = upright.get_pixel(5, 10);
+    assert!(
+        card_pixel[0] > 150,
+        "upright card samples the red half: {card_pixel:?}"
+    );
+    for rotation in [90, 180, 270] {
+        let turned = capture(rotation);
+        let angle = f32::from(rotation) * std::f32::consts::PI / 180.0;
+        let (sin, cos) = angle.sin_cos();
+        // Inverse of fit_raster_into's turn: from the upright card centre to
+        // the device pixel that samples it.
+        let ux = 5.5 - 10.0;
+        let uy = 10.5 - 10.0;
+        let sx = (ux * cos - uy * sin + 10.0) as usize;
+        let sy = (ux * sin + uy * cos + 10.0) as usize;
+        let at = turned.get_pixel(sx as u32, sy as u32);
+        assert!(
+            at[0] > 120,
+            "the {rotation}-degree card must still sample red: {at:?} at ({sx},{sy})"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
