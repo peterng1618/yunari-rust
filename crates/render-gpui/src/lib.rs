@@ -231,6 +231,7 @@ fn paint_rasterised(
         height: list.height,
         background: None,
         backdrop: None,
+        backdrop_visible: true,
         ops: vec![op.clone()],
     };
     let scale = fit.scale * window.scale_factor();
@@ -309,6 +310,7 @@ mod tests {
             height,
             background: None,
             backdrop: None,
+            backdrop_visible: true,
             ops: Vec::new(),
         }
     }

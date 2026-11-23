@@ -58,6 +58,7 @@ pub fn build_with_sources(
         height,
         background,
         backdrop,
+        backdrop_visible: true,
         ops: Vec::new(),
     };
 

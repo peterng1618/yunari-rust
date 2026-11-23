@@ -254,10 +254,12 @@ fn scaled_size(source: (u32, u32), panel: (u32, u32)) -> (u32, u32) {
 }
 
 /// The decoder's scaling filter. A panel cannot sharpen an edge the decoder
-/// smoothed away, so the downscale keeps the authored detail. Lanczos measured
-/// a 6% higher mean edge gradient than ffmpeg's default bicubic on the sunset
-/// clip at 800x450, at the same frame rate and CPU.
-const VIDEO_SCALE_FILTER: &str = "lanczos";
+/// smoothed away, so the downscale keeps the authored detail. Lanczos alone
+/// still rounds chroma during the RGBA conversion. Adding accurate rounding and
+/// full-chroma interpolation measured a 53% higher mean edge gradient than
+/// plain lanczos on the real sunset clip at 800x450 (4.75 vs 3.11), without
+/// raising decode time: ~27 fps against ~25 fps for 20 frames.
+const VIDEO_SCALE_FLAGS: &str = "lanczos+accurate_rnd+full_chroma_int";
 
 /// The decoder's arguments, kept pure so the panel-cadence and size rules can
 /// be tested without spawning a process.
@@ -278,12 +280,12 @@ fn video_args(path: &Path, rate: f64, size: (u32, u32)) -> Vec<String> {
     .collect();
     if size.0 > 0 && size.1 > 0 {
         // ffmpeg's default bicubic softens edges when a 4K source lands on an
-        // 800 px panel, and the panel cannot sharpen it later. Lanczos keeps
-        // the editorial crispness at the same decode cost (bench: 3.30 vs
-        // 3.10 mean edge gradient, 25.3 vs 24.0 fps on the sunset clip).
+        // 800 px panel, and the panel cannot sharpen it later. Accurate
+        // rounding and full-chroma interpolation keep the editorial crispness
+        // at the same decode cost.
         args.extend([
             "-vf".to_owned(),
-            format!("scale={}:{}:flags={VIDEO_SCALE_FILTER}", size.0, size.1),
+            format!("scale={}:{}:flags={VIDEO_SCALE_FLAGS}", size.0, size.1),
         ]);
     }
     args.extend([
@@ -485,7 +487,7 @@ mod tests {
         let args = video_args(Path::new("clip.mp4"), 9.0, (800, 450));
         let joined = args.join(" ");
         assert!(
-            joined.contains("-vf scale=800:450:flags=lanczos"),
+            joined.contains("-vf scale=800:450:flags=lanczos+accurate_rnd+full_chroma_int"),
             "the decoder must scale sharply before RGBA conversion: {joined}"
         );
         assert!(

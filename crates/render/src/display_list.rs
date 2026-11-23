@@ -19,6 +19,10 @@ pub struct DisplayList {
     /// geometry is resolved from the document; a backend adds the picture's own
     /// size and draws it.
     pub backdrop: Option<Backdrop>,
+    /// Whether the backdrop paints into the visible frame. An overlay over a
+    /// playing clip leaves it hidden but keeps it as the glass sampling source,
+    /// as the browser keeps its media layer below a transparent canvas.
+    pub backdrop_visible: bool,
     pub ops: Vec<Op>,
 }
 

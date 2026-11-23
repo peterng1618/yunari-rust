@@ -111,6 +111,7 @@ pub fn build_with_history(
         height,
         background,
         backdrop,
+        backdrop_visible: true,
         ops: Vec::new(),
     };
     for node in &document.nodes {

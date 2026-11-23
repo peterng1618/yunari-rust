@@ -332,11 +332,10 @@ fn frame(
     }
 
     // The overlay is the UI alone, composited by the device over its own clip.
-    // Hiding the board's paint and its backdrop is the whole difference; the
-    // scene's own objects still paint, with alpha, so the clip shows through.
+    // Its backdrop stays as the glass sampling source but is hidden from the
+    // visible pixels; the scene objects still paint, so the clip shows through.
     if overlay {
-        list.background = None;
-        list.backdrop = None;
+        list.backdrop_visible = false;
     }
 
     // Charts read the same binding scale/offset as text. `fabric::build`

@@ -106,25 +106,34 @@ pub fn render_with_charts(
         }
     };
 
-    if let Some(paint) = &list.background {
-        pixmap.fill(SkiaColor::TRANSPARENT);
-        let board = PathBuilder::from_rect(
-            Rect::from_xywh(0.0, 0.0, width as f32, height as f32).expect("a sized board"),
-        );
-        fill(
-            &mut pixmap,
-            &board,
-            paint,
-            Transform::from_scale(scale, scale),
-        );
+    if list.backdrop_visible {
+        paint_surface(&mut pixmap, list, images.as_deref_mut(), scale);
     } else {
         pixmap.fill(SkiaColor::TRANSPARENT);
     }
 
-    if let (Some(backdrop), Some(store)) = (&list.backdrop, images.as_deref_mut())
-        && let Some(asset) = store.load(&backdrop.path)
+    // A hidden backdrop is still the picture glass samples: the browser keeps
+    // its media layer below a transparent canvas, so an overlay over a playing
+    // clip frosts the clip even though the clip is not part of the overlay's
+    // pixels. Paint that layer into its own pixmap and hand it to `draw_glass`.
+    let mut glass_source = None;
+    if !list.backdrop_visible
+        && (list.background.is_some() || list.backdrop.is_some())
+        && ops.iter().any(|op| matches!(op.shape, Shape::Glass { .. }))
     {
-        draw_backdrop(&mut pixmap, asset, list, backdrop, scale);
+        let Some(mut source) = Pixmap::new(width, height) else {
+            return (
+                Raster {
+                    width: 0,
+                    height: 0,
+                    rgba: Vec::new(),
+                },
+                issues,
+            );
+        };
+        source.fill(SkiaColor::TRANSPARENT);
+        paint_surface(&mut source, list, images.as_deref_mut(), scale);
+        glass_source = Some(source);
     }
 
     for op in &ops {
@@ -135,7 +144,14 @@ pub fn render_with_charts(
             continue;
         }
         if let Shape::Glass { shape, blur_radius } = &op.shape {
-            draw_glass(&mut pixmap, shape, *blur_radius, op.transform, scale);
+            draw_glass(
+                &mut pixmap,
+                glass_source.as_ref(),
+                shape,
+                *blur_radius,
+                op.transform,
+                scale,
+            );
             continue;
         }
         if let Shape::Image {
@@ -200,6 +216,23 @@ pub fn render_with_charts(
         },
         issues,
     )
+}
+
+/// The page's fill and picture, painted into the surface they belong to. An
+/// overlay keeps this layer as the glass source without showing it.
+fn paint_surface(pixmap: &mut Pixmap, list: &DisplayList, images: Option<&mut Images>, scale: f32) {
+    if let Some(paint) = &list.background {
+        let board = PathBuilder::from_rect(
+            Rect::from_xywh(0.0, 0.0, pixmap.width() as f32, pixmap.height() as f32)
+                .expect("a sized board"),
+        );
+        fill(pixmap, &board, paint, Transform::from_scale(scale, scale));
+    }
+    if let (Some(backdrop), Some(store)) = (&list.backdrop, images)
+        && let Some(asset) = store.load(&backdrop.path)
+    {
+        draw_backdrop(pixmap, asset, list, backdrop, scale);
+    }
 }
 
 /// Paint a laid-out paragraph. Each segment is shaped at device scale into its
@@ -336,7 +369,14 @@ fn blend(pixmap: &mut Pixmap, x: i32, y: i32, color: TextColor) {
 /// back out of the frame that is already painted, so a panel sees exactly its
 /// own backdrop — not a canvas-wide copy — and costs one pass per changed
 /// frame.
-fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: Affine, scale: f32) {
+fn draw_glass(
+    pixmap: &mut Pixmap,
+    source: Option<&Pixmap>,
+    shape: &Shape,
+    blur_radius: f32,
+    transform: Affine,
+    scale: f32,
+) {
     let Some(path) = shape_path(shape) else {
         return;
     };
@@ -372,6 +412,17 @@ fn draw_glass(pixmap: &mut Pixmap, shape: &Shape, blur_radius: f32, transform: A
     ) else {
         return;
     };
+    if let Some(source) = source
+        && let Some(under) = extract(
+            source,
+            sample_left,
+            sample_top,
+            (sample_right - sample_left) as usize,
+            (sample_bottom - sample_top) as usize,
+        )
+    {
+        under_first(&mut region, &under);
+    }
     // CSS reads a blur radius as twice the deviation, and three box passes of
     // radius `r` reach about that deviation.
     blur(&mut region, device_radius / 2.0);
@@ -479,6 +530,32 @@ fn extract(pixmap: &Pixmap, left: i32, top: i32, width: usize, height: usize) ->
         }
     }
     Some(region)
+}
+
+/// Composite `under` behind `over`, both in tiny-skia's premultiplied space.
+/// The visible scene keeps its own alpha; only the transparent parts of the
+/// overlay reveal the media the browser keeps below the canvas.
+fn under_first(over: &mut Pixmap, under: &Pixmap) {
+    if over.width() != under.width() || over.height() != under.height() {
+        return;
+    }
+    let top = over.data_mut();
+    let bottom = under.data();
+    for (front, back) in top
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(bottom.as_chunks::<4>().0)
+    {
+        if front[3] == 255 {
+            continue;
+        }
+        let keep = 255 - u16::from(front[3]);
+        for channel in 0..4 {
+            front[channel] =
+                (u16::from(front[channel]) + u16::from(back[channel]) * keep / 255).min(255) as u8;
+        }
+    }
 }
 
 /// Three box passes over the premultiplied pixels: a Gaussian to the eye, and

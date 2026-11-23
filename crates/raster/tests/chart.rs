@@ -25,6 +25,7 @@ fn chart_list(
         height: 120.0,
         background: None,
         backdrop: None,
+        backdrop_visible: true,
         ops: vec![Op {
             transform: Affine::IDENTITY,
             shape: Shape::Chart {
@@ -58,6 +59,7 @@ fn chart_list_on_artboard(
         height: 270.0,
         background: None,
         backdrop: None,
+        backdrop_visible: true,
         ops: vec![Op {
             transform: Affine::translate(20.0, 30.0),
             shape: Shape::Chart {

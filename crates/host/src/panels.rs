@@ -231,8 +231,9 @@ impl PanelFrames {
             .map_err(|_| "The font cache is poisoned.")?;
         let mut list = crate::frame::frame(document, &readings, &mut fonts, Some(&history), now_ms);
         if !background {
-            list.background = None;
-            list.backdrop = None;
+            // Keep both layers as the glass sampling source; only hide them
+            // from the overlay's own pixels so the device's clip shows through.
+            list.backdrop_visible = false;
         }
         let round = record
             .device

@@ -38,6 +38,7 @@ fn all_chart_families_round_trip_through_json_without_video() {
         height: 180.0,
         background: None,
         backdrop: None,
+        backdrop_visible: true,
         ops: families.iter().copied().map(chart_op).collect(),
     };
 

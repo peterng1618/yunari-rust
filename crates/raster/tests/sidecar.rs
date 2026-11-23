@@ -1016,3 +1016,194 @@ fn glass_sampling_follows_the_turned_panel() {
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The real R10-A Clean Clock document, with its video swapped for a still so
+/// the test is deterministic. The authored glass rect covers artboard y
+/// 198..320; at a 90-degree panel turn that band lands at device x 0..122.
+/// Chromium samples the photo there, so x=20 reads a blurred teal from the
+/// picture. A flat tint at x=20 is the bug this pins down.
+fn r10_glass_theme() -> &'static str {
+    r##"{"schemaVersion":"3.0.0","id":"r10-a-clean-clock-video-bg",
+      "metadata":{"name":"R10-A · Clean Clock - video bg"},
+      "artboard":{"width":320,"height":320,"shape":"circle"},
+      "background":{"media":{"assetId":"photo","bounds":"display",
+        "color":{"value":"#081523"}},"mode":"advanced"},
+      "assets":[{"id":"photo","kind":"image","path":"assets/photo.png"}],
+      "scene":{"version":"7.4.0","objects":[
+        {"rx":9,"ry":9,"id":"glass","type":"Rect","left":-20,"top":198.056,
+         "width":360,"height":200,"originX":"left","originY":"top",
+         "fill":"#0815234d","scaleY":0.6097,"yunariGlass":{"blurRadius":2}}
+      ]}}"##
+}
+
+fn photo_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("yunari-real-glass-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).expect("a theme dir with assets");
+    // Vivid horizontal bands: the top half dark teal, the bottom half bright
+    // green. The R10 card is scaled 0.6097 in y, so a pattern transform applied
+    // in the wrong order samples the top band instead of the bottom one.
+    let mut picture = image::RgbaImage::new(64, 64);
+    for y in 0..64 {
+        for x in 0..64 {
+            picture.put_pixel(
+                x,
+                y,
+                image::Rgba([
+                    if y < 32 { 4 } else { 12 },
+                    if y < 32 { 90 } else { 220 },
+                    if y < 32 { 140 } else { 60 },
+                    255,
+                ]),
+            );
+        }
+    }
+    picture
+        .save(dir.join("assets/photo.png"))
+        .expect("the synthetic photo is written");
+    dir
+}
+
+fn r10_frame(dir: &std::path::Path, rotation: u16) -> image::RgbaImage {
+    let mut state = Sessions::new();
+    let mut request: serde_json::Value =
+        serde_json::from_str(&open("r10", r10_glass_theme(), "png")).unwrap();
+    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+    request["width"] = serde_json::json!(320);
+    request["height"] = serde_json::json!(320);
+    request["rotation"] = serde_json::json!(rotation);
+    reply(&mut state, request);
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"frame","id":"r10","readings":[],"series":{}}),
+    );
+    image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG frame")
+        .to_rgba8()
+}
+
+#[test]
+fn r10_glass_band_blurs_the_real_theme_photo_at_kraken_geometry() {
+    let dir = photo_dir("r10");
+    let frame = r10_frame(&dir, 90);
+    // Device x=20 is inside the card after the 90-degree turn, and y spans the
+    // photo. A flat tint here is the real-panel defect: every row is #081523.
+    let band = [40, 100, 160, 220, 280].map(|y| frame.get_pixel(20, y).0);
+    let flat = band.iter().all(|pixel| pixel == &[8, 21, 35, 255]);
+    assert!(
+        !flat,
+        "glass band must sample the photo, not paint flat tint: {band:?}"
+    );
+    let green = band.iter().map(|pixel| i32::from(pixel[1])).max().unwrap();
+    assert!(
+        green > 60,
+        "glass band must carry the photo's sampled colour: {band:?}"
+    );
+    // Green must reach the band from the photo: the original right half is
+    // vivid green, while the authored tint is near-black blue.
+    assert!(
+        band[2][1] > 60,
+        "the central glass pixel must carry the photo: {:?}",
+        band[2]
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn video_panel_glass_theme(artboard: &str, card: &str) -> String {
+    format!(
+        r##"{{"schemaVersion":"3.0.0","id":"video-panel-glass",
+          "artboard":{artboard},
+          "background":{{"media":{{"assetId":"photo","bounds":"theme",
+            "color":{{"value":"#081523"}}}},"mode":"advanced"}},
+          "assets":[{{"id":"photo","kind":"image","path":"assets/photo.png"}}],
+          "scene":{{"version":"7.4.0","objects":[{card}]}}}}"##
+    )
+}
+
+fn overlay_frame(theme: &str, dir: &std::path::Path, width: u32, height: u32) -> image::RgbaImage {
+    let mut state = Sessions::new();
+    let mut request: serde_json::Value =
+        serde_json::from_str(&open("panel", theme, "png")).unwrap();
+    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+    request["width"] = serde_json::json!(width);
+    request["height"] = serde_json::json!(height);
+    reply(&mut state, request);
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"overlay","id":"panel","readings":[],"series":{}}),
+    );
+    image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG overlay")
+        .to_rgba8()
+}
+
+#[test]
+fn lian_li_and_turzx_overlay_glass_blur_the_hidden_picture() {
+    let dir = photo_dir("video-panels");
+    // The authored Lian Li Video Demo card: 367x307 at (24.818, 230.0854),
+    // scaled 1.1421 by 0.6969 over a 1920x462 artboard.
+    let lian_li = video_panel_glass_theme(
+        r##"{"width":1920,"height":462}"##,
+        r###"{"id":"time-card","type":"Rect","left":24.818,"top":230.0854,
+             "width":367,"height":307,"originX":"left","originY":"top",
+             "scaleX":1.1421,"scaleY":0.6969,"fill":"#0911194d",
+             "yunariGlass":{"blurRadius":5,"sampling":"dynamic"}}"###,
+    );
+    let frame = overlay_frame(&lian_li, &dir, 1920, 462);
+    let pixel = frame.get_pixel(200, 350).0;
+    eprintln!("lian li glass pixel: {pixel:?}");
+    assert!(pixel[3] > 0 && pixel[1] > 60, "Lian Li glass: {pixel:?}");
+    assert_eq!(frame.get_pixel(1000, 100).0[3], 0);
+
+    // A TURZX 480x800 portrait panel carrying a tall glass card. The theme's
+    // own media layer is hidden from the overlay, so only the glass carries it.
+    let turzx = video_panel_glass_theme(
+        r##"{"width":480,"height":800}"##,
+        r###"{"id":"turzx-card","type":"Rect","left":24,"top":196,
+             "width":208,"height":268,"originX":"left","originY":"top",
+             "fill":"#06101999","yunariGlass":{"blurRadius":24}}"###,
+    );
+    let frame = overlay_frame(&turzx, &dir, 480, 800);
+    let pixel = frame.get_pixel(128, 330).0;
+    eprintln!("turzx glass pixel: {pixel:?}");
+    assert!(pixel[3] > 0 && pixel[1] > 40, "TURZX glass: {pixel:?}");
+    assert_eq!(frame.get_pixel(400, 100).0[3], 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The device plays the clip itself and composites the UI over it. The UI's
+/// glass must still frost that clip: Chromium samples the media layer below a
+/// transparent canvas, so the overlay carries the blurred picture even though
+/// its own background is hidden. Previously the overlay dropped the backdrop
+/// before glass ran, leaving only the authored flat tint.
+#[test]
+fn an_overlay_glass_band_frosts_the_hidden_video_backdrop() {
+    let dir = photo_dir("r10-overlay");
+    let mut state = Sessions::new();
+    let mut request: serde_json::Value =
+        serde_json::from_str(&open("r10", r10_glass_theme(), "png")).unwrap();
+    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
+    request["width"] = serde_json::json!(320);
+    request["height"] = serde_json::json!(320);
+    request["rotation"] = serde_json::json!(90);
+    reply(&mut state, request);
+    let response = reply(
+        &mut state,
+        serde_json::json!({"type":"overlay","id":"r10","readings":[],"series":{}}),
+    );
+    let overlay = image::load_from_memory_with_format(&bytes(&response), image::ImageFormat::Png)
+        .expect("a PNG overlay")
+        .to_rgba8();
+    let band = [40, 100, 160, 220, 280].map(|y| overlay.get_pixel(20, y).0);
+    eprintln!("overlay band at x=20: {band:?}");
+    // Outside the card the overlay is transparent: the picture belongs to the
+    // device's video layer. Inside the card, the frosted sample carries colour.
+    assert_eq!(overlay.get_pixel(160, 20).0[3], 0);
+    for pixel in band {
+        assert!(
+            pixel[3] > 0 && pixel[1] > 40,
+            "overlay glass must frost the hidden picture: {pixel:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
