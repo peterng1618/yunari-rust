@@ -1,5 +1,7 @@
 //! The native sidecar's glass sampling rule: an explicit `glass_sampling` and
-//! a held poster for video devices, mapped through the panel's inverse fit.
+//! a held poster for video devices. The whole-frame fit preserves the authored
+//! artboard composition, so the card frosts the same media on a panel whose
+//! pixel box differs from the artboard.
 //!
 //! Every frame is decoded from the wire response, so the assertions are about
 //! the pixels a panel receives, not about a private renderer helper.
@@ -50,7 +52,7 @@ fn reply(state: &mut Sessions, request: serde_json::Value) -> serde_json::Value 
     serde_json::from_str(&line).expect("the response is JSON")
 }
 
-fn open(theme: &str, width: u32, height: u32, poster: Option<&PathBuf>) -> serde_json::Value {
+fn open(theme: &str, width: u32, height: u32, root: Option<&PathBuf>) -> serde_json::Value {
     serde_json::json!({
         "type": "open",
         "id": "panel",
@@ -59,7 +61,8 @@ fn open(theme: &str, width: u32, height: u32, poster: Option<&PathBuf>) -> serde
         "height": height,
         "format": "png",
         "glass_sampling": "static",
-        "poster_path": poster.map(|path| path.join("assets/poster.png").to_string_lossy().to_string()),
+        "poster_root": root.map(|path| path.to_string_lossy().to_string()),
+        "poster_path": root.map(|path| path.join("assets/poster.png").to_string_lossy().to_string()),
     })
 }
 
@@ -76,6 +79,17 @@ fn frame(state: &mut Sessions) -> image::RgbaImage {
     image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
         .expect("a PNG frame")
         .to_rgba8()
+}
+
+#[test]
+fn a_poster_without_a_named_cache_root_is_refused() {
+    let mut state = Sessions::new();
+    let mut request = open(WIDE_THEME, 20, 20, None);
+    request["poster_path"] = serde_json::json!("C:/themes/any/poster.png");
+    let error = handle_line(&mut state, &request.to_string())
+        .expect_err("a poster needs its allowed root")
+        .to_string();
+    assert!(error.contains("poster_root"), "{error}");
 }
 
 #[test]
@@ -130,29 +144,65 @@ fn glass_sampling_maps_the_card_through_the_inverse_panel_fit() {
         i32::from(outside[0]) > i32::from(outside[2]) + 80,
         "outside the card the panel still shows the red field: {outside:?}"
     );
+
+    // The same composition authored at twice the artboard size must land on
+    // the same device pixels: the whole frame fit preserves the authored
+    // relationship between the card and its media.
+    let doubled = WIDE_THEME
+        .replace("\"width\":40,\"height\":20", "\"width\":80,\"height\":40")
+        .replace(
+            "\"left\":16,\"top\":4,\"width\":8,\"height\":12",
+            "\"left\":32,\"top\":8,\"width\":16,\"height\":24",
+        );
+    let mut other = Sessions::new();
+    reply(&mut other, open(&doubled, 20, 20, Some(&dir)));
+    let other_picture = frame(&mut other);
+    for (x, y) in [(10, 10), (4, 10), (16, 10)] {
+        let a = picture.get_pixel(x, y).0;
+        let b = other_picture.get_pixel(x, y).0;
+        // The blur is authored in artboard units, so doubling the artboard
+        // halves the device-space radius and the two resamplings are not
+        // pixel-identical. The fitted region and its colour must still agree.
+        for channel in 0..3 {
+            assert!(
+                a[channel].abs_diff(b[channel]) <= 35,
+                "both artboard derivations must fit to the same panel region ({x},{y}): {a:?} vs {b:?}"
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn a_poster_outside_the_theme_directory_is_refused() {
+fn an_absolute_poster_outside_the_hosts_cache_is_refused() {
     let dir = picture_dir("escape", [240, 40, 40], [40, 40, 240]);
+    let cache = std::env::temp_dir().join(format!(
+        "yunari-poster-cache-{}-{}",
+        "escape",
+        std::process::id()
+    ));
     let outside = std::env::temp_dir().join(format!(
         "yunari-poster-outside-{}-{}",
         "escape",
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&outside);
-    std::fs::create_dir_all(&outside).expect("a dir outside the theme");
+    for path in [&cache, &outside] {
+        let _ = std::fs::remove_dir_all(path);
+        std::fs::create_dir_all(path).expect("a directory");
+    }
     std::fs::copy(dir.join("assets/poster.png"), outside.join("poster.png"))
-        .expect("a readable picture outside the theme");
+        .expect("a readable picture outside the host's cache");
+
     let mut state = Sessions::new();
-    let mut request = open(WIDE_THEME, 20, 20, None);
-    request["theme_dir"] = serde_json::json!(dir.to_string_lossy());
-    request["poster_path"] = serde_json::json!(dir.join("assets/../poster.png").to_string_lossy());
+    let mut request = open(WIDE_THEME, 20, 20, Some(&cache));
+    request["poster_path"] =
+        serde_json::json!(outside.join("poster.png").to_string_lossy().to_string());
     let error = handle_line(&mut state, &request.to_string())
-        .expect_err("a poster path with a parent segment is not readable")
+        .expect_err("an absolute path outside the named cache is not readable")
         .to_string();
     assert!(error.contains("poster_path"), "{error}");
+
     let _ = std::fs::remove_dir_all(dir);
-    let _ = std::fs::remove_dir_all(outside);
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_dir_all(&outside);
 }

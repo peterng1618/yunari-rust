@@ -175,36 +175,6 @@ fn frame_interval_field(object: &Map<String, Value>) -> Result<Option<u32>, Prot
     }
 }
 
-/// A host that names the theme's artboard must name the size the document
-/// actually carries. A mismatch would map glass through one fit and paint the
-/// frame through another, silently frosting the wrong part of the picture.
-fn artboard_field(
-    object: &Map<String, Value>,
-    document: &yunari_model::document::ThemeDocument,
-) -> Result<(), ProtocolError> {
-    let Some(value) = object.get("artboard_width") else {
-        return Ok(());
-    };
-    let width = value
-        .as_f64()
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .ok_or_else(|| fail("artboard_width must be a positive number."))?;
-    let height = object
-        .get("artboard_height")
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .ok_or_else(|| fail("artboard_height must be a positive number."))?;
-    if (width - document.artboard.width).abs() > 0.5
-        || (height - document.artboard.height).abs() > 0.5
-    {
-        return Err(fail(format!(
-            "The host's artboard {width}×{height} disagrees with the theme's {}×{}.",
-            document.artboard.width, document.artboard.height
-        )));
-    }
-    Ok(())
-}
-
 fn opening_dir(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
     let Some(dir) = object.get("theme_dir").and_then(Value::as_str) else {
         return Ok(None);
@@ -239,24 +209,30 @@ fn safe_asset_path(base: Option<&Path>, asset: &str) -> Option<PathBuf> {
         .map(|_| resolved)
 }
 
-/// The poster is an absolute path the host names from its own disposable media
-/// cache, which is a sibling of the theme directory, not inside it. Only an
-/// absolute path to a plain filename is accepted: a relative path or a parent
-/// segment names something the host did not hand this session.
-fn poster_field<'a>(object: &'a Map<String, Value>) -> Result<Option<&'a str>, ProtocolError> {
+/// The poster lives in the host's disposable media cache, not in the theme
+/// directory. The host names both the cache root and the file; the session
+/// accepts the file only when its canonical path is inside the canonical root.
+/// A path shape alone cannot prove that: any absolute path to a PNG elsewhere
+/// on this PC would otherwise be readable by a theme session.
+fn poster_field(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
     let Some(value) = object.get("poster_path").and_then(Value::as_str) else {
         return Ok(None);
     };
-    let path = Path::new(value);
-    if !path.is_absolute()
-        || path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
-        || path.file_name().is_none()
-    {
-        return Err(fail("poster_path must be an absolute path to one file."));
+    let Some(root) = object.get("poster_root").and_then(Value::as_str) else {
+        return Err(fail("poster_path needs the host's poster_root."));
+    };
+    let (path, root) = (Path::new(value), Path::new(root));
+    if !path.is_absolute() || !root.is_absolute() || path.file_name().is_none() {
+        return Err(fail("poster_path and poster_root must be absolute paths."));
     }
-    Ok(Some(value))
+    let canonical_root = std::fs::canonicalize(root)
+        .map_err(|_| fail("The host's poster_root could not be read."))?;
+    let canonical =
+        std::fs::canonicalize(path).map_err(|_| fail("The poster could not be read."))?;
+    if !canonical.starts_with(&canonical_root) || canonical == canonical_root {
+        return Err(fail("poster_path is outside the host's poster_root."));
+    }
+    Ok(Some(canonical))
 }
 
 fn decode_poster(path: &Path) -> Option<crate::Decoded> {
@@ -285,7 +261,6 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
 
     let document = yunari_model::document::parse_document(theme_json)
         .map_err(|error| fail(format!("Refused theme: {error}")))?;
-    artboard_field(object, &document)?;
     let base = opening_dir(object)?;
     let poster = poster_field(object)?;
 
@@ -355,7 +330,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
                     .find(|asset| asset.id == media.asset_id)
             }),
         )
-        && let Some(decoded) = decode_poster(Path::new(poster))
+        && let Some(decoded) = decode_poster(&poster)
     {
         let size = (decoded.width as f32, decoded.height as f32);
         images.hold(&asset.path, decoded);
