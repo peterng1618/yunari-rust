@@ -111,6 +111,14 @@ impl Images {
         self.cache.insert(path.to_owned(), decoded);
     }
 
+    /// Holds one decoded frame at an asset path for the session's lifetime. A
+    /// video panel's glass samples this poster, not the moving decoder behind
+    /// it; holding the bytes in the cache keeps every frame identical.
+    pub fn hold(&mut self, path: &str, decoded: Decoded) {
+        self.videos.remove(path);
+        self.cache.insert(path.to_owned(), Some(decoded));
+    }
+
     /// The picture at an asset path, decoded on first use. A video plays: each
     /// call advances its own decoder to the frame the wall clock names. `None`
     /// means the bytes are missing or are neither an image nor a readable

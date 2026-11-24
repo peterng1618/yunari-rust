@@ -36,6 +36,9 @@ struct Session {
     background_sources: HashMap<String, (f32, f32)>,
     /// Why the declared background picture could not be measured, if so.
     background_issue: Option<String>,
+    /// A video device's glass samples one held poster instead of the live
+    /// media underneath it.
+    glass_sampling: GlassSampling,
     /// The host's panel sample is a snapshot with no history. A line chart needs
     /// more than one point, so the session keeps the readings that actually
     /// arrived, paced by the panel's own tick. No sample, no fabricated point.
@@ -50,6 +53,24 @@ struct Session {
 enum Format {
     Png,
     Jpeg,
+}
+
+/// The host resolves this from the device and the theme before opening.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GlassSampling {
+    Static,
+    Dynamic,
+}
+
+fn glass_sampling_field(object: &Map<String, Value>) -> Result<GlassSampling, ProtocolError> {
+    match object.get("glass_sampling").and_then(Value::as_str) {
+        None => Ok(GlassSampling::Dynamic),
+        Some("static") => Ok(GlassSampling::Static),
+        Some("dynamic") => Ok(GlassSampling::Dynamic),
+        Some(other) => Err(fail(format!(
+            "A request's glass_sampling must be \"static\" or \"dynamic\", not {other:?}."
+        ))),
+    }
 }
 
 /// Every open session, keyed by the host's display id.
@@ -154,6 +175,36 @@ fn frame_interval_field(object: &Map<String, Value>) -> Result<Option<u32>, Prot
     }
 }
 
+/// A host that names the theme's artboard must name the size the document
+/// actually carries. A mismatch would map glass through one fit and paint the
+/// frame through another, silently frosting the wrong part of the picture.
+fn artboard_field(
+    object: &Map<String, Value>,
+    document: &yunari_model::document::ThemeDocument,
+) -> Result<(), ProtocolError> {
+    let Some(value) = object.get("artboard_width") else {
+        return Ok(());
+    };
+    let width = value
+        .as_f64()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| fail("artboard_width must be a positive number."))?;
+    let height = object
+        .get("artboard_height")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| fail("artboard_height must be a positive number."))?;
+    if (width - document.artboard.width).abs() > 0.5
+        || (height - document.artboard.height).abs() > 0.5
+    {
+        return Err(fail(format!(
+            "The host's artboard {width}×{height} disagrees with the theme's {}×{}.",
+            document.artboard.width, document.artboard.height
+        )));
+    }
+    Ok(())
+}
+
 fn opening_dir(object: &Map<String, Value>) -> Result<Option<PathBuf>, ProtocolError> {
     let Some(dir) = object.get("theme_dir").and_then(Value::as_str) else {
         return Ok(None);
@@ -188,6 +239,36 @@ fn safe_asset_path(base: Option<&Path>, asset: &str) -> Option<PathBuf> {
         .map(|_| resolved)
 }
 
+/// The poster is an absolute path the host names from its own disposable media
+/// cache, which is a sibling of the theme directory, not inside it. Only an
+/// absolute path to a plain filename is accepted: a relative path or a parent
+/// segment names something the host did not hand this session.
+fn poster_field<'a>(object: &'a Map<String, Value>) -> Result<Option<&'a str>, ProtocolError> {
+    let Some(value) = object.get("poster_path").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let path = Path::new(value);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+        || path.file_name().is_none()
+    {
+        return Err(fail("poster_path must be an absolute path to one file."));
+    }
+    Ok(Some(value))
+}
+
+fn decode_poster(path: &Path) -> Option<crate::Decoded> {
+    let bytes = std::fs::read(path).ok()?;
+    let picture = image::load_from_memory(&bytes).ok()?.into_rgba8();
+    Some(crate::Decoded {
+        width: picture.width(),
+        height: picture.height(),
+        rgba: picture.into_raw(),
+    })
+}
+
 fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, ProtocolError> {
     let id = id(object)?;
     let theme_json = field(object, "theme_json")?;
@@ -195,6 +276,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
     let height = u32_field(object, "height")?;
     let rotation = rotation_field(object)?;
     let frame_interval_ms = frame_interval_field(object)?;
+    let glass_sampling = glass_sampling_field(object)?;
     let format = match field(object, "format")? {
         "png" => Format::Png,
         "jpeg" => Format::Jpeg,
@@ -203,7 +285,9 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
 
     let document = yunari_model::document::parse_document(theme_json)
         .map_err(|error| fail(format!("Refused theme: {error}")))?;
+    artboard_field(object, &document)?;
     let base = opening_dir(object)?;
+    let poster = poster_field(object)?;
 
     // Refuse any asset that resolves outside the theme dir before a frame is
     // ever painted: a portable theme must not be able to read its way out.
@@ -261,6 +345,23 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
             }
         }
     }
+    if glass_sampling == GlassSampling::Static
+        && let (Some(poster), Some(asset)) = (
+            poster,
+            document.background.media.as_ref().and_then(|media| {
+                document
+                    .assets
+                    .iter()
+                    .find(|asset| asset.id == media.asset_id)
+            }),
+        )
+        && let Some(decoded) = decode_poster(Path::new(poster))
+    {
+        let size = (decoded.width as f32, decoded.height as f32);
+        images.hold(&asset.path, decoded);
+        background_sources.insert(asset.path.clone(), size);
+    }
+
     state.by_id.insert(
         id.clone(),
         Session {
@@ -269,6 +370,7 @@ fn open(state: &mut Sessions, object: &Map<String, Value>) -> Result<String, Pro
             images,
             background_sources,
             background_issue,
+            glass_sampling,
             history: HashMap::new(),
             width,
             height,
@@ -320,6 +422,19 @@ fn frame(
         &session.background_sources,
     );
     issues.extend(build_issues);
+    // Static glass holds one poster for the session. A clip playing under it
+    // would make the sample vary frame to frame and spend decode the device
+    // does not need, so every video source reads as a still here.
+    if session.glass_sampling == GlassSampling::Static {
+        if let Some(backdrop) = &mut list.backdrop {
+            backdrop.video = false;
+        }
+        for op in &mut list.ops {
+            if let Shape::Image { video, .. } = &mut op.shape {
+                *video = false;
+            }
+        }
+    }
     // The refusal is a fact about the theme, not a per-frame sensor gap:
     // report it on the first frame only, so a running panel does not flood the
     // host's notice surface at display rate.
