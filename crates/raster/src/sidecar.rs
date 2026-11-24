@@ -601,19 +601,39 @@ fn parse_frame(
                 });
                 continue;
             }
-            // The wire sends values in order, not timestamps. A chart's window
-            // is measured in seconds; spacing samples one second apart places a
-            // rolling window correctly without inventing a wall-clock reading.
+            // The host's series carries each point's own instant, so a 10 s
+            // source stays 10 s apart on the chart. A bare number is accepted
+            // for older callers and spaced by the panel tick; a malformed
+            // point is refused rather than turned into a fabricated time.
             let values = values
                 .as_array()
                 .ok_or_else(|| fail(format!("Series {key:?} must be an array.")))?
                 .iter()
                 .enumerate()
                 .map(|(index, value)| {
+                    let (at, value) = if let Some(number) = value.as_f64() {
+                        (index as u64 * 1000, number)
+                    } else {
+                        let object = value
+                            .as_object()
+                            .ok_or_else(|| fail(format!("Series {key:?} holds a non-number.")))?;
+                        let value = object
+                            .get("value")
+                            .and_then(Value::as_f64)
+                            .filter(|value| value.is_finite())
+                            .ok_or_else(|| fail(format!("Series {key:?} holds a non-number.")))?;
+                        let at = object
+                            .get("at")
+                            .and_then(Value::as_str)
+                            .and_then(parse_timestamp)
+                            .ok_or_else(|| {
+                                fail(format!("Series {key:?} point has no usable time."))
+                            })?;
+                        (at as u64, value)
+                    };
                     value
-                        .as_f64()
-                        .filter(|value| value.is_finite())
-                        .map(|value| (index as u64 * 1000, value))
+                        .is_finite()
+                        .then_some((at, value))
                         .ok_or_else(|| fail(format!("Series {key:?} holds a non-number.")))
                 })
                 .collect::<Result<Vec<_>, _>>()?;

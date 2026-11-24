@@ -70,11 +70,16 @@ fn frame(state: &mut Sessions, readings: serde_json::Value) -> image::RgbaImage 
     frame_at(state, readings, "2026-01-01T00:00:00.000Z")
 }
 
-fn frame_at(state: &mut Sessions, readings: serde_json::Value, sent_at: &str) -> image::RgbaImage {
+fn frame_with_series(
+    state: &mut Sessions,
+    readings: serde_json::Value,
+    series: serde_json::Value,
+    sent_at: &str,
+) -> image::RgbaImage {
     let response = reply(
         state,
         serde_json::json!({
-            "type":"frame","id":"panel","readings":readings,"series":{},
+            "type":"frame","id":"panel","readings":readings,"series":series,
             "sent_at":sent_at
         }),
     );
@@ -86,6 +91,10 @@ fn frame_at(state: &mut Sessions, readings: serde_json::Value, sent_at: &str) ->
     image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
         .expect("a PNG frame")
         .to_rgba8()
+}
+
+fn frame_at(state: &mut Sessions, readings: serde_json::Value, sent_at: &str) -> image::RgbaImage {
+    frame_with_series(state, readings, serde_json::json!({}), sent_at)
 }
 
 /// Columns and rows carrying the unique series ink, so a structural match can
@@ -221,6 +230,40 @@ fn the_series_uses_the_host_tick_not_the_frame_count() {
     assert!(
         drawn.columns.len() >= 10,
         "the host's 4 s tick gap must spread three points across the window: {drawn:?}"
+    );
+}
+
+#[test]
+fn a_host_series_uses_each_point_clock_not_its_index() {
+    // The authoritative path: the host supplies six points from a 10 s source
+    // in a 60 s window. Spacing them by index (1 s) would collapse the whole
+    // series into the rightmost tenth of the plot; their real clocks spread it
+    // across the window. The stream need only send one frame.
+    let theme = WIDGET_THEME.replace("\"windowSeconds\":4", "\"windowSeconds\":60");
+    let mut state = open(&theme);
+    let series = serde_json::json!({
+        "cpu.load": [
+            {"at":"2026-01-01T00:00:00.000Z","value":10.0},
+            {"at":"2026-01-01T00:00:10.000Z","value":30.0},
+            {"at":"2026-01-01T00:00:20.000Z","value":50.0},
+            {"at":"2026-01-01T00:00:30.000Z","value":70.0},
+            {"at":"2026-01-01T00:00:40.000Z","value":90.0},
+            {"at":"2026-01-01T00:00:50.000Z","value":60.0}
+        ]
+    });
+    let picture = frame_with_series(
+        &mut state,
+        serde_json::json!([
+            {"semantic_key":"cpu.load","status":"ok","value":60.0,
+             "unit":"%","timestamp":"2026-01-01T00:00:50.000Z"}
+        ]),
+        series,
+        "2026-01-01T00:00:50.000Z",
+    );
+    let drawn = structure(&picture);
+    assert!(
+        drawn.columns.len() >= 20,
+        "a 10 s cadence must spread six points across a 60 s window: {drawn:?}"
     );
 }
 
