@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use yunari_providers::units::UnitPreferences;
 use yunari_render::{Affine, DisplayList, Fonts, Op, Readings};
-use yunari_render_raster::render;
+use yunari_render_raster::{backdrop_needs_sharpening, render};
 
 const TEXT_THEME: &str = r##"{
   "schemaVersion":"3.0.0","id":"kraken-text","artboard":{"width":200,"height":80},
@@ -79,15 +79,32 @@ fn kraken_clock_text_keeps_antialiased_edges_under_group_scale() {
 }
 
 fn picture_dir(tag: &str) -> PathBuf {
+    picture_dir_with(tag, |x, _| if x < 8 { 0 } else { 255 })
+}
+
+/// A vertical step makes the unsharp tap non-identity even at a 1:1 device
+/// read: the row above and below a texel differ, so an accidental sharpen
+/// changes the pixels instead of silently passing the negative arm.
+fn picture_dir_vertical(tag: &str) -> PathBuf {
+    picture_dir_with(tag, |x, y| {
+        if x < 8 {
+            (y * 24).min(255) as u8
+        } else {
+            (255 - y * 24).max(0) as u8
+        }
+    })
+}
+
+fn picture_dir_with(tag: &str, value: impl Fn(u32, u32) -> u8) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("yunari-fidelity-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).expect("an assets dir");
-    // A single hard vertical edge. The panel samples this 16-pixel picture into
-    // a 64-pixel box, the same fourfold upscale a short video band asks for.
+    // A hard vertical edge, with optional vertical variation so the unsharp
+    // tap has non-identical neighbours in both axes.
     let mut picture = image::RgbaImage::new(16, 8);
-    for (x, _, pixel) in picture.enumerate_pixels_mut() {
-        let value = if x < 8 { 0 } else { 255 };
-        *pixel = image::Rgba([value, value, value, 255]);
+    for (x, y, pixel) in picture.enumerate_pixels_mut() {
+        let level = value(x, y);
+        *pixel = image::Rgba([level, level, level, 255]);
     }
     picture
         .save(dir.join("assets/edge.png"))
@@ -202,7 +219,15 @@ fn sharpening_uses_the_one_decoded_picture() {
 /// that is downscaled to the decoded size must not.
 #[test]
 fn sharpen_trigger_uses_device_pixels_not_artboard_units() {
+    // Assert the trigger itself: comparing artboard units with decoded pixels
+    // would report a 5% upscale for the 64x32 board painted at 0.25 into a
+    // 16x8 panel, even though the device read is exactly 1:1.
+    assert!(backdrop_needs_sharpening((16.0, 8.0), (16, 8), 4.0));
+    assert!(!backdrop_needs_sharpening((64.0, 32.0), (16, 8), 0.25));
+    // The positive arm uses the vertical-edge picture; the negative arm needs
+    // vertical variation so an accidental sharpen changes its pixels.
     let dir = picture_dir("geometry");
+    let varied_dir = picture_dir_vertical("geometry-varied");
     let theme = |width: u32, height: u32| {
         let json = format!(
             r##"{{"schemaVersion":"3.0.0","id":"geometry","artboard":{{"width":{width},"height":{height}}},
@@ -259,7 +284,7 @@ fn sharpen_trigger_uses_device_pixels_not_artboard_units() {
         },
         0.25,
         None,
-        Some(&mut yunari_render_raster::Images::at(&dir)),
+        Some(&mut yunari_render_raster::Images::at(&varied_dir)),
     );
     assert!(reduced.width == 16 && reduced.height == 8);
     let reduced_row = |x: u32| reduced.rgba[((4 * 16 + x) * 4) as usize];
@@ -270,12 +295,18 @@ fn sharpen_trigger_uses_device_pixels_not_artboard_units() {
         .max()
         .unwrap_or(0);
     eprintln!("device 1:1 edge peak={reduced_peak}, row={reduced_edge:?}");
-    assert!(
-        reduced_edge
-            .iter()
-            .all(|value| *value == 0 || *value == 255),
-        "a 1:1 device read must keep its source values: {reduced_edge:?}"
+    // The source's row 4 is [96 � 8, 159 � 8]; the old artboard-unit trigger
+    // would sharpen it and change those values, so this arm is not tautological.
+    let source_row = [96_u8; 8]
+        .into_iter()
+        .chain([159_u8; 8])
+        .collect::<Vec<_>>();
+    eprintln!("device 1:1 source row={source_row:?}, rendered={reduced_edge:?}");
+    assert_eq!(
+        reduced_edge, source_row,
+        "a 1:1 device read must keep the source values: {reduced_edge:?}"
     );
-    assert_eq!(reduced_peak, 255, "a 1:1 edge stays hard: {reduced_edge:?}");
+    assert!(reduced_peak > 0, "the fixture must vary vertically");
     let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(varied_dir);
 }

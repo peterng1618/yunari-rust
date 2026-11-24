@@ -681,9 +681,11 @@ fn draw_backdrop(
             // decoder never had. Compare in device pixels: `cover` is artboard
             // units, `asset` decoded pixels, and a board that differs from the
             // panel changes that ratio.
-            let texel = if cover.width * scale > asset.width as f32 * 1.05
-                || cover.height * scale > asset.height as f32 * 1.05
-            {
+            let texel = if backdrop_needs_sharpening(
+                (cover.width, cover.height),
+                (asset.width, asset.height),
+                scale,
+            ) {
                 sharpen(asset, u, v, bilinear)
             } else {
                 bilinear
@@ -806,6 +808,13 @@ fn sample(asset: &Decoded, u: f32, v: f32) -> [u8; 4] {
         *byte = (top + (bottom - top) * fy).round().clamp(0.0, 255.0) as u8;
     }
     texel
+}
+
+/// Whether the backdrop sampler must mitigate a bilinear upscale. The cover
+/// is in artboard units and the decoded picture in device pixels, so the cover
+/// must be converted through `scale` before the two can be compared.
+pub fn backdrop_needs_sharpening(cover: (f32, f32), decoded: (u32, u32), scale: f32) -> bool {
+    cover.0 * scale > decoded.0 as f32 * 1.05 || cover.1 * scale > decoded.1 as f32 * 1.05
 }
 
 /// Sharpen one upscaled texel with a clamped unsharp tap. Bilinear alone
