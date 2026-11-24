@@ -677,9 +677,12 @@ fn draw_backdrop(
             let bilinear = sample(asset, u, v);
             // A clip decoded to the panel box is sampled larger inside a themed
             // band. Bilinear spreads a source edge over four device pixels;
-            // a sharpened cubic keeps the step steep without a second decode.
-            let texel = if cover.width > asset.width as f32 * 1.05
-                || cover.height > asset.height as f32 * 1.05
+            // the tap mitigates that softness without recovering detail the
+            // decoder never had. Compare in device pixels: `cover` is artboard
+            // units, `asset` decoded pixels, and a board that differs from the
+            // panel changes that ratio.
+            let texel = if cover.width * scale > asset.width as f32 * 1.05
+                || cover.height * scale > asset.height as f32 * 1.05
             {
                 sharpen(asset, u, v, bilinear)
             } else {

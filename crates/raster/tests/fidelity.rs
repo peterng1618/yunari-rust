@@ -1,9 +1,10 @@
 //! Kraken text and video fidelity, measured on the pixels a panel receives.
 //!
 //! The clock group scales its text down to 0.7399; nearest-resampled glyph
-//! planes turn the shaper's antialiased edges into hard steps. Video from a
-//! 16:9 clip is decoded to the panel box and then sampled into a taller
-//! themed band, so the upscale must keep an edge instead of smoothing it flat.
+//! planes turn the shaper's antialiased edges into hard steps. Video decoded
+//! to the panel box and sampled into a taller band cannot recover detail the
+//! decoder discarded; the tap only mitigates the added bilinear softness.
+//! Human review on the real panel is still required.
 
 use std::path::PathBuf;
 
@@ -143,15 +144,16 @@ fn an_upscaled_video_edge_keeps_its_gradient() {
     );
     assert!(
         middle > 170,
-        "a fourfold video upscale must keep a steep central edge: {ramp:?}"
+        "a fourfold video upscale must mitigate bilinear softness: {ramp:?}"
     );
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The fidelity changes must not buy sharpness with another full-resolution
-/// decode: one panel-sized frame is still the only input the sampler gets.
+/// The backdrop sampler must read the one picture the session already holds.
+/// A second decode inside the sampler would fail this count even if the frame
+/// still looked right; a timing proxy cannot prove that.
 #[test]
-fn sharpening_does_not_add_a_second_decode() {
+fn sharpening_uses_the_one_decoded_picture() {
     let dir = picture_dir("budget");
     let document = yunari_model::document::parse_document(
         r##"{"schemaVersion":"3.0.0","id":"budget","artboard":{"width":64,"height":32},
@@ -170,27 +172,110 @@ fn sharpening_does_not_add_a_second_decode() {
         &sources,
     )
     .0;
-    let started = std::time::Instant::now();
-    let mut frames = 0;
-    while started.elapsed() < std::time::Duration::from_millis(200) {
-        let mut images = yunari_render_raster::Images::at(&dir);
-        let raster = render(
-            &yunari_render::DisplayList {
-                ops: Vec::new(),
-                ..list.clone()
-            },
-            1.0,
-            None,
-            Some(&mut images),
-        );
-        assert_eq!(raster.rgba.len() as u32, 64 * 32 * 4);
-        frames += 1;
+    let mut images = yunari_render_raster::Images::at(&dir);
+    let list = yunari_render::DisplayList {
+        ops: Vec::new(),
+        ..list
+    };
+    let first = render(&list, 1.0, None, Some(&mut images));
+    let after_first = images.decode_count();
+    for _ in 0..20 {
+        let later = render(&list, 1.0, None, Some(&mut images));
+        assert_eq!(later.rgba, first.rgba, "the held picture stays stable");
     }
-    let per_frame = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
-    eprintln!("{frames} upscaled frames, {per_frame:.2} ms per frame (debug build)");
-    assert!(
-        per_frame < 20.0,
-        "sharpening must not cost another decode: {per_frame:.2} ms per frame"
+    eprintln!(
+        "decodes: first={after_first}, after 21 frames={}",
+        images.decode_count()
     );
+    assert_eq!(after_first, 1, "one picture must be decoded once");
+    assert_eq!(
+        images.decode_count(),
+        after_first,
+        "sharpening must not decode a second frame per paint"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The sharpen trigger compares artboard cover size with decoded pixels. When
+/// the artboard and panel differ, that only works after converting the cover
+/// to device pixels. A fourfold device upscale must sharpen; a fourfold board
+/// that is downscaled to the decoded size must not.
+#[test]
+fn sharpen_trigger_uses_device_pixels_not_artboard_units() {
+    let dir = picture_dir("geometry");
+    let theme = |width: u32, height: u32| {
+        let json = format!(
+            r##"{{"schemaVersion":"3.0.0","id":"geometry","artboard":{{"width":{width},"height":{height}}},
+              "background":{{"media":{{"assetId":"edge","bounds":"theme","color":{{"value":"#000000"}}}}}},
+              "assets":[{{"id":"edge","kind":"image","path":"assets/edge.png"}}],
+              "scene":{{"version":"7.4.0","objects":[]}}}}"##
+        );
+        let document = yunari_model::document::parse_document(&json).expect("a theme");
+        yunari_render::fabric::build_with_sources(
+            &document,
+            &mut Fonts::new(),
+            &Readings::default(),
+            &UnitPreferences::default(),
+            &std::collections::HashMap::from([("assets/edge.png".to_owned(), (16.0_f32, 8.0_f32))]),
+        )
+        .0
+    };
+
+    fn middle_step(raster: &yunari_render_raster::Raster, y: u32) -> u32 {
+        let row = |x: u32| raster.rgba[((y * raster.width + x) * 4) as usize];
+        let ramp: Vec<u8> = (24..40).map(row).collect();
+        let steps: Vec<u32> = ramp
+            .windows(2)
+            .map(|pair| (pair[1] as i32 - pair[0] as i32).unsigned_abs())
+            .collect();
+        steps[4] + steps[5] + steps[6] + steps[7]
+    }
+
+    // 16x8 board on a 64x32 panel: the sampler reads the 16x8 picture four
+    // times larger, so the central edge must be steeper than plain bilinear.
+    let enlarged = render(
+        &yunari_render::DisplayList {
+            ops: Vec::new(),
+            ..theme(16, 8)
+        },
+        4.0,
+        None,
+        Some(&mut yunari_render_raster::Images::at(&dir)),
+    );
+    let enlarged_middle = middle_step(&enlarged, 16);
+    eprintln!("device upscale middle={enlarged_middle}");
+    assert!(enlarged.width == 64 && enlarged.height == 32);
+    assert!(
+        enlarged_middle > 170,
+        "a device upscale must sharpen: middle={enlarged_middle}"
+    );
+
+    // 64x32 board painted at 0.25 into a 16x8 panel: the artboard cover is
+    // four times the source, but the device cover is 1:1 and needs no tap.
+    let reduced = render(
+        &yunari_render::DisplayList {
+            ops: Vec::new(),
+            ..theme(64, 32)
+        },
+        0.25,
+        None,
+        Some(&mut yunari_render_raster::Images::at(&dir)),
+    );
+    assert!(reduced.width == 16 && reduced.height == 8);
+    let reduced_row = |x: u32| reduced.rgba[((4 * 16 + x) * 4) as usize];
+    let reduced_edge = (0..16).map(reduced_row).collect::<Vec<_>>();
+    let reduced_peak = reduced_edge
+        .windows(2)
+        .map(|pair| (pair[1] as i32 - pair[0] as i32).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    eprintln!("device 1:1 edge peak={reduced_peak}, row={reduced_edge:?}");
+    assert!(
+        reduced_edge
+            .iter()
+            .all(|value| *value == 0 || *value == 255),
+        "a 1:1 device read must keep its source values: {reduced_edge:?}"
+    );
+    assert_eq!(reduced_peak, 255, "a 1:1 edge stays hard: {reduced_edge:?}");
     let _ = std::fs::remove_dir_all(dir);
 }

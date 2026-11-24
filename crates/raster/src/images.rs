@@ -35,6 +35,9 @@ pub struct Images {
     /// scaled by ffmpeg before RGBA conversion; the rest of the pipeline still
     /// samples the same composition, just from fewer bytes.
     render_size: (u32, u32),
+    /// How many pictures this store actually decoded. A sampler that quietly
+    /// loads a second frame shows up here, not just in a timing proxy.
+    decodes: u64,
 }
 
 /// One video asset's decoder.
@@ -75,6 +78,7 @@ impl Images {
             videos: HashMap::new(),
             demand_fps: f64::INFINITY,
             render_size: (0, 0),
+            decodes: 0,
         }
     }
 
@@ -108,6 +112,7 @@ impl Images {
     /// yet saved. It takes the same path the document will store it under.
     pub fn put(&mut self, path: &str, bytes: &[u8]) {
         let decoded = decode_bytes_at(Path::new(path), bytes);
+        self.decodes += 1;
         self.cache.insert(path.to_owned(), decoded);
     }
 
@@ -117,6 +122,12 @@ impl Images {
     pub fn hold(&mut self, path: &str, decoded: Decoded) {
         self.videos.remove(path);
         self.cache.insert(path.to_owned(), Some(decoded));
+    }
+
+    /// Pictures decoded by this store, including one frame per live clip read.
+    /// A per-frame sampler must not grow this count after the first read.
+    pub fn decode_count(&self) -> u64 {
+        self.decodes
     }
 
     /// The picture at an asset path, decoded on first use. A video plays: each
@@ -134,12 +145,20 @@ impl Images {
             let file = self.base.as_ref().map(|base| base.join(path));
             match file {
                 Some(file) if is_video(&file) => {
-                    let video = start(&file, self.demand_fps, self.render_size)
-                        .map_or(Video::Failed, Video::Live);
+                    let video = match start(&file, self.demand_fps, self.render_size) {
+                        Some(live) => {
+                            self.decodes += 1;
+                            Video::Live(live)
+                        }
+                        None => Video::Failed,
+                    };
                     self.videos.insert(path.to_owned(), video);
                 }
                 other => {
                     let decoded = other.and_then(|file| decode(&file));
+                    if decoded.is_some() {
+                        self.decodes += 1;
+                    }
                     self.cache.insert(path.to_owned(), decoded);
                 }
             }
@@ -147,6 +166,7 @@ impl Images {
         if let Some(Video::Live(live)) = self.videos.get_mut(path)
             && let Some(frame) = live.frame(looping)
         {
+            self.decodes += 1;
             self.cache.insert(path.to_owned(), Some(frame));
         }
         self.cache.get(path).and_then(Option::as_ref)
