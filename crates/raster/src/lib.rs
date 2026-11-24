@@ -287,7 +287,14 @@ fn draw_text(
         }
         let place = text_transform(transform, segment, scale);
         let place = place.post_translate(0.0, baseline_shift as f32);
-        pixmap.draw_pixmap(0, 0, glyphs.as_ref(), &PixmapPaint::default(), place, None);
+        // A panel group scales the glyph plane on its way to the frame. Nearest
+        // sampling turns the shaper's antialiased edges into hard steps; bilinear
+        // keeps the intermediate coverage the shaper painted.
+        let paint = PixmapPaint {
+            quality: tiny_skia::FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        };
+        pixmap.draw_pixmap(0, 0, glyphs.as_ref(), &paint, place, None);
     }
 }
 
@@ -665,7 +672,19 @@ fn draw_backdrop(
             }
             let u = if backdrop.flip_x { 1.0 - u } else { u };
             let v = if backdrop.flip_y { 1.0 - v } else { v };
-            let texel = sample(asset, u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+            let u = u.clamp(0.0, 1.0);
+            let v = v.clamp(0.0, 1.0);
+            let bilinear = sample(asset, u, v);
+            // A clip decoded to the panel box is sampled larger inside a themed
+            // band. Bilinear spreads a source edge over four device pixels;
+            // a sharpened cubic keeps the step steep without a second decode.
+            let texel = if cover.width > asset.width as f32 * 1.05
+                || cover.height > asset.height as f32 * 1.05
+            {
+                sharpen(asset, u, v, bilinear)
+            } else {
+                bilinear
+            };
             let scaled_alpha = (f32::from(texel[3]) * alpha).round() as u8;
             blend(
                 pixmap,
@@ -784,6 +803,38 @@ fn sample(asset: &Decoded, u: f32, v: f32) -> [u8; 4] {
         *byte = (top + (bottom - top) * fy).round().clamp(0.0, 255.0) as u8;
     }
     texel
+}
+
+/// Sharpen one upscaled texel with a clamped unsharp tap. Bilinear alone
+/// spreads a source edge over many device pixels, which is the softness a
+/// panel shows when a short video band is decoded at the panel box and then
+/// sampled larger. The tap steepens the edge without decoding a larger frame;
+/// clamping to the source neighbours stops it ringing past authored colours.
+fn sharpen(asset: &Decoded, u: f32, v: f32, bilinear: [u8; 4]) -> [u8; 4] {
+    let x = (u * asset.width as f32 - 0.5).clamp(0.0, (asset.width - 1) as f32);
+    let y = (v * asset.height as f32 - 0.5).clamp(0.0, (asset.height - 1) as f32);
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(asset.width - 1);
+    let y1 = (y0 + 1).min(asset.height - 1);
+    let at = |px: u32, py: u32, channel: usize| {
+        f32::from(asset.rgba[((py * asset.width + px) * 4 + channel as u32) as usize])
+    };
+    let mut out = [0_u8; 4];
+    for (channel, byte) in out.iter_mut().enumerate() {
+        // One unsharp-mask tap against the bilinear sample, using the two
+        // source neighbours on the dominant axis. Clamped to the source
+        // range so a hard edge never rings past its authored values.
+        let left = at(x0, y0, channel);
+        let right = at(x1, y0, channel);
+        let above = at(x0, y1, channel);
+        let below = at(x1, y1, channel);
+        let low = left.min(right).min(above).min(below);
+        let high = left.max(right).max(above).max(below);
+        let value = f32::from(bilinear[channel]) * 1.5 - (left + right + above + below) * 0.125;
+        *byte = value.round().clamp(low, high) as u8;
+    }
+    out
 }
 
 fn fill(pixmap: &mut Pixmap, path: &Path, paint: &Paint, transform: Transform) {
