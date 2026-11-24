@@ -9373,6 +9373,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "image",
+ "jiff",
  "resvg 0.45.1",
  "serde_json",
  "tiny-skia",

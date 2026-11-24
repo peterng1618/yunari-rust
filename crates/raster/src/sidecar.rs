@@ -24,6 +24,14 @@ use crate::{ChartSamples, Images, fit_raster_into, render_with_charts};
 
 type ReadingsById = HashMap<String, Option<f64>>;
 type SeriesById = HashMap<String, Vec<(u64, f64)>>;
+/// One frame's raw values and their parsed instants, before chart transforms.
+type FrameReadings = (
+    ReadingsById,
+    HashMap<String, i64>,
+    Readings,
+    SeriesById,
+    Vec<PlanIssue>,
+);
 
 /// A theme and the caches that make its frames cheap to rebuild.
 struct Session {
@@ -39,9 +47,10 @@ struct Session {
     /// A video device's glass samples one held poster instead of the live
     /// media underneath it.
     glass_sampling: GlassSampling,
-    /// The host's panel sample is a snapshot with no history. A line chart needs
-    /// more than one point, so the session keeps the readings that actually
-    /// arrived, paced by the panel's own tick. No sample, no fabricated point.
+    /// Line charts need more than one point. The host supplies its own bounded
+    /// series; when it omits one (older hosts or a frame without `series`), the
+    /// session keeps the readings that actually arrived, placed by the host's
+    /// tick or the reading's own timestamp. No sample, no fabricated point.
     history: SeriesById,
     width: u32,
     height: u32,
@@ -369,17 +378,33 @@ fn frame(
         .get_mut(&id)
         .ok_or_else(|| fail(format!("No open session for {id:?}.")))?;
 
-    let (readings, wire, mut series, mut issues) = parse_frame(object, &session.document)?;
-    // The host's snapshot has no history. A line chart fed only the newest
-    // reading can never draw its polyline. Record the values that actually
-    // arrived on the panel's own frames; the wire's `series`, when present,
-    // stays authoritative. Overlays reuse the same state and must not append.
+    let (readings, times, wire, mut series, mut issues) = parse_frame(object, &session.document)?;
+    // The host owns the series when it sends one: its own window and cap rules
+    // already apply. Only a host that omits history needs the session's own
+    // fallback, recorded from readings that actually arrived and placed by the
+    // host's tick. No sample means no point. Overlays reuse the same state and
+    // must not append.
     if !overlay {
+        let host_series = object.get("series").and_then(Value::as_object);
         for (key, value) in &readings {
+            let host_has_key = host_series.is_some_and(|map| map.contains_key(key));
+            if host_has_key {
+                continue;
+            }
             if let Some(value) = value.filter(|value| value.is_finite()) {
+                let at = times
+                    .get(key)
+                    .copied()
+                    .or_else(|| {
+                        object
+                            .get("sent_at")
+                            .and_then(Value::as_str)
+                            .and_then(parse_timestamp)
+                    })
+                    .unwrap_or(0);
                 let history = session.history.entry(key.clone()).or_default();
-                let tick = history.last().map_or(0, |(at, _)| at + 1_000);
-                history.push((tick, value));
+                history.push((at as u64, value));
+                history.sort_by_key(|(at, _)| *at);
                 if history.len() > 600 {
                     history.remove(0);
                 }
@@ -498,7 +523,7 @@ fn frame(
 fn parse_frame(
     object: &Map<String, Value>,
     document: &ThemeDocument,
-) -> Result<(ReadingsById, Readings, SeriesById, Vec<PlanIssue>), ProtocolError> {
+) -> Result<FrameReadings, ProtocolError> {
     let wanted = yunari_render::reading::wanted_keys(document);
     let entries = object
         .get("readings")
@@ -507,6 +532,7 @@ fn parse_frame(
         .unwrap_or(&[]);
 
     let mut by_key: ReadingsById = HashMap::new();
+    let mut times: HashMap<String, i64> = HashMap::new();
     let mut wire: Vec<Reading> = Vec::new();
     let mut issues: Vec<PlanIssue> = Vec::new();
     for entry in entries {
@@ -533,6 +559,14 @@ fn parse_frame(
             .then_some(value)
             .flatten()
             .filter(|value| value.is_finite());
+        let timestamp = map
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_timestamp);
+        let sent_at = object
+            .get("sent_at")
+            .and_then(Value::as_str)
+            .and_then(parse_timestamp);
         let reason = map
             .get("message")
             .and_then(Value::as_str)
@@ -549,7 +583,11 @@ fn parse_frame(
                 .map(str::to_owned),
             message: reason,
         });
-        by_key.insert(key, value);
+        by_key.insert(key.clone(), value);
+        if value.is_some() {
+            let at = timestamp.or(sent_at).unwrap_or_default();
+            times.insert(key, at);
+        }
     }
 
     let mut series: SeriesById = HashMap::new();
@@ -594,7 +632,18 @@ fn parse_frame(
             by_key.insert(key.clone(), None);
         }
     }
-    Ok((by_key, Readings::new(wire), series, issues))
+    Ok((by_key, times, Readings::new(wire), series, issues))
+}
+
+/// Parse the ISO-8601 instants the host sends. A malformed time is not an
+/// excuse to invent a wall-clock reading: the frame's `sent_at` is the next
+/// honest fallback. A value with neither is placed at the epoch so the series
+/// still records that something arrived, at the oldest possible position.
+fn parse_timestamp(text: &str) -> Option<i64> {
+    // `jiff` is already a workspace dependency and parses the host's ISO-8601
+    // form without pulling another crate into this sidecar.
+    use jiff::Timestamp;
+    text.parse::<Timestamp>().ok().map(|at| at.as_millisecond())
 }
 
 /// Apply each chart object's own binding transform to the samples the chart
