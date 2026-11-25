@@ -1,7 +1,8 @@
 //! Line chart: cartesian axes, grid and each binding's series mark.
 //!
 //! The request carries one figure per binding. A series with history is drawn
-//! as a polyline with the area beneath its first series; a lone reading is a
+//! as a polyline, with an area beneath its first series only when one is
+//! authored; a lone reading is a
 //! point, and is only drawn when the family's `showMarkers` asks for it. Axis
 //! furniture is drawn even when every reading is absent; nothing is made from a
 //! zero that was not measured.
@@ -101,20 +102,22 @@ pub fn build(
     }
 
     // `showSymbol` upstream follows this flag, and the family's own default is
-    // false. The area is the family's own gradient unless one is authored, and
-    // only the first series gets one (stacked areas hide the crossings).
+    // false. An authored area fills the first series only; an omitted one is
+    // no fill at all, as `buildLineOption` emits `areaStyle` only when the
+    // setting is present (stacked areas hide the crossings).
     let show_markers = boolean(settings, "showMarkers", false);
-    let area = match settings.get("area") {
-        Some(value) => chart_fill(
-            request.document,
-            Some(value),
-            request.node_id,
-            &format!("nodes/{}/settings/area", request.node_id),
-            issues,
-        )
-        .map(|fill| fill.with_opacity(request.opacity)),
-        None => Some(default_area(request.opacity)),
-    };
+    let area = settings
+        .get("area")
+        .and_then(|value| {
+            chart_fill(
+                request.document,
+                Some(value),
+                request.node_id,
+                &format!("nodes/{}/settings/area", request.node_id),
+                issues,
+            )
+        })
+        .map(|fill| fill.with_opacity(request.opacity));
 
     if let Some((low, high)) = range {
         for (index, reading) in request.readings.iter().enumerate() {
@@ -222,15 +225,6 @@ fn push_area(ops: &mut Vec<Op>, vertices: &[(f32, f32)], plot: Plot, fill: &Char
         fill => Paint::Solid(fill.at(1.0)),
     };
     push_filled(ops, commands, paint);
-}
-
-/// `defaultLineSettings.area`: the family's own #00b8d9 -> transparent fill.
-fn default_area(opacity: f32) -> ChartFill {
-    ChartFill::Gradient(vec![
-        (0.0, STROKE_DEFAULT),
-        (1.0, STROKE_DEFAULT.with_alpha(0)),
-    ])
-    .with_opacity(opacity)
 }
 
 /// One series' paint: the palette entry at its own index when present, else
@@ -692,15 +686,16 @@ mod tests {
     }
 
     #[test]
-    fn the_default_line_fills_the_area_under_its_first_series() {
-        // `defaultLineSettings.area` is the same #00b8d9 -> transparent
-        // gradient (line.ts:54-60), so an omitted setting still fills.
+    fn omitted_area_draws_no_fill_like_chromium() {
+        // `buildLineOption` emits `areaStyle` only when `settings.area` is
+        // present. A theme that authors a plain line must not gain a family
+        // default fill in the native engine.
         let settings = r#"{"showAxes": false, "min": 0, "max": 100}"#;
         let readings = [Some(75.0)];
         let series = [vec![(0, 25.0), (30_000, 50.0), (60_000, 75.0)]];
         let (ops, issues) = render(settings, &readings, &series);
         assert!(issues.is_empty(), "{issues:?}");
-        assert_eq!(areas(&ops).len(), 1, "the family's own area gradient");
+        assert!(areas(&ops).is_empty(), "an omitted area is no fill");
     }
 
     #[test]
